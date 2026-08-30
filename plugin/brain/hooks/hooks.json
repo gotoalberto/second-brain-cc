@@ -1,0 +1,111 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __VAULT__/_bin/compass.py",
+            "timeout": 8
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __VAULT__/_bin/skills_index.py",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __VAULT__/_bin/retrieve.py",
+            "timeout": 8,
+            "statusMessage": "Querying the vault..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __VAULT__/_bin/gate_write.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __VAULT__/_bin/vault_ledger.py"
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __VAULT__/_bin/protocol_guard.py"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "implementer|planner|context-scout|librarian|verifier|skill-forge",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __VAULT__/_bin/log_subagent.py",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __VAULT__/_bin/gate_memory.py",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __VAULT__/_bin/vault_sync.py --hook",
+            "async": true,
+            "statusMessage": "Syncing the vault..."
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __VAULT__/_bin/session_end.py",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "WorktreeCreate": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/python3 __VAULT__/_bin/seed_worktree.py",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

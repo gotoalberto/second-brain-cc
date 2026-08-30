@@ -1,0 +1,14 @@
+# Estado local, nunca al remoto
+_index/
+60-Context-Packs/*
+!60-Context-Packs/README.md
+80-Private/*
+!80-Private/README.md
+.obsidian/workspace*.json
+.obsidian/cache
+.trash/
+.DS_Store
+*.tmp
+*.lock
+_assets/
+*.bak-*
