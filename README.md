@@ -35,6 +35,17 @@ All three drive the **same** `_bin/` engine, so redaction, locking, indexing and
 frontmatter contract hold no matter which agent is writing. You can use more than one, but
 avoid running two write-back integrations at once.
 
+**Other agents** — [OpenCode](integrations/opencode/) and anything else that speaks MCP or
+can run a shell connect through the MCP server or the CLI above; see
+[`integrations/opencode/`](integrations/opencode/) for a worked example (`opencode.json`
+config, headless runs, custom commands).
+
+**Scheduled & periodic tasks** — run recurring jobs (a daily digest, a weekly review)
+unattended, on **any** model. [`integrations/scheduler/`](integrations/scheduler/) is a
+zero-dependency cron of AI tasks: each task is a Markdown file with a cron schedule and a
+prompt, and the model that runs it is a swappable command (Claude Code, OpenCode, `llm`, or
+your own).
+
 ## Quick start
 
 ```bash
@@ -115,7 +126,7 @@ is just: search with `query.py`, write with `vw.py`, sync with `vault_sync.py`.
 80-Private/     local-only, never pushed
 90-Meta/        the protocol and architecture docs
 _bin/           the Python engine (index, query, write, sync, doctor, secret)
-integrations/   how agents connect: mcp/, cli/, claude-code/
+integrations/   how agents connect: mcp/, cli/, claude-code/, opencode/, scheduler/
 ```
 
 Everything in this repo is public and generic — placeholder examples only. Replace them
