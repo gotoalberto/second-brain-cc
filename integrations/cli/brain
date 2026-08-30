@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+"""brain — a tiny, agent-agnostic CLI for the Second Brain vault.
+
+Wraps the same `_bin/` tools the MCP server and the Claude Code hooks use, so
+any agent that can run a shell command (or a human at a terminal) can query and
+write the vault without knowing its internals.
+
+  brain recall <terms...> [--all] [--limit N] [--type T] [--project P] [--full]
+  brain recent [N]
+  brain get <vault/relative/path.md>
+  brain new <path> --title "T" [--type note] [--tag t] [--project p] [--area a]   (body on stdin)
+  brain append <path>                                                             (text on stdin)
+  brain index [--full]
+  brain sync
+  brain status
+  brain secret <get|put|ref|check> ...    (delegates to _bin/secret.py — 1Password)
+  brain mcp [--vault DIR]                  (run the MCP server on stdio)
+
+The vault is auto-detected as the repo this script lives in; override with the
+BRAIN_VAULT environment variable.
+"""
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+VAULT = os.environ.get("BRAIN_VAULT") or os.path.dirname(os.path.dirname(HERE))
+BIN = os.path.join(VAULT, "_bin")
+PY = sys.executable or "/usr/bin/python3"
+
+
+def die(msg, code=1):
+    sys.stderr.write("brain: " + msg + "\n")
+    sys.exit(code)
+
+
+def script(name):
+    p = os.path.join(BIN, name)
+    if not os.path.isfile(p):
+        die("cannot find %s (is BRAIN_VAULT correct? got %s)" % (name, VAULT))
+    return p
+
+
+def exec_script(name, args):
+    """Replace this process with the target script, inheriting stdio/tty."""
+    env = dict(os.environ)
+    env["BRAIN_VAULT"] = VAULT
+    os.execve(PY, [PY, script(name)] + args, env)
+
+
+def usage(code=0):
+    sys.stdout.write(__doc__)
+    sys.exit(code)
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        usage(0)
+    cmd, rest = argv[0], argv[1:]
+
+    if cmd in ("recall", "search", "q"):
+        if not rest:
+            die("recall needs search terms")
+        exec_script("query.py", rest)
+
+    elif cmd == "recent":
+        n = rest[0] if rest and rest[0].isdigit() else "10"
+        exec_script("query.py", ["--recent", n])
+
+    elif cmd in ("get", "cat", "show"):
+        if not rest:
+            die("get needs a vault-relative path")
+        path = os.path.join(VAULT, rest[0].lstrip("/"))
+        real = os.path.realpath(path)
+        if not real.startswith(os.path.realpath(VAULT) + os.sep):
+            die("path escapes the vault")
+        if not os.path.isfile(real):
+            die("no such note: %s" % rest[0])
+        with open(real, encoding="utf-8", errors="replace") as f:
+            sys.stdout.write(f.read())
+
+    elif cmd == "new":
+        if not rest:
+            die("new needs a path and --title")
+        exec_script("vw.py", ["new"] + rest)
+
+    elif cmd == "append":
+        if not rest:
+            die("append needs a path (text on stdin)")
+        exec_script("vw.py", ["append"] + rest)
+
+    elif cmd in ("index", "reindex"):
+        exec_script("index_vault.py", rest)
+
+    elif cmd == "sync":
+        exec_script("vault_sync.py", rest)
+
+    elif cmd in ("status", "doctor", "health"):
+        exec_script("doctor.py", rest)
+
+    elif cmd == "secret":
+        exec_script("secret.py", rest)
+
+    elif cmd == "mcp":
+        env = dict(os.environ)
+        env["BRAIN_VAULT"] = VAULT
+        server = os.path.join(VAULT, "integrations", "mcp", "server.py")
+        if not os.path.isfile(server):
+            die("MCP server not found at %s" % server)
+        os.execve(PY, [PY, server] + rest, env)
+
+    else:
+        die("unknown command: %s (try `brain help`)" % cmd)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
