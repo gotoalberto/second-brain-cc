@@ -31,6 +31,17 @@ def need_op():
     if not OP:
         die("1Password CLI not found. Install it: https://developer.1password.com/docs/cli/", 6)
 
+def clipboard_cmd():
+    """First available clipboard tool for this OS, or None."""
+    for cmd in (["pbcopy"],                        # macOS
+                ["wl-copy"],                        # Linux (Wayland)
+                ["xclip", "-selection", "clipboard"],  # Linux (X11)
+                ["xsel", "--clipboard", "--input"],    # Linux (X11)
+                ["clip.exe"]):                      # Windows / WSL
+        if shutil.which(cmd[0]):
+            return cmd
+    return None
+
 def op_read(ref):
     need_op()
     p = subprocess.run([OP, "read", ref], capture_output=True, text=True)
@@ -49,9 +60,11 @@ def cmd_get(a):
     elif a.pipe:
         subprocess.run(a.pipe, shell=True, input=val, text=True)
     else:
-        if not shutil.which("pbcopy"):
-            die("no clipboard (pbcopy) available; use --pipe or --show", 1)
-        subprocess.run(["pbcopy"], input=val, text=True)
+        clip = clipboard_cmd()
+        if not clip:
+            die("no clipboard tool found (pbcopy / wl-copy / xclip / xsel / clip.exe); "
+                "use --pipe or --show", 1)
+        subprocess.run(clip, input=val, text=True)
         print("secret: value copied to the clipboard.")
 
 def cmd_put(a):

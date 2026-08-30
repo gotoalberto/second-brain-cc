@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import brainlib as B
 
 HOME = os.path.expanduser("~")
-PLUGIN = os.path.join(B.VAULT, "plugin", "brain")
+PLUGIN = os.path.join(B.VAULT, "integrations", "claude-code", "plugin", "brain")
 
 
 def sync_dir(src, dst, pattern):
@@ -78,7 +78,7 @@ def main():
         B.atomic_write(hooks_path, body)
     print("plugin updated: %d agents, %d skills, hooks included" % (n_agents, n_skills))
     print("install on another machine:")
-    print("  /plugin marketplace add %s" % os.path.join(B.VAULT, "plugin"))
+    print("  /plugin marketplace add %s" % os.path.join(B.VAULT, "integrations", "claude-code", "plugin"))
     print("  /plugin install brain@brain-marketplace")
 
 

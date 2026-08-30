@@ -314,9 +314,6 @@ def main():
     else:
         print("no logs yet in %s" % B.LOGS)
 
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
-    tail = p.stdout.decode().strip().splitlines()
-    print("\n".join(tail[-6:]) if tail else "(no output)")
     con.close()
     return 0
 
