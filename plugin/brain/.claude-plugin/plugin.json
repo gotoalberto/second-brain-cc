@@ -1,0 +1,8 @@
+{
+  "name": "brain",
+  "description": "Persistent memory and context with Obsidian: automatic recall from the vault, agents that run in isolated worktrees, and a write-back to the vault before closing.",
+  "version": "1.0.0",
+  "author": {
+    "name": "second-brain-cc"
+  }
+}

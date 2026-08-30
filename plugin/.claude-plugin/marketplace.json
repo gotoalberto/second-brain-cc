@@ -1,0 +1,8 @@
+{
+  "name": "brain-marketplace",
+  "owner": { "name": "second-brain-cc" },
+  "plugins": [
+    { "name": "brain", "source": "./brain",
+      "description": "Persistent memory and context with Obsidian for every session" }
+  ]
+}
