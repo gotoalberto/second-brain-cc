@@ -1,0 +1,10 @@
+#!/bin/bash
+# TEMPLATE — copy to generic.sh, make it executable, point BRAIN_AGENT_CMD at it.
+# The contract: the task prompt arrives on STDIN. Run it through your agent/model and
+# print any result to STDOUT. Exit non-zero on failure so the scheduler logs it.
+#
+# BRAIN_VAULT is exported in the environment, so your agent can locate the vault and use
+# the `brain` CLI at "$BRAIN_VAULT/integrations/cli/brain" or the MCP server.
+prompt="$(cat)"
+# Example: replace this with your model/agent invocation.
+exec your-agent-cli --prompt "$prompt"

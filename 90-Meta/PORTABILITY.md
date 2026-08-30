@@ -9,9 +9,11 @@ There are three ready-made ways to connect an agent, in `integrations/`:
 
 | Integration | For | Entry point |
 |---|---|---|
-| **MCP server** | Any MCP agent (Claude Desktop, Cline, Cursor, Zed, …) | `integrations/mcp/server.py` |
+| **MCP server** | Any MCP agent (Claude Desktop, Cline, Cursor, Zed, OpenCode, …) | `integrations/mcp/server.py` |
 | **CLI** | Any agent that can run a shell | `integrations/cli/brain` |
 | **Claude Code** | The native, automatic experience | `integrations/claude-code/` |
+| **OpenCode** | The open-source, model-agnostic terminal agent | `integrations/opencode/` |
+| **Scheduler** | Recurring/unattended tasks on any model | `integrations/scheduler/` |
 
 If none of those fit your agent, the manual contract below is all you need — write a new
 integration in an afternoon.
