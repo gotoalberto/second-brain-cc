@@ -36,10 +36,10 @@ def main():
     marker = os.path.join(B.STATE, "%s.vwin" % sid)
     now_ = B.now()
     try:
-        desde = float(open(marker).read().strip())
+        since = float(open(marker).read().strip())
     except Exception:
-        desde = 0.0
-    desde = max(desde, now_ - MAX_WINDOW)
+        since = 0.0
+    since = max(since, now_ - MAX_WINDOW)
 
     # the marker is written BEFORE working: if something blows up later, the next call
     # starts from a short window instead of rescanning the whole vault.
@@ -48,14 +48,30 @@ def main():
     except Exception:
         pass
 
-    if desde <= 0:
+    if since <= 0:
         sys.exit(0)
-    notes = B.vault_notes_modified_since(desde)
+    notes = B.vault_notes_modified_since(since)
     if not notes:
         sys.exit(0)
     con = B.db()
     B.record_vault_writes(con, sid, notes, now_)
     con.close()
+
+    # A protected note that changed without vw.py went around gate_write.py. The gate
+    # cannot reliably parse a shell command, so it will miss some; the disk cannot be
+    # fooled. Prevention is best-effort, detection is not — say it out loud rather than
+    # let a shared note be edited unlocked in silence.
+    # Detail: 30-Knowledge/2026-09-08-analysis-every-instrument-watches-one-surface-and-reports-on-all-of-them.md
+    raw = [n for n in notes
+           if os.path.relpath(n, B.VAULT).split(os.sep)[0] in ("10-Projects", "70-Entities")
+           and not B.vw_wrote_last(n)]
+    if raw:
+        print(json.dumps({"systemMessage":
+            "Brain: %d shared note(s) changed without vw.py, so unlocked and with no "
+            "secret redaction: %s. Write 10-Projects/ and 70-Entities/ with "
+            "`python3 ~/Brain/_bin/vw.py`." % (
+                len(raw), ", ".join(os.path.relpath(n, B.VAULT) for n in raw[:3]))},
+            ensure_ascii=False))
     sys.exit(0)
 
 

@@ -1,4 +1,4 @@
-# Estado local, nunca al remoto
+# Local state, never pushed
 _index/
 60-Context-Packs/*
 !60-Context-Packs/README.md

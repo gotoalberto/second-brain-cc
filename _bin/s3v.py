@@ -39,7 +39,7 @@ SECRET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "secret.py")
 AWS = "/opt/homebrew/bin/aws"
 
 KINDS = ("entregable", "intermedio", "material")
-MARCA = "## Files in S3"
+MARKER = "## Files in S3"
 
 # The cached Access Key ID. It is the UserName field of the 1Password item entry, NOT the
 # secret, and STATE lives outside the repository.
@@ -203,8 +203,8 @@ def anchor(note_rel, entries):
     lines = limpio.splitlines()
     with B.flock(full):
         txt = open(full, errors="replace").read()
-        if MARCA in txt:
-            i = txt.index(MARCA) + len(MARCA)
+        if MARKER in txt:
+            i = txt.index(MARKER) + len(MARKER)
             j = txt.find("\n## ", i)
             section_ = txt[i:j if j > 0 else len(txt)]
             fresh = [l for l in lines if l.split(" — ")[0] not in section_]
@@ -215,7 +215,7 @@ def anchor(note_rel, entries):
                    + txt[corte:].lstrip("\n"))
         else:
             cab = ("\n\n%s\n\nThe bucket is private: these keys are opened with "
-                   "`python3 ~/Brain/_bin/s3v.py get <clave>`.\n\n" % MARCA)
+                   "`python3 ~/Brain/_bin/s3v.py get <clave>`.\n\n" % MARKER)
             txt = txt.rstrip("\n") + cab + "\n".join(lines) + "\n"
             fresh = lines
         B.atomic_write(full, txt)

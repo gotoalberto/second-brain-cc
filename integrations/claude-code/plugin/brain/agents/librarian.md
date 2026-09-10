@@ -26,6 +26,20 @@ not memory.
 
 ## How to write
 
+**Everything you write into the vault goes in English** — `title:`, `tags:`, the prose.
+The one exception is a verbatim quote, which keeps the language it was said in (put the
+English alongside it). The user may write in another language and you answer in theirs;
+the note still goes in English, because retrieval is lexical and a note in another language
+is unreachable by search. Rule and reason: `~/Brain/30-Knowledge/2026-09-08-convention-vault-is-written-in-english.md`.
+
+**Titles and headings name the topic**, in vault notes, packs, plans and anything written
+for the user: no headline that announces a finding (count and reveal, "X, not Y", colon reveal,
+triads, "the real X", "in silence"). A decision note may state its decision in the title,
+plainly. `~/Brain/30-Knowledge/2026-09-10-convention-write-like-a-person.md`.
+
+You are a subagent: the vault protocol is injected at SessionStart and **you never see it**,
+which is why this is repeated here.
+
 1. Before creating, **check whether it already exists**:
    `/usr/bin/python3 ~/Brain/_bin/query.py "<topic>" --all`
    If it exists, update it instead of duplicating. If it contradicts it, mark the old one

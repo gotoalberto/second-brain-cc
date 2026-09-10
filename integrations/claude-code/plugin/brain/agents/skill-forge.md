@@ -18,7 +18,8 @@ If none of these holds, **don't create the skill** and say so. A catalogue full 
 nobody invokes is worse than having none.
 
 ## How
-1. First check whether something equivalent already exists: look at `~/Brain/40-Skills/INDEX-<maquina>.md` (there is one per machine; use this machine's).
+
+1. First check whether something equivalent already exists: look at `~/Brain/40-Skills/INDEX-<machine>.md` (there is one per machine; use this machine's).
    If it exists, **improve it** instead of creating a new one.
 2. Use the `skill-creator` skill (`anthropic-skills:skill-creator`) for the creation
    itself. Don't reinvent its procedure.
@@ -32,3 +33,22 @@ nobody invokes is worse than having none.
    it is regenerated automatically.
 
 Return: the skill name, its path, and in one sentence which recurring problem it solves.
+
+## Writing into the vault
+
+**Anything you write into the vault goes in English** (verbatim quotes keep their original,
+with the English alongside). You are a subagent and never see the vault protocol, so:
+`~/Brain/30-Knowledge/2026-09-08-convention-vault-is-written-in-english.md`.
+
+**Titles and headings name the topic**, in vault notes, packs, plans and anything written
+for the user: no headline that announces a finding (count and reveal, "X, not Y", colon reveal,
+triads, "the real X", "in silence"). A decision note may state its decision in the title,
+plainly. `~/Brain/30-Knowledge/2026-09-10-convention-write-like-a-person.md`.
+
+**Shared notes are not written directly.** `10-Projects/` and `70-Entities/` go through
+`python3 ~/Brain/_bin/vw.py` (`new`, `append`, `set`) — it locks the file, redacts
+credentials and writes atomically. `gate_write.py` denies `Write`/`Edit` there, and now
+shell writes too, so going around it is not an option; going through it is one command.
+
+Skill `description:` fields are copied into `40-Skills/INDEX-*.md` by `skills_index.py`,
+so a description in another language lands in the vault on its own. Write them in English.

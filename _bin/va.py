@@ -30,7 +30,7 @@ import brainlib as B
 
 # Notes written in this run. They get reindexed at the end, OUTSIDE the flock:
 # doing it inside hung the process waiting on the database.
-_ESCRITAS = []
+_WRITTEN = []
 
 ASSETS = os.path.join(B.VAULT, "_assets")
 PROTECTED = ("10-Projects", "70-Entities")
@@ -178,7 +178,7 @@ def anchor(note_rel, entries, sid):
         else:
             text = text.rstrip() + "\n\n" + HEADING + "\n" + block + "\n"
         B.atomic_write(path, text)
-        _ESCRITAS.append(path)
+        _WRITTEN.append(path)
     B.mark_wrote(sid)
     return "section"
 
@@ -250,13 +250,13 @@ def cmd_list(args):
         files = sorted(f for f in os.listdir(cdir) if not f.startswith("."))
         size = sum(os.path.getsize(os.path.join(cdir, f)) for f in files)
         total_n += len(files); total_b += size
-        print("\n%s/  — %d ficheros, %s" % (coll, len(files), human(size)))
+        print("\n%s/  — %d files, %s" % (coll, len(files), human(size)))
         for f in files:
             rel = "_assets/%s/%s" % (coll, f)
             usos = refs.get(rel, [])
             print("  %-46s %8s  %s" % (f, human(os.path.getsize(os.path.join(cdir, f))),
-                                       ("← " + usos[0]) if usos else "HUÉRFANO"))
-    print("\ntotal: %d ficheros, %s" % (total_n, human(total_b)))
+                                       ("← " + usos[0]) if usos else "ORPHAN"))
+    print("\ntotal: %d files, %s" % (total_n, human(total_b)))
 
 
 def cmd_check(args):
@@ -316,5 +316,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-    if _ESCRITAS:                       # the graph is updated on every write
-        B.reindex_notes(_ESCRITAS)
+    if _WRITTEN:                       # the graph is updated on every write
+        B.reindex_notes(_WRITTEN)

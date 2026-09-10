@@ -67,7 +67,17 @@ def main():
         print("no data yet (the system has not seen real prompts)")
 
     if prompts or below:
-        print("  below relevance threshold %4d  (searched, not injected: noise)" % below)
+        # NOT "noise". This number is the prompts the threshold filtered out, and
+        # nothing here can tell a correct filter from a miss: a prompt whose answer was
+        # in the vault and did not come back looks exactly like one with no answer.
+        # Calling it noise resolved by assertion the one measurement that would say
+        # whether memory is failing. The honest reading needs a sample judged by hand.
+        # Detail: 30-Knowledge/2026-09-08-analysis-every-instrument-watches-one-surface-and-reports-on-all-of-them.md
+        print("  below relevance threshold %4d  (searched, not injected — how many of"
+              % below)
+        print("       these were correctly filtered and how many were missed is NOT")
+        print("       measured here; sample a few by hand with query.py before")
+        print("       concluding the filter is working)")
 
     section("Note hygiene")
     # An index row can point at a note no longer on disk (a
@@ -89,6 +99,30 @@ def main():
     print("retrievable notes with no links: %d" % len(orphans))
     for p in orphans[:5]:
         print("  - %s" % p)
+    # A note with no links at all was the only thing measured here until 2026-09-08,
+    # and it printed a green "0" while 18% of the graph's edges pointed at nothing.
+    # Counting orphans is not measuring the graph: an edge that resolves to no note is
+    # a link the reader follows into a hole, and retrieval expands across those edges.
+    # Classified by linkfix, with the same resolver retrieval uses (brainlib.LinkResolver).
+    # Until 2026-09-10 this counted "dead" with a bare path suffix and lumped meeting
+    # topic nodes in with real holes, so the number could not say which ones mattered.
+    try:
+        import linkfix as LF
+        lk = LF.classify(con)
+        total_edges = con.execute("SELECT COUNT(*) FROM links").fetchone()[0]
+        print("graph edges: %d   broken: %d   fixable: %d   meeting topics: %d   "
+              "pending entities: %d" % (total_edges, len(lk["broken"]), len(lk["fix"]),
+                                        lk["topics"], lk["pending"]))
+        for src, tgt in lk["broken"][:5]:
+            print("  broken: %s -> [[%s]]" % (src, tgt))
+        if lk["fix"]:
+            print("  -> fixable links are rewritten on the next search; now: "
+                  "python3 %s/_bin/linkfix.py" % B.VAULT)
+        if lk["broken"]:
+            print("  -> no safe automatic fix: point each at the right note or remove it "
+                  "(python3 %s/_bin/linkfix.py --list)" % B.VAULT)
+    except Exception as exc:
+        print("could not classify links: %r" % exc)
     dupes = con.execute("SELECT title, COUNT(*) c FROM notes GROUP BY lower(title) "
                         "HAVING c > 1").fetchall()
     print("duplicate titles: %d %s" % (len(dupes), [d[0] for d in dupes[:3]] if dupes else ""))
@@ -139,8 +173,8 @@ def main():
         if missing:
             print("  most-used words a Spanish question cannot reach:")
             print("    " + ", ".join("%s(%d)" % (w, n) for w, n in missing[:14]))
-            print("  -> many are proper nouns and need no bridge; check with:")
-            print("     python3 %s/_bin/bilingual_eval.py --held-out" % B.VAULT)
+            print("  -> many are proper nouns and need no bridge; check a few by hand with")
+            print("     python3 %s/_bin/query.py \"<question in Spanish>\"" % B.VAULT)
     except Exception as exc:
         print("could not compute: %r" % exc)
 

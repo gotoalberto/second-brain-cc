@@ -7,7 +7,7 @@ Principles:
   - A note is injected once per session (dedupe).
   - On any error: silence and exit 0.
 """
-import os, re, sys, time, json, subprocess
+import os, re, sys, time, json, hashlib, subprocess
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import brainlib as B
 
@@ -165,9 +165,9 @@ def touch_session(con, sid, cwd):
         "INSERT INTO sessions(sid,cwd,project,branch,started,heartbeat,pid,turns) "
         "VALUES(?,?,?,?,?,?,?,1) "
         "ON CONFLICT(sid) DO UPDATE SET heartbeat=excluded.heartbeat, "
-        "turns=sessions.turns+1, cwd=excluded.cwd",
+        "pid=excluded.pid, turns=sessions.turns+1, cwd=excluded.cwd",
         (sid, cwd, B.project_name(cwd), B.current_branch(cwd),
-         B.now(), B.now(), 0))
+         B.now(), B.now(), B.claude_session_pid()))
     con.commit()
 
 
@@ -212,8 +212,8 @@ def threshold_save(sid, value, misses):
 # than one that says nothing.
 #
 # The real fix for untranslated Spanish is GLOSSARY COVERAGE, which is measurable and has
-# no such failure mode: see 30-Knowledge/2026-08-27-decision-bilingual-retrieval-measured-not-assumed.md
-# and `_bin/bilingual_eval.py`.
+# no such failure mode: extend GLOSARIO from the real misses in the log (`below-threshold`
+# terms), and measure it with pairs of the same question in both languages.
 
 
 def coverage(con, path, terms):
@@ -262,31 +262,112 @@ def is_task(prompt):
     return any((" " + v) in p for v in TASK_VERBS)
 
 
-def neighbours(con, paths, limit=4):
+def neighbours(con, paths, limit=4, terms=None):
     """Notes linked from (or to) the ones already surfaced.
 
     This is what turns [[wikilinks]] into real retrieval: if the note that matches
     points at another, that other one is almost always needed too, even when it shares
     not a single word with the prompt.
+
+    Resolved with brainlib.LinkResolver, the same resolver as everything else. The old
+    `LIKE '%' || target || '.md'` sent `[[api]]` to an unrelated runbook, never
+    followed a link by id, and missed backlinks written with a dateless slug.
+
+    Ranked by how tied the note is (see `tie` below), then by how much of the PROMPT it
+    covers, then decisions first, as search() does. Before, it was the first N rows SQLite
+    returned; ranking by recency instead was tried and measured worse: for "how are
+    credentials managed" it picked an unrelated diagnosis over the credentials decision,
+    both one link away.
     """
     if not paths:
         return []
-    slugs = []
-    for p in paths:
-        slug = os.path.splitext(os.path.basename(p))[0]
-        slugs.append(slug)
-    markers = ",".join("?" * len(slugs))
-    outside = ",".join("?" * len(paths))
-    # No string formatting over the SQL: LIKE's '%' clashes with %s.
-    sql = ("SELECT DISTINCT n.path, n.title FROM links l "
-           "JOIN notes n ON (n.path LIKE '%' || l.target || '.md' OR n.path = l.source) "
-           "WHERE (l.source IN (" + outside + ") OR l.target IN (" + markers + ")) "
-           "  AND n.retrievable = 1 AND n.path NOT IN (" + outside + ") LIMIT ?")
     try:
-        return con.execute(sql, list(paths) + slugs + list(paths) + [limit]).fetchall()
+        R = B.LinkResolver(con)
+        want = set(paths)
+        # Per (hit, candidate) pair the strongest tie counts ONCE: 2 if the hit links to
+        # it, 1 if it only links back. Summed across different hits. A mutual link is not
+        # more relevance: a tight cluster of notes that all link each other, counted in
+        # both directions, crowded out the credentials decision on a credentials
+        # question.
+        tie = {}
+        for p in paths:
+            for (tgt,) in con.execute("SELECT target FROM links WHERE source = ?", (p,)):
+                c, _how = R.resolve(tgt)
+                if c and c not in want:
+                    tie[(p, c)] = 2
+            names = sorted(R.names_for([p]))
+            for i in range(0, len(names), 400):
+                chunk = names[i:i + 400]
+                for (src,) in con.execute(
+                        "SELECT DISTINCT source FROM links WHERE target IN (%s)"
+                        % ",".join("?" * len(chunk)), chunk):
+                    if src not in want:
+                        tie[(p, src)] = max(tie.get((p, src), 0), 1)
+        score = {}
+        for (_p, c), w in tie.items():
+            score[c] = score.get(c, 0) + w
+        if not score:
+            return []
+        cand = list(score)
+        rows = con.execute("SELECT path, title, updated, ntype FROM notes WHERE retrievable = 1 "
+                           "AND path IN (%s)" % ",".join("?" * len(cand)), cand).fetchall()
+        cov = {r[0]: (coverage(con, r[0], terms) if terms else 0.0) for r in rows}
+        rows.sort(key=lambda r: (score[r[0]], cov[r[0]], r[3] == "decision",
+                                 str(r[2] or "")), reverse=True)
+        return [(p, t) for p, t, _u, _n in rows[:limit]]
     except Exception as e:
         B.log_error("retrieve.neighbours", e)
         return []
+
+
+# Messages the harness injects as if the user typed them. They are not questions: a
+# `<task-notification>` carries ids, paths and tool-use ids, and searching the vault with
+# them only produced misses (task-notification, tool-use-id and a temp-dir path segment were the three
+# most missed terms of the whole log, 450, 358 and 317 times).
+HARNESS_TAGS = ("task-notification", "cross-session-message", "system-reminder",
+                "local-command-stdout", "local-command-caveat", "command-name",
+                "command-message", "ci-monitor-event", "bash-notification")
+
+
+def is_harness(prompt):
+    p = prompt.lstrip()
+    return p.startswith("<") and any(p.startswith("<" + t) for t in HARNESS_TAGS)
+
+
+def links_check(con, sid):
+    """Every search looks for broken links (see linkfix.py).
+
+    The classification is cheap and runs here, on every prompt. The repair runs in a
+    detached linkfix.py, so a prompt never waits on it. Whatever has no safe fix is told
+    to the agent, once per session for each distinct set, so it fixes it by hand.
+    """
+    try:
+        import linkfix as LF
+        res = LF.classify(con)
+        LF.maybe_spawn(res)
+        if not res["broken"]:
+            return ""
+        sig = hashlib.sha1(json.dumps(res["broken"]).encode()).hexdigest()[:16]
+        marker = os.path.join(B.STATE, "%s.links" % sid)
+        try:
+            if open(marker).read().strip() == sig:
+                return ""
+        except OSError:
+            pass
+        B.atomic_write(marker, sig)
+        return LF.notice(res)
+    except Exception as e:
+        B.log_error("retrieve.links_check", e)
+        return ""
+
+
+def bail(con, notice):
+    """Every early exit goes through here, so a link notice is never lost on a prompt
+    that found no notes."""
+    con.close()
+    if notice:
+        B.emit("UserPromptSubmit", "<vault-notes>\n" + notice + "\n</vault-notes>")
+    sys.exit(0)
 
 
 def search(con, terms, query, project, sid, limit):
@@ -345,6 +426,12 @@ def main():
     sid = B.sid8(data.get("session_id"))
     cwd = data.get("cwd") or os.getcwd()
 
+    if is_harness(prompt):
+        con = B.db()
+        B.metric(con, sid, "skip-harness", latency_ms=(time.time() - t0) * 1000,
+                 extra=prompt.lstrip()[1:40].split(">")[0])
+        con.close(); sys.exit(0)
+
     maybe_pull()
     maybe_reindex()
     maybe_beat(sid, cwd)
@@ -352,6 +439,7 @@ def main():
     san = B.sanitize_fts(prompt)
     con = B.db()
     touch_session(con, sid, cwd)
+    link_notice = links_check(con, sid)
 
     # "do it", "go on", "ok": there is nothing in them to search for, but they mean
     # "execute what we were discussing". The previous prompt's terms are inherited,
@@ -369,7 +457,7 @@ def main():
         # schema change instead of suffering it in silence.
         extra = "" if prompt else "no-text keys=%s" % ",".join(sorted(data.keys()))[:180]
         B.metric(con, sid, "skip-trivial", latency_ms=(time.time() - t0) * 1000, extra=extra)
-        con.close(); sys.exit(0)
+        bail(con, link_notice)
     query, terms = san
 
     # a continuation of the previous prompt? then there is no new topic to retrieve
@@ -430,7 +518,7 @@ def main():
         B.metric(con, sid, "below-threshold", latency_ms=(time.time() - t0) * 1000,
                  extra="best=%.2f threshold=%.2f terms=%s"
                        % (best, threshold, B.scrub_secrets(",".join(terms))[0][:120]))
-        con.close(); sys.exit(0)
+        bail(con, link_notice)
     if misses or session_threshold > THRESHOLD_BASE:
         threshold_save(sid, THRESHOLD_BASE, 0)       # there was a hit: relax all the way
     # Graph expansion: the neighbours of whatever matched come in at the end, marked,
@@ -438,7 +526,7 @@ def main():
     rel = []
     if hits:
         ya = {h[1] for h in hits}
-        for path, title in neighbours(con, [h[1] for h in hits[:2]], 3):
+        for path, title in neighbours(con, [h[1] for h in hits[:2]], 3, terms):
             if path not in ya and path not in already_paths(con, sid):
                 rel.append(("related", path, title))
     if not hits:
@@ -446,7 +534,7 @@ def main():
                  extra="field=%s%s terms=%s"
                        % (prompt_key, " continuation" if continuation else "",
                           B.scrub_secrets(",".join(terms))[0][:120]))
-        con.close(); sys.exit(0)
+        bail(con, link_notice)
 
     first_time = con.execute("SELECT COUNT(*) FROM injected WHERE sid=?", (sid,)).fetchone()[0] == 0
     lines = []
@@ -457,6 +545,8 @@ def main():
     for _, path, title in rel:
         lines.append("· %s — `%s`  (related)" % (title, path))
     body = "\n".join(lines) + "\nRead them with Read only if they are relevant."
+    if link_notice:
+        body += "\n" + link_notice
 
     if first_time:
         block = B.wrap_untrusted(body)
@@ -467,6 +557,8 @@ def main():
     while B.est_tokens(block) > cap and len(lines) > 1:
         lines.pop()
         body = "\n".join(lines) + "\nRead them with Read only if they are relevant."
+        if link_notice:
+            body += "\n" + link_notice
         block = (B.wrap_untrusted(body) if first_time
                  else "<vault-notes>\n" + body + "\n</vault-notes>")
 

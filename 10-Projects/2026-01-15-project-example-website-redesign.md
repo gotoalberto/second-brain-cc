@@ -1,6 +1,7 @@
 ---
 id: proj-acme-site-redesign
 title: Acme Marketing Site Redesign
+aliases: [my-project, project-my-project]
 type: project
 area: [marketing]
 projects: [acme-site-redesign]
@@ -22,7 +23,7 @@ Status: active — new homepage and pricing page shipped to staging; blog templa
 still in review, and analytics tagging not yet wired up.
 
 ## What's left
-- [ ] Get sign-off on the blog post template from [[entity-alice]]
+- [ ] Get sign-off on the blog post template from [[2026-01-15-entity-alice-example]]
 - [ ] Wire up analytics events on the pricing page CTA
 - [ ] Migrate the 40 legacy blog posts into the new template
 - [ ] Run the accessibility pass (contrast, focus order, alt text)
@@ -37,5 +38,5 @@ still in review, and analytics tagging not yet wired up.
   about structure and speed, not a new visual identity.
 
 ## Links
-- Area: [[area-marketing]]
-- Owner / reviewer: [[entity-alice]]
+- Area: marketing (an area note would live in `20-Areas/`)
+- Owner / reviewer: [[2026-01-15-entity-alice-example]]

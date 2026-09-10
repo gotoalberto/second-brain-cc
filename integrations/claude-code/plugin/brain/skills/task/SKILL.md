@@ -16,14 +16,13 @@ keep your window clean. Do not read code files yourself except to unblock someth
 
 ## Before starting: does this produce code?
 
-If the task is going to produce **code** — backend, frontend, scripts, a website or an
-HTML deliverable — this pipeline is **not enough**: the `/dev` gates apply on top (tests
-before implementation, hexagonal architecture, and if it has an interface, a design
-interview and critique rounds). Invoke `dev` and follow both.
+If the task is going to produce **code** and you keep a code-development skill (for
+example a `dev` skill with tests-first and design gates; none ships with this repo),
+invoke it and follow both. This pipeline decides context, isolation and memory; that skill
+decides how the code gets written.
 
-If the task produces no code — research, writing, data analysis, reorganising the vault —
-follow only what is below. The `/dev` gates do not apply and forcing them would be
-ceremony.
+If the task produces no code (research, writing, data analysis, reorganising the vault),
+follow only what is below.
 
 ## Procedure
 
@@ -64,6 +63,12 @@ If the rebase conflicts, **do not resolve it blind**: report it. If it is clean,
 `verifier` again. Clean rebase + green verifier is the only valid exit.
 
 ### 7. Memory (mandatory)
+
+- **Everything written into the vault goes in English** — `title:`, `tags:`, the prose.
+  A verbatim quote keeps the language it was said in, with the English alongside. Answer
+  the user in their language; the note goes in English, because retrieval is lexical and a
+  note in another language is unreachable by search:
+  `~/Brain/30-Knowledge/2026-09-08-convention-vault-is-written-in-english.md`.
 Invoke `librarian` with: what was done, what was decided and why, what was learned about
 the code. Have it write the notes and update the project MOC.
 

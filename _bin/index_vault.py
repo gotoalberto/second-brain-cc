@@ -44,7 +44,7 @@ def without_code(text):
     (`app/my-route/[[...slug]]/…`) created another to `...slug`. False edges to
     notes that do not exist, counted afterwards as broken links.
     """
-    text = re.sub(r"(?ms)^```.*?^```", "", text)   # bloques cercados
+    text = re.sub(r"(?ms)^```.*?^```", "", text)   # fenced blocks
     text = re.sub(r"`[^`\n]*`", "", text)          # inline code
     return text
 
@@ -86,18 +86,56 @@ def index_one(con, path):
     # `![[file.png]]` is an EMBEDDED ATTACHMENT, not a link to another note: it will never
     # resolve to a slug and only adds noise to the graph —and counted as a broken link—.
     # The `(?<!!)` keeps it out; so do the ones with a slash, just in case.
-    targets = {d.split("|")[0].split("#")[0].strip()
+    # Inside a markdown TABLE the alias pipe has to be escaped (`[[note\|Alias]]`) or it
+    # splits the cell. Splitting on a bare "|" then left the backslash glued to the slug
+    # and the edge pointed at a note that cannot exist: 10 dead edges in a single
+    # project note. The alias is stripped first, backslash and all.
+    targets = {B.link_target(d)
                 for d in re.findall(r"(?<!!)\[\[([^\]]+)\]\]", without_code(body))}
     targets = {d for d in targets if d and "/" not in d}
     for d in targets:
         if d:
             con.execute("INSERT OR IGNORE INTO links VALUES(?,?)", (rel, d))
+    # The frontmatter id and `aliases:` (Obsidian's own field), when they are not the
+    # filename: notes get linked by them. A rule that used to live under another name
+    # (a memory file, a title) keeps its old name here and old links still land.
+    con.execute("DELETE FROM note_ids WHERE path=?", (rel,))
+    base = os.path.splitext(os.path.basename(path))[0]
+    for nid in [meta.get("id")] + B.as_list(meta.get("aliases")):
+        nid = str(nid or "").strip()
+        if nid and nid != base:
+            con.execute("INSERT OR REPLACE INTO note_ids VALUES(?,?)", (nid, rel))
     return True
+
+
+# Bumped whenever index_one starts storing something new. A database indexed by an older
+# version gets ONE full pass, because the indexer otherwise only touches what changed and
+# the new data would stay missing for every note nobody edits. Kept in PRAGMA user_version,
+# which older code never touches: a marker older code could reset would not survive the
+# hours where both versions run (hooks on one machine, the daemon on another).
+#   2  note_ids: frontmatter `id:` and `aliases:` (2026-09-10)
+#   3  notes_fts rebuilt with the porter stemmer (2026-09-10, see brainlib.FTS_TOKENIZER)
+INDEX_VERSION = 3
+
+
+def _upgrade_fts(con):
+    """An FTS table keeps the tokenizer it was created with, so a new one needs a rebuild.
+    Derived data: the full pass that follows refills it from disk."""
+    row = con.execute("SELECT sql FROM sqlite_master WHERE name='notes_fts'").fetchone()
+    if row and B.FTS_TOKENIZER not in (row[0] or ""):
+        con.executescript(
+            "DROP TABLE notes_fts;"
+            "CREATE VIRTUAL TABLE notes_fts USING fts5(path UNINDEXED, title, body, "
+            "tokenize=\"%s\");" % B.FTS_TOKENIZER)
 
 
 def reindex(full=False, quiet=True):
     t0 = time.time()
     con = B.db()
+    upgrade = con.execute("PRAGMA user_version").fetchone()[0] < INDEX_VERSION
+    full = full or upgrade
+    if upgrade:
+        _upgrade_fts(con)
     known = {}
     for rel, mtime, size in con.execute("SELECT path, mtime, size FROM notes"):
         known[rel] = (mtime, size)
@@ -121,6 +159,9 @@ def reindex(full=False, quiet=True):
         # `neighbours()` keeps navigating them and graph retrieval leads to places that
         # are no longer there. There were 16 of those.
         con.execute("DELETE FROM links WHERE source=?", (rel,))
+        con.execute("DELETE FROM note_ids WHERE path=?", (rel,))
+    if upgrade:
+        con.execute("PRAGMA user_version=%d" % INDEX_VERSION)
     con.commit()
     total = con.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
     ms = (time.time() - t0) * 1000

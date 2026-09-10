@@ -15,7 +15,7 @@ import brainlib as B
 
 # Notes written in this run. They get reindexed at the end, OUTSIDE the flock:
 # doing it inside hung the process waiting on the database.
-_ESCRITAS = []
+_WRITTEN = []
 
 LOG_HEADING = "## Log"
 
@@ -100,7 +100,7 @@ def cmd_append(args):
                          % (os.path.splitext(os.path.basename(source))[0], LOG_HEADING))
             text = text.rstrip() + entry
             B.atomic_write(alt, text)
-            _ESCRITAS.append(alt)
+            _WRITTEN.append(alt)
         B.mark_wrote(args.sid)
         print(os.path.relpath(alt, B.VAULT))
         return
@@ -115,7 +115,7 @@ def cmd_append(args):
             text = text.rstrip() + "\n\n" + LOG_HEADING + "\n"
         text = text.rstrip() + entry
         B.atomic_write(path, text)
-        _ESCRITAS.append(path)
+        _WRITTEN.append(path)
     B.mark_wrote(args.sid)
     print(os.path.relpath(path, B.VAULT))
 
@@ -133,7 +133,7 @@ def cmd_new(args):
         text = frontmatter(args.title, args.type, args.project, args.area, args.tag,
                            provenance=args.provenance or "") + body.strip() + "\n"
         B.atomic_write(path, text)
-        _ESCRITAS.append(path)
+        _WRITTEN.append(path)
     B.mark_wrote(args.sid)
     print(os.path.relpath(path, B.VAULT))
 
@@ -155,18 +155,26 @@ def cmd_set(args):
             sys.exit(1)
         text = open(path, errors="replace").read()
         if args.section:
-            lines, out, dentro, hecho = text.splitlines(True), [], False, False
+            # The section ends at the next heading of the SAME OR HIGHER level, not at any
+            # "#" line: a "## Entries" section whose entries are "### 1. ..." headings was
+            # cut short at its own first entry, so every replacement appended a fresh copy
+            # and left the old one behind. That silently duplicated a whole log note.
+            target = args.section.strip()
+            level = len(target) - len(target.lstrip("#"))
+            lines, out, inside, done = text.splitlines(True), [], False, False
             for line in lines:
-                if line.strip() == args.section.strip():
+                if line.strip() == target:
                     out.append(line)
                     out.append("\n" + new_one.strip() + "\n")
-                    dentro, hecho = True, True
+                    inside, done = True, True
                     continue
-                if dentro and line.startswith("#"):
-                    dentro = False
-                if not dentro:
+                if inside and line.startswith("#"):
+                    own_level = len(line) - len(line.lstrip("#"))
+                    if level == 0 or own_level <= level:
+                        inside = False
+                if not inside:
                     out.append(line)
-            if not hecho:
+            if not done:
                 sys.stderr.write("vw: section not found: %s\n" % args.section)
                 sys.exit(1)
             text = "".join(out)
@@ -179,7 +187,7 @@ def cmd_set(args):
             sys.stderr.write("vw: use --section or --match\n")
             sys.exit(1)
         B.atomic_write(path, text)
-        _ESCRITAS.append(path)
+        _WRITTEN.append(path)
     B.mark_wrote(args.sid)
     print(os.path.relpath(path, B.VAULT))
 
@@ -211,5 +219,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-    if _ESCRITAS:                       # the graph is updated on every write
-        B.reindex_notes(_ESCRITAS)
+    for _p in _WRITTEN:                # so vault_ledger can tell this from a raw write
+        B.note_vw_write(_p)
+    if _WRITTEN:                       # the graph is updated on every write
+        B.reindex_notes(_WRITTEN)

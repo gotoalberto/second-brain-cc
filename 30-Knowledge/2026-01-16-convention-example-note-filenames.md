@@ -1,6 +1,7 @@
 ---
 id: 2026-01-16-convention-example-note-filenames
 title: "Convention: dated kebab-case note filenames"
+aliases: [convention-example]
 type: convention
 area: [knowledge-management]
 projects: []
@@ -77,5 +78,5 @@ Avoid:
 
 ## Related
 
-- [[convention-frontmatter-contract]] — the YAML fields every note carries.
-- [[howto-reindex-the-vault]] — rebuilding the search index after adding notes.
+- `90-Meta/templates/note.md`: the YAML fields every note carries.
+- [[2026-01-17-howto-example-add-a-skill]]: a how-to that ends by reindexing the vault.

@@ -4,7 +4,7 @@ import os, sys, time, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import brainlib as B
 
-STALE_SESSION = 3600 * 6
+STALE_SESSION = B.STALE_SESSION
 
 # The cap lives in protocol_budget: it is the same number the write guard and the doctor
 # look at, and keeping it in two places is how they drift apart.
@@ -50,10 +50,15 @@ def skills_lines(limit=14):
 
 def overlapping(con, sid, cwd):
     project = B.project_name(cwd)
+    # Same filter as company_warning: a slug that is only a directory name (`~` gives
+    # `myuser`) is not a project, and two sessions there are not stepping on anything.
+    # Without it, home-directory sessions warned each other on every startup.
+    if not B.is_real_project(project):
+        return []
     warn = []
-    for osid, oproj, obranch, hb, _pid in con.execute(
+    for osid, oproj, obranch, hb, opid in con.execute(
             "SELECT sid, project, branch, heartbeat, pid FROM sessions WHERE sid != ?", (sid,)):
-        if not B.session_alive(hb):
+        if not B.session_live(opid, hb):
             continue
         if oproj and oproj == project:
             mins = int((B.now() - hb) / 60)
@@ -62,11 +67,17 @@ def overlapping(con, sid, cwd):
     return warn
 
 
-def cleanup(con):
-    """Purges dead sessions and their claims. Keeps ghost claims out."""
+def cleanup(con, keep=None):
+    """Purges dead sessions and their claims. Keeps ghost claims out.
+
+    A session whose Claude process is gone is purged AT ONCE (its PID no longer runs),
+    which is what keeps a finished session from lingering as 'working'. Rows with no PID
+    fall back to the 6 h heartbeat backstop. The current session is never purged."""
     dead = []
-    for sid, hb, _pid in con.execute("SELECT sid, heartbeat, pid FROM sessions"):
-        if B.now() - (hb or 0) > STALE_SESSION:
+    for sid, hb, pid in con.execute("SELECT sid, heartbeat, pid FROM sessions"):
+        if sid == keep:
+            continue
+        if B.now() - (hb or 0) > STALE_SESSION or (pid and not B.pid_alive(pid)):
             dead.append(sid)
     for sid in dead:
         con.execute("DELETE FROM sessions WHERE sid=?", (sid,))
@@ -95,12 +106,8 @@ def baseline(sid, cwd):
 
 
 def build_sections(con, sid=None, cwd=None):
-    """The startup block, by section and with priority.
-
-    High priority = it stays. It is trimmed by WHOLE SECTIONS, never by loose
-    lines: trimming lines left orphaned headings ("## Active projects" without a
-    single project underneath), which is worse than not putting it there at all.
-    """
+    """The startup block, by section. The priority is only informational now: nothing
+    is ever dropped (see fit)."""
     secs = [("header", "# Brain — the user's memory (vault: ~/Brain)", 100)]
 
     prot = PB.protocol_text()
@@ -129,22 +136,15 @@ def build_sections(con, sid=None, cwd=None):
 
 
 def fit(sections):
-    """Fits the sections under the cap. Returns (text, dropped, verdict).
+    """Joins every section and measures it. Returns (text, verdict).
 
-    Drops whole lower-priority sections first, and leaves a record: a silent trim
-    makes the context LOOK complete, which is exactly the bug this comes to fix.
+    It never drops anything. Until 2026-09-10 it dropped whole sections to stay under
+    the cap, and on a busy morning it took `## Active projects` away to save ~50 tokens
+    of noise. Losing context to save tokens that cost next to nothing is the wrong
+    trade: going over the cap only warns, and the fix is to raise MAX_TOKENS.
+    Detail: 30-Knowledge/2026-09-10-decision-startup-budget-warns-never-trims.md
     """
-    kept = list(sections)
-    dropped = []
-    verdict = PB.assess(kept)
-    while verdict["total"] > PB.MAX_TOKENS and len(kept) > 1:
-        victim = min(kept, key=lambda s: s[2])
-        if victim[2] >= 90:                 # the core is untouchable: better to overflow
-            break
-        kept.remove(victim)
-        dropped.append(victim[0])
-        verdict = PB.assess(kept)
-    return "\n".join(s[1] for s in kept), dropped, verdict
+    return "\n".join(s[1] for s in sections), PB.assess(sections)
 
 
 def company_warning(sid, project):
@@ -185,44 +185,36 @@ def main():
     cwd = data.get("cwd") or os.getcwd()
 
     con = B.db()
-    cleanup(con)
+    cleanup(con, keep=sid)
     con.execute(
         "INSERT INTO sessions(sid,cwd,project,branch,started,heartbeat,pid) "
-        "VALUES(?,?,?,?,?,?,?) ON CONFLICT(sid) DO UPDATE SET heartbeat=excluded.heartbeat",
-        (sid, cwd, B.project_name(cwd), B.current_branch(cwd), B.now(), B.now(), 0))
+        "VALUES(?,?,?,?,?,?,?) ON CONFLICT(sid) DO UPDATE SET "
+        "heartbeat=excluded.heartbeat, pid=excluded.pid",
+        (sid, cwd, B.project_name(cwd), B.current_branch(cwd), B.now(), B.now(),
+         B.claude_session_pid()))
     con.commit()
 
     baseline(sid, cwd)
 
     sections = build_sections(con, sid, cwd)
-    text, dropped, verdict = fit(sections)
+    text, verdict = fit(sections)
 
     # Deliberately OUTSIDE the budget: it is two lines and it prevents a merge conflict.
     # Trimming this to save tokens would be a very expensive saving.
     text += company_warning(sid, B.project_name(cwd))
     n_projs = len(active_projects(con))
 
-    # Make the trimming visible. If something was dropped, it is said inside the
-    # context (for the agent) and via systemMessage (for the user).
+    # The cap is an alarm for the user, never a trim: the agent always gets the whole block.
     msg = None
-    if dropped:
-        text += ("\n\n> ⚠️ Startup trimmed for budget: omitted sections %s. "
-                 "Check with `python3 ~/Brain/_bin/protocol_budget.py`."
-                 % ", ".join(dropped))
-        msg = ("Brain: the startup context did not fit and %s was omitted. "
-               "Diagnose with: python3 ~/Brain/_bin/protocol_budget.py"
-               % ", ".join(dropped))
-    elif verdict["status"] in ("WARN", "OVER"):
-        # Early warning: it still fits, but the next rule will push something out.
-        msg = ("Brain: startup is at %.0f%% of budget (%d/%d tokens). %s"
+    if verdict["status"] in ("WARN", "OVER"):
+        msg = ("Brain: startup is at %.0f%% of budget (%d/%d tokens), nothing was cut. %s"
                % (100 * verdict["ratio"], verdict["total"], verdict["max"],
                   PB.advice(verdict)))
 
     B.metric(con, sid, "compass", tokens=verdict["total"],
              latency_ms=(time.time() - t0) * 1000, hits=n_projs,
-             extra="%s pct=%d dropped=%s" % (verdict["status"],
-                                             int(100 * verdict["ratio"]),
-                                             ",".join(dropped) or "-"))
+             extra="%s pct=%d dropped=-" % (verdict["status"],
+                                            int(100 * verdict["ratio"])))
     con.close()
     B.emit("SessionStart", text, system_message=msg)
 

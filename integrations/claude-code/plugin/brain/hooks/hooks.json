@@ -2,7 +2,7 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume|clear",
+        "matcher": "startup|resume|clear|compact",
         "hooks": [
           {
             "type": "command",
@@ -31,7 +31,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|NotebookEdit",
+        "matcher": "Bash|Edit|Write|NotebookEdit",
         "hooks": [
           {
             "type": "command",
@@ -58,7 +58,7 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "implementer|planner|context-scout|librarian|verifier|skill-forge",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",

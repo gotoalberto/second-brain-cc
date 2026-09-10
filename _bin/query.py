@@ -25,6 +25,14 @@ def main():
     if not B.enabled():
         print("vault unavailable"); return 0
     con = B.db()
+    # Every search looks for broken links and fixes what has a safe fix. Before
+    # searching, so the results already use the fixed graph.
+    links = None
+    try:
+        import linkfix as LF
+        links = LF.run(con)
+    except Exception as e:
+        B.log_error("query.linkfix", e)
 
     if args.recent:
         rows = con.execute(
@@ -55,6 +63,13 @@ def main():
     except Exception as exc:
         print("query error: %r" % exc); return 1
 
+    if links:
+        res, changed, fixed = links
+        if fixed:
+            print("(links: fixed %d broken link(s) in %d note(s) before searching)\n"
+                  % (fixed, len(changed)))
+        if res["broken"]:
+            print(LF.notice(res, limit=5) + "\n")
     if not rows:
         print("no results for: %s" % query)
         print("(try --all to include sessions and context packs)")

@@ -1,6 +1,7 @@
 ---
 id: 2026-01-15-entity-alice-example
 title: Alice Example
+aliases: [entity-alice]
 type: entity
 area: [team]
 projects: [my-project]
@@ -22,12 +23,12 @@ updated: 2026-01-15
 ## Who
 
 Alice Example is a fictional **teammate** — a backend engineer on the
-[[project-my-project]] project. She is the person other notes point to when they
+[[2026-01-15-project-example-website-redesign]] project. She is the person other notes point to when they
 mention "Alice", so decisions, sessions and meetings can link to a single node
 instead of repeating her details.
 
 - **Role:** Backend engineer / teammate
-- **Works on:** [[project-my-project]]
+- **Works on:** [[2026-01-15-project-example-website-redesign]]
 - **Area:** team
 - **Timezone:** placeholder (e.g. UTC+1)
 - **Contact:** use a placeholder here (e.g. `alice@example.com`) — never a real
@@ -35,16 +36,16 @@ instead of repeating her details.
 
 ## Context
 
-Alice owns the ingestion service on [[project-my-project]] and is the usual
+Alice owns the ingestion service on [[2026-01-15-project-example-website-redesign]] and is the usual
 reviewer for changes to the pipeline conventions described in
-[[convention-example]]. When a session touches that service, link back here so
+[[2026-01-16-convention-example-note-filenames]]. When a session touches that service, link back here so
 the graph shows who was involved.
 
 ## Links
 
-- Project: [[project-my-project]]
-- A decision she was part of: [[decision-example]]
-- A convention she maintains: [[convention-example]]
+- Project: [[2026-01-15-project-example-website-redesign]]
+- A decision she was part of: [[2026-01-16-decision-example-sqlite-over-embeddings]]
+- A convention she maintains: [[2026-01-16-convention-example-note-filenames]]
 
 ## Notes
 

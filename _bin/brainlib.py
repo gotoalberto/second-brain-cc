@@ -230,13 +230,20 @@ def atomic_write(path, content):
 
 
 # ---------------------------------------------------------------------- database
+# The FTS tokenizer stems English (porter) since 2026-09-10. Without it `fails`, `fail` and
+# `failure` were three unrelated words, so a Spanish question (`falla` -> `fail`) and its
+# English twin (`fails`) searched different notes. Measured on a bilingual query set: fitted
+# failures 2 -> 1, held-out shared notes +4, false injections on out-of-vault prompts
+# unchanged (3/10). An existing table keeps the tokenizer it was created with; the
+# indexer rebuilds it once (index_vault.INDEX_VERSION 3).
+FTS_TOKENIZER = "porter unicode61 remove_diacritics 2"
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS notes(
   path TEXT PRIMARY KEY, mtime REAL, size INTEGER, title TEXT, ntype TEXT,
   area TEXT, projects TEXT, tags TEXT, status TEXT, confidence TEXT,
   source TEXT, updated TEXT, folder TEXT, excerpt TEXT, retrievable INTEGER);
 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
-  path UNINDEXED, title, body, tokenize="unicode61 remove_diacritics 2");
+  path UNINDEXED, title, body, tokenize="porter unicode61 remove_diacritics 2");
 CREATE TABLE IF NOT EXISTS sessions(
   sid TEXT PRIMARY KEY, cwd TEXT, project TEXT, branch TEXT,
   started REAL, heartbeat REAL, pid INTEGER, tokens INTEGER DEFAULT 0,
@@ -250,6 +257,13 @@ CREATE TABLE IF NOT EXISTS lastprompt(sid TEXT PRIMARY KEY, terms TEXT, ts REAL)
 -- Without this, the relations exist in the text but the search cannot follow them.
 CREATE TABLE IF NOT EXISTS links(source TEXT, target TEXT, PRIMARY KEY(source, target));
 CREATE INDEX IF NOT EXISTS idx_links_target ON links(target);
+-- A note's frontmatter `id:` when it differs from its filename. Notes get linked by id
+-- (vw.py builds the id from the title, the file may be named otherwise), and a link by
+-- id that nothing resolves is a hole in the graph. See LinkResolver.
+CREATE TABLE IF NOT EXISTS note_ids(id TEXT PRIMARY KEY, path TEXT);
+-- Names a note had BEFORE: old filenames (git renames) and old ids (the translation to
+-- English rewrote hundreds). Filled by linkfix.py from git history.
+CREATE TABLE IF NOT EXISTS link_aliases(alias TEXT PRIMARY KEY, path TEXT, how TEXT);
 CREATE TABLE IF NOT EXISTS vault_writes(
   sid TEXT, path TEXT, ts REAL, PRIMARY KEY(sid, path));
 CREATE TABLE IF NOT EXISTS metrics(
@@ -299,6 +313,106 @@ def db(timeout=4.0):
     _migrate(con)
     con.executescript(SCHEMA)
     return con
+
+
+# ---------------------------------------------------------------------- link graph
+DATE_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}-")
+
+
+def link_target(raw):
+    """The target of a `[[...]]` body: alias (`|`, escaped `\\|` in tables) and heading
+    (`#`) stripped. The single definition, shared by the indexer and linkfix."""
+    return re.split(r"\\?\|", raw)[0].split("#")[0].strip()
+
+
+class LinkResolver(object):
+    """Resolves a [[target]] to the note it means. The ONE resolver: the indexer's graph,
+    retrieval's neighbours, the doctor and linkfix all ask this.
+
+    Until 2026-09-10 each place resolved with `path LIKE '%' || target || '.md'`, a bare
+    suffix on the path. It was both too loose and too strict: `[[api]]` landed on a
+    runbook that happens to end in `-mobile-api`, while a link by the note's
+    frontmatter `id:` (15 of the 29 broken ones) resolved to nothing.
+
+    `resolve()` returns (path, how). Canonical hows need no rewrite:
+      exact     the filename
+      undated   a dateless slug of a dated file (the meeting-notes convention, `[[weekly-sync]]`)
+      entity    a topic that names an entity (`[[acme]]` -> `...-entity-acme.md`)
+    Non-canonical hows resolve for search, and linkfix rewrites them to the filename:
+      id        the frontmatter id
+      alias     an old filename or old id, from git history
+      dateshift same slug, different date, and only one such note
+      normal    `.md` suffix, spaces or case
+    """
+
+    def __init__(self, con):
+        rows = con.execute("SELECT path, retrievable FROM notes").fetchall()
+        # Retrievable folders win a basename collision: that is the note a link means.
+        rows.sort(key=lambda r: (r[1] or 0, r[0]))
+        self.exact, self.undated, self.names = {}, {}, {}
+        for path, _r in rows:
+            base = os.path.splitext(os.path.basename(path))[0]
+            self.exact[base] = path
+            short = DATE_PREFIX.sub("", base)
+            if short != base:
+                # Several dated notes with one slug: the most recent one is meant.
+                prev = self.undated.get(short)
+                if not prev or os.path.basename(path) > os.path.basename(prev):
+                    self.undated[short] = path
+        self.ids = dict(con.execute("SELECT id, path FROM note_ids"))
+        live = set(p for p, _ in rows)
+        self.aliases = {a: p for a, p in con.execute("SELECT alias, path FROM link_aliases")
+                        if p in live}
+
+    def resolve(self, target):
+        t = (target or "").strip()
+        if not t:
+            return None, None
+        hit = self._canonical(t)
+        if hit:
+            return hit
+        if t in self.ids:
+            return self.ids[t], "id"
+        if t in self.aliases:
+            return self.aliases[t], "alias"
+        short = DATE_PREFIX.sub("", t)
+        if short != t:
+            if short in self.undated:
+                return self.undated[short], "dateshift"
+            if short in self.exact:
+                return self.exact[short], "dateshift"
+        norm = t[:-3] if t.lower().endswith(".md") else t
+        norm = re.sub(r"\s+", "-", norm.strip()).lower()
+        if norm != t:
+            path, _how = self.resolve(norm)
+            if path:
+                return path, "normal"
+        return None, None
+
+    def _canonical(self, t):
+        if t in self.exact:
+            return self.exact[t], "exact"
+        if t in self.undated:
+            return self.undated[t], "undated"
+        if not DATE_PREFIX.match(t) and not t.startswith("entity-"):
+            e = "entity-" + t
+            if e in self.exact:
+                return self.exact[e], "entity"
+            if e in self.undated:
+                return self.undated[e], "entity"
+        return None
+
+    def names_for(self, paths):
+        """Every name that resolves to one of `paths`, for finding BACKLINKS: a link
+        table holds names, not paths, so the incoming edges are the ones whose target is
+        one of these."""
+        want = set(paths)
+        out = set()
+        for table in (self.exact, self.undated, self.ids, self.aliases):
+            out.update(n for n, p in table.items() if p in want)
+        # `[[acme]]` reaches `entity-acme` (the `entity` how), so it is a backlink too.
+        out.update(n[len("entity-"):] for n in list(out) if n.startswith("entity-"))
+        return out
 
 
 def metric(con, sid, event, tokens=0, latency_ms=0.0, hits=0, extra=""):
@@ -367,7 +481,9 @@ def as_list(value):
 # Spanish stop word counts in the coverage denominator and can never add to it.
 # "que pasa si dos maquinas escriben a la vez" scored 1 out of 5 and injected nothing,
 # with eight notes about exactly that.
-STOP = set("""the and for that with this from you your are was were has have had not but
+STOP = set("""ayudes ayudame ayudarme ayudar ayuda algunas algunos voy vas dar darme
+quiero quisiera necesito podrias puedes puedas ponme sacame miralo revisalo
+the and for that with this from you your are was were has have had not but
 que como para por con del las los una uno este esta esto eso ese esa cual cuales donde
 cuando porque pero mas más muy sobre entre hasta desde también solo sólo ser estar hacer
 hay son era fue han his her its our their what which who whom does did done then than
@@ -386,7 +502,15 @@ segun sobre bajo tras ante durante mediante salvo excepto incluso
 ademas entonces luego despues antes ahora ya todavia aun siempre nunca
 quiza quizas acaso tal vez claro obvio simple facil dificil
 necesito necesitamos deberia debemos podria podriamos seria serian
-dime dinos explica explicame cuentame muestrame ensename""".split())
+dime dinos explica explicame cuentame muestrame ensename
+cualquier cualquiera debe deben debería deberías haya hayan sea sean esos esas estos estas
+dicen dice dijo está están estás estoy digas hagas haga hagan podemos podamos simplemente
+acabo acabas acabes acaba supone tenido posible posibles continuar realizar trabajemos
+trabajaremos trabajamos asegurate asegúrate hazme dejame déjame quieres queremos ello ellos
+ellas eres soy sido siendo""".split())
+# The last block (2026-09-10) came from the log of real misses: Spanish function words
+# and filler verbs that sat in the coverage denominator of real prompts, each one pure
+# dead weight.
 
 
 # Spanish -> English bridge for queries.
@@ -513,6 +637,15 @@ GLOSARIO = {
     "clave": "key", "claves": "key",
     "certificado": "certificate", "certificados": "certificate",
     "correo": "email", "coste": "cost", "costes": "cost",
+    # billing / purchasing was missing entirely: a question about a vendor's invoices
+    # reached no note, because the vault says invoice/vendor and the query factura/proveedor.
+    "factura": "invoice", "facturas": "invoice", "facturacion": "billing",
+    "facturación": "billing", "recibo": "receipt", "recibos": "receipt",
+    "proveedor": "vendor", "proveedores": "vendor", "gasto": "expense",
+    "gastos": "expense", "cargo": "charge", "cargos": "charge",
+    "pago": "payment", "pagos": "payment", "importe": "amount",
+    "solicitar": "request", "solicita": "request", "pedir": "request",
+    "buzon": "mailbox", "buzón": "mailbox", "bandeja": "inbox",
     "informe": "report", "informes": "report",
     "grafico": "chart", "gráfico": "chart", "grafica": "chart",
     "pantalla": "screen", "captura": "screenshot",
@@ -532,7 +665,7 @@ GLOSARIO = {
 # from). Every entry below maps a Spanish word onto a term this vault actually uses at
 # least a dozen times; the list was generated from the vault's own vocabulary, not guessed.
     "sistema": "system", "sistemas": "system",
-    # learned from a real miss via `bilingual_eval.py --from-misses`
+    # learned from a real miss in the retrieval log
     "gestiona": "manage", "gestionar": "manage", "gestion": "manage",
     "gestión": "manage", "maneja": "manage", "manejar": "manage",
     "trabajo": "work", "trabajar": "work", "trabaja": "work",
@@ -581,6 +714,25 @@ GLOSARIO = {
     "numero": "number", "número": "number", "cantidad": "number",
     "primera": "first", "ultima": "last", "última": "last", "ultimo": "last",
 }
+
+# 2026-09-10: from the real misses in the log (`below-threshold` terms), not invented.
+# Each one is a Spanish word the user actually typed whose English twin the vault uses.
+GLOSARIO.update({
+    "rotos": "broken", "arreglarlos": "fix", "arreglalo": "fix", "arreglalos": "fix",
+    "arreglas": "fix", "busque": "search", "busques": "search", "buscamos": "search",
+    "mejora": "improve", "mejorar": "improve", "mejoras": "improve",
+    "revisa": "review", "revisar": "review", "revision": "review", "revisión": "review",
+    "identificar": "identify", "identifica": "identify",
+    "enlazar": "link", "enlazado": "link", "enlazados": "link",
+    "elimina": "delete remove", "eliminado": "delete remove",
+    "investiga": "investigate", "investigar": "investigate",
+    "implementa": "implement", "implementar": "implement",
+    "implementacion": "implement", "implementación": "implement",
+    "documento": "document", "documentos": "document", "rutina": "routine",
+    "rutinas": "routine", "enviado": "sent", "enviada": "sent", "fondos": "funds",
+    "español": "spanish", "notificacion": "notification", "notificación": "notification",
+    "notificaciones": "notification",
+})
 
 
 def sanitize_fts(text, max_terms=12):
@@ -780,9 +932,9 @@ def in_vault(path):
 
 
 def pid_alive(pid):
-    """For long-lived processes only. NOT valid for Claude sessions: the PID a hook
-    sees is the hook's own, and it dies in milliseconds. A session's sign of life
-    is its heartbeat, not its PID."""
+    """Is this PID a live process? Valid for a session's PID when it is the long-lived
+    Claude Code process captured by `claude_session_pid()` (NOT the hook's OWN pid, which
+    dies in milliseconds). The `sessions` table is per-machine, so the check is local."""
     try:
         os.kill(int(pid), 0)
         return True
@@ -795,6 +947,69 @@ SESSION_TTL = 1800          # no heartbeat in 30 min -> session considered dead
 
 def session_alive(heartbeat, ttl=SESSION_TTL):
     return (now() - (heartbeat or 0)) < ttl
+
+
+STALE_SESSION = 3600 * 6        # 6 h: absolute backstop for a lingering session row
+
+_CLAUDE_PID = None
+
+
+def claude_session_pid():
+    """PID of the long-lived Claude Code SESSION process this hook runs under, or 0.
+
+    The immediate parent of a hook can be an ephemeral shell (`os.getppid()` is not enough),
+    so we climb the process tree until we reach the process whose command names the
+    per-session Claude Code CLI (its path contains 'claude-code'). That process lives for
+    the whole session and exits when it ends, which makes it a real, OBSERVED sign of life —
+    unlike the heartbeat, which only says when the session was last seen. Returns 0 when it
+    cannot be found (some terminal variants, headless/cron runs); callers then fall back to
+    the heartbeat. The `sessions` table is per-machine, so this PID is always checkable here.
+    """
+    global _CLAUDE_PID
+    if _CLAUDE_PID is not None:
+        return _CLAUDE_PID
+    _CLAUDE_PID = 0
+    try:
+        import subprocess
+        pid = os.getppid()
+        for _ in range(10):
+            if not pid or pid <= 1:
+                break
+            r = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)],
+                               capture_output=True, text=True, timeout=3)
+            line = r.stdout.strip()
+            if not line:
+                break
+            ppid_s, _, cmd = line.partition(" ")
+            if "claude-code" in cmd:
+                _CLAUDE_PID = pid
+                break
+            try:
+                pid = int(ppid_s.strip() or 0)
+            except ValueError:
+                break
+    except Exception:
+        _CLAUDE_PID = 0
+    return _CLAUDE_PID
+
+
+def session_live(pid, heartbeat):
+    """Whether a machine-local session is ACTUALLY still running.
+
+    The `sessions` table lives in `_index/` (gitignored, per-machine), so its rows are all
+    this machine's and a PID check is valid. When the session's real PID is known (the Claude
+    Code process, from `claude_session_pid()`), the truth is whether that process still runs;
+    the heartbeat is only a backstop against PID reuse. Rows written before the PID was
+    captured carry 0 and fall back to the heartbeat window, exactly as before. This is what
+    stops a finished session from being reported as 'still working' for up to SESSION_TTL
+    after it has ended."""
+    try:
+        pid = int(pid or 0)
+    except (TypeError, ValueError):
+        pid = 0
+    if pid > 0:
+        return pid_alive(pid) and (now() - (heartbeat or 0)) < STALE_SESSION
+    return session_alive(heartbeat)
 
 
 # ------------------------------------------- observed signals (not self-declared)
@@ -920,6 +1135,130 @@ def reindex_notes(paths):
         return 0
 
 
+def note_vw_write(path):
+    """Record that vw.py wrote this note, so vault_ledger can tell a sanctioned write
+    from one that went around the gate. Best-effort: never raises, never blocks a write."""
+    try:
+        os.makedirs(STATE, exist_ok=True)
+        f = os.path.join(STATE, "vw_writes.json")
+        try:
+            d = json.load(open(f))
+        except Exception:
+            d = {}
+        cutoff = now() - 3600
+        d = {k: v for k, v in d.items() if isinstance(v, (int, float)) and v > cutoff}
+        d[os.path.realpath(path)] = now()
+        atomic_write(f, json.dumps(d))
+    except Exception:
+        pass
+
+
+def vw_wrote_last(path, slack=2.0):
+    """Was the LAST write to this note vw.py's?
+
+    A fixed time window was the first attempt and it masked real cases: vw.py writes a
+    note, something raw-writes it forty seconds later, and the window still says "vw.py
+    did it". Comparing the file's mtime against vw.py's recorded write is exact — anything
+    newer than that was written by something else. `slack` absorbs filesystem timestamp
+    granularity, nothing more.
+    """
+    try:
+        d = json.load(open(os.path.join(STATE, "vw_writes.json")))
+        ts = float(d.get(os.path.realpath(path), 0))
+        if not ts:
+            return False
+        return os.path.getmtime(path) <= ts + slack
+    except Exception:
+        return False
+
+
+# The rules a SUBAGENT cannot learn any other way. `compass.py` injects the protocol on
+# SessionStart, and that hook does not fire for subagents — there is no `SubagentStart`.
+# So an agent definition is the only thing its runner reads, and a rule missing from it
+# is a rule that agent will never follow. On 2026-09-08 the language rule was absent from
+# all six, and `librarian` — whose whole job is writing notes — had never seen it.
+# Detail: 30-Knowledge/2026-09-08-analysis-every-instrument-watches-one-surface-and-reports-on-all-of-them.md
+AGENT_RULES = {
+    "the vault is written in English": "vault-is-written-in-english",
+    "10-Projects/ and 70-Entities/ go through vw.py": "vw.py",
+    "titles and headings name the topic, not a headline": "write-like-a-person",
+}
+AGENTS_DIR = os.path.expanduser("~/.claude/agents")
+
+
+def agents_missing_rules():
+    """[(agent, [rules it does not carry])] for every agent definition on disk."""
+    out = []
+    if not os.path.isdir(AGENTS_DIR):
+        return out
+    for f in sorted(os.listdir(AGENTS_DIR)):
+        if not f.endswith(".md"):
+            continue
+        try:
+            text = open(os.path.join(AGENTS_DIR, f), errors="replace").read()
+        except OSError:
+            continue
+        # only agents that can write are held to the write rules
+        if not re.search(r"^tools:.*\b(Write|Edit)\b", text, re.M) \
+           and "All tools" not in text:
+            continue
+        missing = [name for name, needle in AGENT_RULES.items() if needle not in text]
+        if missing:
+            out.append((f[:-3], missing))
+    return out
+
+
+# The files under ~/.claude that decide HOW the vault gets written: agent definitions,
+# skills and scheduled-task prompts. They are not notes, so nothing in the vault ledger
+# sees them — and on 2026-09-08 a session changed sixteen of them (the language rule was
+# missing from every agent and nine skills) while gate_memory reported "nothing saved".
+# Work here is exactly the kind that has to end up in a note, so it must be visible.
+GOVERNANCE = ("agents", "skills", "scheduled-tasks")
+
+
+def governance_fingerprint():
+    """Hash of the governance files' (path, mtime, size). None if the dir is missing."""
+    root = os.path.expanduser("~/.claude")
+    if not os.path.isdir(root):
+        return None
+    h = hashlib.sha256()
+    seen = 0
+    for sub in GOVERNANCE:
+        base = os.path.join(root, sub)
+        if not os.path.isdir(base):
+            continue
+        for dp, dn, fn in os.walk(base):
+            dn[:] = sorted(d for d in dn if not d.startswith("."))
+            for f in sorted(fn):
+                if not f.endswith((".md", ".json")):
+                    continue
+                p = os.path.join(dp, f)
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                h.update(("%s|%d|%d|" % (os.path.relpath(p, root),
+                                         int(st.st_mtime), st.st_size)).encode())
+                seen += 1
+    return h.hexdigest() if seen else None
+
+
+def vault_writes_latest(con, sid):
+    """When this session last wrote a note, or 0.
+
+    COUNT(*) alone cannot see a note being written twice: vault_writes is keyed
+    PRIMARY KEY(sid, path), so the second write is an upsert and the count does not
+    move. Going back to a note and deepening it — the most valuable kind of save —
+    therefore read as "saved nothing" to gate_memory until 2026-09-08. The row's ts
+    does move on the upsert, so this sees it.
+    """
+    try:
+        row = con.execute("SELECT MAX(ts) FROM vault_writes WHERE sid=?", (sid,)).fetchone()
+        return float(row[0]) if row and row[0] else 0.0
+    except Exception:
+        return 0.0
+
+
 def vault_writes_count(con, sid):
     try:
         return con.execute("SELECT COUNT(*) FROM vault_writes WHERE sid=?", (sid,)).fetchone()[0]
@@ -1034,7 +1373,7 @@ def project_note(slug):
     """Relative path of `slug`'s note in 10-Projects, or "" if there is none.
 
     The index is asked rather than the disk because the filename is not derivable from
-    the slug: `brain` lives in `2026-08-20-project-brain-memory-system.md`.
+    the slug: `my-project` may live in `2026-01-15-project-example-website-redesign.md`.
     """
     if not slug:
         return ""
@@ -1171,9 +1510,9 @@ def presence_purge(ttl=SESSION_TTL):
 
 
 def live_sessions(con, exclude=None):
-    """sids with a recent heartbeat, not counting our own."""
-    return [s for (s, hb) in con.execute("SELECT sid, heartbeat FROM sessions")
-            if session_alive(hb) and s != exclude]
+    """sids of sessions actually still running, not counting our own."""
+    return [s for (s, hb, pid) in con.execute("SELECT sid, heartbeat, pid FROM sessions")
+            if session_live(pid, hb) and s != exclude]
 
 
 def at_rest(path, margin=QUIESCENCE):
@@ -1285,21 +1624,59 @@ def tree_fingerprint(cwd, timeout=5, exclude=None):
 
 
 # ---------------------------------------------------------------- acreditar escrituras
-def current_sid(con):
-    """Infer the session from the working directory.
+def current_sid(con, cwd=None, pid=None):
+    """Which session is running this, and HOW we know. Returns `(sid, how)`.
 
-    Agents do not know the session_id, so without this a legitimate write goes uncredited
-    and the memory gate blocks on close saying nothing was saved.
+    Agents do not know their own `session_id`, so somebody has to work it out: without
+    this a legitimate write goes uncredited and the memory gate blocks on close saying
+    nothing was saved. The question is what to work it out FROM.
+
+    It used to be the working directory, falling back to "the first live session". Both
+    halves gave wrong answers the same way — several sessions can share a cwd,
+    often the home directory — and both did real damage: a write credited to the wrong
+    session on 2026-08-21, and on 2026-09-02 a `claim.py --release` that deleted a live
+    session's claims and left the caller's own intact.
+
+    What does not lie is the PROCESS. `claude_session_pid()` climbs to the long-lived
+    Claude Code process, and `sessions.pid` holds that same number, written by the
+    hooks: an observed fact, not an inference from where somebody was standing.
+
+    `how` is `"pid"`, `"cwd"` or `None`, and the distinction is the useful part —
+    "I saw the process", "nobody else is standing here" and "I do not know" are three
+    different answers, and only the third should stop a caller. `pid` is a parameter so
+    the tests can state a situation instead of depending on the machine; `None` means
+    work it out, `0` means there is no Claude process above us, which is what a cron or
+    a headless run really looks like.
     """
-    cwd = os.path.realpath(os.getcwd())
-    rows = con.execute("SELECT sid, cwd, heartbeat FROM sessions ORDER BY heartbeat DESC").fetchall()
-    for sid, scwd, hb in rows:
-        if scwd and os.path.realpath(scwd) == cwd and session_alive(hb):
-            return sid
-    for sid, scwd, hb in rows:            # only one live session: it is that one
-        if session_alive(hb):
-            return sid
-    return None
+    rows = con.execute(
+        "SELECT sid, cwd, pid, heartbeat FROM sessions ORDER BY heartbeat DESC").fetchall()
+    if not rows:
+        return None, None
+
+    if pid is None:
+        pid = claude_session_pid()
+
+    # 1. The process. Exact, and it does not care what directory anyone is in.
+    if pid:
+        for sid, _scwd, spid, _hb in rows:
+            if spid and int(spid) == int(pid):
+                return sid, "pid"
+
+    # 2. The directory, and ONLY when there is nobody else to confuse it with. A session
+    #    alone on its cwd is perfectly identifiable, and that is what a hook or a cron
+    #    with no Claude process above it looks like: refusing there would take away
+    #    something that worked.
+    cwd = os.path.realpath(cwd or os.getcwd())
+    here = [r for r in rows if r[1] and os.path.realpath(r[1]) == cwd]
+    live = [r for r in here if session_live(r[2] or 0, r[3])]
+    if len(live) == 1:
+        return live[0][0], "cwd"
+    if not live and len(here) == 1:
+        return here[0][0], "cwd"
+
+    # 3. Nothing else. Here there used to be "the first live session", and that is
+    #    precisely what did the damage: an answer that looks like knowing.
+    return None, None
 
 
 def mark_wrote(sid=""):
@@ -1311,7 +1688,7 @@ def mark_wrote(sid=""):
     try:
         con = db()
         if not sid:
-            sid = current_sid(con)
+            sid, _how = current_sid(con)
         if not sid:
             con.close()
             return

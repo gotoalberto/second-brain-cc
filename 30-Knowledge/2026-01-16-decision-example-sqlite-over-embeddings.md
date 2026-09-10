@@ -1,6 +1,7 @@
 ---
 id: 2026-01-16-decision-example-sqlite-over-embeddings
 title: Use SQLite FTS over vector embeddings for vault search
+aliases: [decision-example]
 type: decision
 area: [memory-system]
 projects: [my-project]
@@ -23,7 +24,7 @@ supersedes: []
 Search the vault with **SQLite FTS5** (a full-text keyword index over the notes) rather
 than with **vector embeddings** (semantic similarity over an embedding model). The index
 lives in a single local database file, is rebuilt by `_bin/index_vault.py`, and is queried
-by `_bin/query.py`. See the toolchain in [[my-project]].
+by `_bin/query.py`. See the toolchain in [[2026-01-15-project-example-website-redesign]].
 
 ## Alternatives considered
 

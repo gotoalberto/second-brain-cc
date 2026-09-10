@@ -16,3 +16,8 @@ Run `context-scout` for the task «$ARGUMENTS».
 4. Summarise for the user in five lines: what the vault already knows, which earlier
    decisions constrain the task, and which gaps the scout declared.
 5. Do not start implementing. This only prepares the ground; to execute, use `/task`.
+
+## Language
+
+The Context Pack, like every note, is written in **English** — `context-scout` carries the
+same rule: `~/Brain/30-Knowledge/2026-09-08-convention-vault-is-written-in-english.md`.

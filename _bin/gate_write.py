@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
-"""PreToolUse on Edit|Write|NotebookEdit. Three jobs, strict scope.
+"""PreToolUse on Bash|Edit|Write|NotebookEdit. Three jobs, strict scope.
 
   1. Denies direct writes to 10-Projects/ and 70-Entities/ (forces vw.py).
+     Bash counts. Until 2026-09-08 the matcher was `Edit|Write|NotebookEdit`, so
+     `echo x >> 10-Projects/note.md` sailed straight past the gate — reproduced by
+     hand that day. It matters because under bypass-permissions mode the session is
+     told to prefer Bash over the file tools, which routed every write around the
+     only thing protecting shared notes. Detail:
+     30-Knowledge/2026-09-08-analysis-every-instrument-watches-one-surface-and-reports-on-all-of-them.md
   2. Warns/blocks if another live session holds a claim on that path.
   3. Context Pack gate (strict mode, off by default).
 
@@ -14,6 +20,34 @@ import brainlib as B
 
 CONFIG = os.path.join(B.VAULT, "_index", "config.json")
 PROTECTED = ("10-Projects", "70-Entities")
+
+# A shell command cannot be parsed reliably, so this does not try. It asks two
+# questions: does the command name a protected folder, and does it look like it
+# writes? Both yes -> deny. That misses an obfuscated path and is fine: the point is
+# to stop the ordinary `>>`, `sed -i` and `open(...,"w")`, not to be a sandbox.
+# vault_ledger.py catches after the fact whatever gets through, by mtime.
+_WRITERS = re.compile(
+    r">>?\s*['\"]?[^\s|&;'\"]*(?:10-Projects|70-Entities)"   # > file  /  >> file
+    r"|\b(?:sed\s+-i|tee|truncate|dd|install)\b"             # in-place editors
+    r"|\b(?:cp|mv|rm|touch|mkdir|rsync|ln)\b"                # file moves
+    r"|open\s*\([^)]*['\"][wa]\+?['\"]"                      # python open(..., 'w')
+    r"|\.write(?:lines)?\s*\("                               # python .write(
+    r"|\bshutil\.(?:copy|move)\b"
+)
+
+# Sanctioned writers and version control: this is how a protected note is SUPPOSED to
+# be written, so they must never be denied or the gate blocks its own remedy.
+_ALLOWED = re.compile(r"\b(?:vw\.py|va\.py|s3v\.py|vault_sync\.py|index_vault\.py|git)\b")
+
+
+def bash_touches_protected(command):
+    """Which protected folder this shell command looks like it writes to, or None."""
+    if not command or _ALLOWED.search(command):
+        return None
+    hit = next((p for p in PROTECTED if p in command), None)
+    if not hit:
+        return None
+    return hit if _WRITERS.search(command) else None
 
 
 def config():
@@ -40,6 +74,20 @@ def warn(msg):
 def main():
     data = B.read_hook_input()
     ti = data.get("tool_input") or {}
+    sid0 = B.sid8(data.get("session_id"))
+
+    # Bash arrives with a command, not a file_path.
+    if data.get("tool_name") == "Bash":
+        folder = bash_touches_protected(ti.get("command") or "")
+        if folder:
+            deny("`%s/` is shared between sessions and this looks like a shell write "
+                 "to it. Use:\n"
+                 "  /usr/bin/python3 ~/Brain/_bin/vw.py append <note> --sid %s\n"
+                 "(locks the file, redacts credentials and writes atomically).\n"
+                 "If this command only READS, rewrite it so it does not look like a "
+                 "write, or go through vw.py anyway." % (folder, sid0))
+        sys.exit(0)
+
     path = ti.get("file_path") or ti.get("notebook_path") or ""
     if not path:
         sys.exit(0)
@@ -76,8 +124,8 @@ def main():
         row = con.execute("SELECT heartbeat, pid, project FROM sessions WHERE sid=?", (osid,)).fetchone()
         if not row:
             continue
-        hb, _pid, proj = row
-        if not B.session_alive(hb):
+        hb, opid, proj = row
+        if not B.session_live(opid, hb):
             continue                      # ghost claim from a dead session
         if fnmatch.fnmatch(path, pattern) or path == pattern:
             conflict = (osid, proj)

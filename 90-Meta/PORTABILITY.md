@@ -66,8 +66,7 @@ wrapper — it works with any agent, and the clipboard support is cross-platform
 
 ### 5. The files (optional, if there are heavy deliverables)
 
-`_bin/s3v.py` over a private object store named by `BRAIN_S3_BUCKET`. See
-[[2026-08-26-decision-file-vault-in-s3]]. The system only requires that **the note cites a
+`_bin/s3v.py` over a private object store named by `BRAIN_S3_BUCKET`. The system only requires that **the note cites a
 stable key** and that a manifest exists; any object storage works.
 
 ### 6. The hooks (optional, Claude Code only)
@@ -134,7 +133,6 @@ Before ending a session that decided anything, write it down in 30-Knowledge/.
 
 ## Links
 
-- [[2026-08-26-decision-file-vault-in-s3]]
 - `90-Meta/AGENT-PROTOCOL.md` — the full contract
 - `90-Meta/ARCHITECTURE.md` — how each piece fits together
 - `integrations/` — the three ready-made connectors

@@ -2,7 +2,7 @@
 """WorktreeCreate — seeds the new worktree.
 
 CRITICAL: this hook fails worktree creation on any exit code != 0.
-Todo va envuelto y termina siempre en exit 0.
+Everything is wrapped and it always ends on exit 0.
 """
 import os, sys, glob, shutil, hashlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

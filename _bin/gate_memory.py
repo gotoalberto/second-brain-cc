@@ -42,12 +42,15 @@ def _load(path):
                     "ack_turn": int(d.get("ack_turn", 0)),
                     # old format: the `wrote` counter played the part of ack_saves
                     "ack_saves": int(d.get("ack_saves", d.get("wrote", 0))),
+                    "ack_write_ts": float(d.get("ack_write_ts", 0) or 0),
+                    "ack_gov": d.get("ack_gov"),
                     "ack_fp": d.get("ack_fp"),
                     "blocked_turn": int(d.get("blocked_turn", -1))}
     except Exception:
         pass
     # old-format marker ("1"): session already warned, start from zero
-    return {"ack_claims": -1, "ack_turn": 0, "ack_saves": 0,
+    return {"ack_claims": -1, "ack_turn": 0, "ack_saves": 0, "ack_write_ts": 0.0,
+            "ack_gov": None,
             "ack_fp": None, "blocked_turn": -1}
 
 
@@ -72,6 +75,8 @@ def main():
     row = con.execute("SELECT turns, wrote FROM sessions WHERE sid=?", (sid,)).fetchone()
     edits = con.execute("SELECT COUNT(*) FROM claims WHERE sid=?", (sid,)).fetchone()[0]
     guardadas = B.vault_writes_count(con, sid)
+    last_write = B.vault_writes_latest(con, sid)
+    gov = B.governance_fingerprint()
     con.close()
     if not row:
         sys.exit(0)
@@ -97,12 +102,15 @@ def main():
 
     def ack(blocked_turn=None):
         _save(marker, {"ack_claims": edits, "ack_turn": turns, "ack_saves": saves,
+                       "ack_write_ts": last_write, "ack_gov": gov,
                        "ack_fp": fp if fp else st["ack_fp"],
                        "blocked_turn": st["blocked_turn"] if blocked_turn is None
                                        else blocked_turn})
 
-    # something was saved since the last look: current work counts as covered
-    if saves > st["ack_saves"]:
+    # Something was saved since the last look: current work counts as covered.
+    # The ts comparison is what catches a note being REWRITTEN — the count cannot,
+    # because vault_writes is keyed on (sid, path). See vault_writes_latest.
+    if saves > st["ack_saves"] or last_write > st.get("ack_write_ts", 0):
         ack()
         sys.exit(0)
 
@@ -112,10 +120,14 @@ def main():
     # with no reference snapshot (a session older than this change, or a cwd outside a
     # repo) the fingerprint accuses nobody: take today's and it counts from the next turn.
     disk_changed = bool(fp) and st["ack_fp"] is not None and fp != st["ack_fp"]
+    # Agent definitions, skills and scheduled-task prompts are not notes, so no vault
+    # ledger sees them — but they decide how the vault is written, and a change there is
+    # exactly what has to end up in a note. Until 2026-09-08 this was invisible.
+    gov_changed = bool(gov) and st.get("ack_gov") is not None and gov != st["ack_gov"]
     long_overdue = (turns - st["ack_turn"]) >= MIN_TURNS and saves == 0
 
-    if not (new_edits or disk_changed or long_overdue):
-        if fp and st["ack_fp"] is None:
+    if not (new_edits or disk_changed or gov_changed or long_overdue):
+        if (fp and st["ack_fp"] is None) or (gov and st.get("ack_gov") is None):
             ack()                          # only pins the snapshot that was missing
         sys.exit(0)
 
@@ -125,8 +137,13 @@ def main():
         sys.exit(0)
 
     _save(marker, {"ack_claims": st["ack_claims"], "ack_turn": st["ack_turn"],
-                   "ack_saves": saves, "ack_fp": st["ack_fp"], "blocked_turn": turns})
-    if new_edits:
+                   "ack_saves": saves, "ack_write_ts": last_write,
+                   "ack_fp": st["ack_fp"], "ack_gov": st.get("ack_gov"),
+                   "blocked_turn": turns})
+    if gov_changed:
+        what = ("changed how the vault is written (agents, skills or scheduled tasks "
+                "under ~/.claude)")
+    elif new_edits:
         what = "touched %d file(s)" % edits
     elif disk_changed:
         what = "changed the working tree"

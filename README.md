@@ -90,11 +90,30 @@ A handful of stdlib-Python tools the integrations wrap:
 | Tool | Purpose |
 |---|---|
 | `index_vault.py` | Build/refresh the FTS5 search index (incremental). |
-| `query.py` | Search the vault. |
+| `query.py` | Search the vault. Repairs broken `[[links]]` first (see `linkfix.py`). |
+| `linkfix.py` | Find broken `[[links]]`; rewrite the ones with a safe fix, report the rest. Runs on every search. |
 | `vw.py` | The only write path for shared notes (redact, lock, atomic, reindex). |
 | `vault_sync.py` | Commit & push over git. |
 | `doctor.py` | Health report. |
 | `secret.py` | Optional: resolve `op://…` credentials via the 1Password CLI. |
+
+## Conventions that ship with it
+
+`30-Knowledge/` carries a set of working conventions the protocol links to. They are
+generic and meant to be edited to your taste:
+
+- the vault is written in one language (English by default), because search is lexical;
+- replies and documents for the user read like a person wrote them, and headings name the
+  topic instead of announcing a finding;
+- check the effect, not the exit code; a change is done when it is live and verified;
+- verify a plan's claims about semantics before writing them, and verify negative claims
+  about third parties in the primary source;
+- an agent never edits access control to get past a gate;
+- memory never asserts mutable state as a flat fact;
+- one worktree per deliverable, never `git add -A` in a shared tree;
+- every search repairs broken links; the startup context budget warns and never trims;
+- rules must be pasted into every write path (subagents, skills, scheduled tasks), since
+  only sessions receive the startup protocol.
 
 ## Optional modules
 

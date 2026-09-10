@@ -62,10 +62,61 @@ def save_state(sig):
         B.log_error("protocol_guard.save_state", e)
 
 
+AGENTS_STATE = os.path.join(B.STATE, "agent_rules.json")
+AGENTS_DIR = os.path.expanduser("~/.claude/agents")
+
+
+def touched_agents(data):
+    """Was an agent definition just edited? By mtime, like the protocol check."""
+    try:
+        if not os.path.isdir(AGENTS_DIR):
+            return False
+        newest = max((os.path.getmtime(os.path.join(AGENTS_DIR, f))
+                      for f in os.listdir(AGENTS_DIR) if f.endswith(".md")), default=0)
+        return B.now() - newest <= FRESH_SECONDS
+    except Exception:
+        return False
+
+
+def warn_agent_rules():
+    """Speak the moment an agent definition loses a rule a subagent cannot learn
+    elsewhere. `protocol_budget.py` reports it too, but a whole session can pass before
+    anyone runs it, and in that window every run of that agent is already wrong."""
+    missing = B.agents_missing_rules()
+    sig = ";".join("%s:%s" % (a, ",".join(r)) for a, r in missing)
+    try:
+        prev = json.load(open(AGENTS_STATE)).get("sig")
+    except Exception:
+        prev = None
+    if sig == prev:
+        return None
+    try:
+        os.makedirs(B.STATE, exist_ok=True)
+        B.atomic_write(AGENTS_STATE, json.dumps({"sig": sig}))
+    except Exception:
+        pass
+    if not missing:
+        return None
+    return ("Brain: %d agent definition(s) no longer carry a rule a subagent cannot "
+            "learn any other way (there is no SubagentStart hook, so the definition is "
+            "all it reads): %s"
+            % (len(missing),
+               "; ".join("%s lacks %s" % (a, ", ".join(r)) for a, r in missing[:3])))
+
+
 @B.fail_open
 def main():
     data = B.read_hook_input()
-    if not B.enabled() or not touched_protocol(data):
+    if not B.enabled():
+        B.emit("PostToolUse")
+
+    if touched_agents(data):
+        m = warn_agent_rules()
+        if m:
+            print(json.dumps({"systemMessage": m}, ensure_ascii=False))
+            sys.exit(0)
+
+    if not touched_protocol(data):
         B.emit("PostToolUse")
 
     con = B.db()
@@ -81,8 +132,8 @@ def main():
 
     msg = None
     if verdict["status"] == "OVER":
-        msg = ("Brain: the protocol NO LONGER fits at startup (%d/%d tokens). "
-               "Next session a whole section will be trimmed. %s"
+        msg = ("Brain: the startup block is over its cap (%d/%d tokens). "
+               "Nothing is cut, but the cap should go up. %s"
                % (verdict["total"], verdict["max"], PB.advice(verdict)))
     elif verdict["status"] == "WARN":
         msg = ("Brain: startup is at %.0f%% of budget (%d/%d tokens). %s"

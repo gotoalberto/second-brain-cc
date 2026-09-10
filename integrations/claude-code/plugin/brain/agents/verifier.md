@@ -23,3 +23,9 @@ VERDICT: PASS | FAIL
 followed by the evidence (real command output, trimmed) and, if it fails, the concrete
 list of what has to be fixed. Never declare PASS without having run something: if you
 couldn't run anything, the verdict is FAIL, with the reason.
+
+## Language
+
+**Anything you write into the vault goes in English** (verbatim quotes keep their original,
+with the English alongside). You are a subagent and never see the vault protocol, so:
+`~/Brain/30-Knowledge/2026-09-08-convention-vault-is-written-in-english.md`.
