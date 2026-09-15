@@ -1,0 +1,29 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    # The Linux leg arrived with systemd and cron support; until it has a record of green runs it
+    # reports without blocking.
+    continue-on-error: ${{ matrix.os == 'ubuntu-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        python: ["3.9", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Identity for the tests that make throwaway git commits
+        run: |
+          git config --global user.name "tests"
+          git config --global user.email "tests@example.com"
+      - name: Run every test, each in a scratch HOME
+        run: python _bin/run_all_tests.py --verbose
