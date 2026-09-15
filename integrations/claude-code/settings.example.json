@@ -1,0 +1,25 @@
+{
+  "_comment": "Recommended Claude Code settings for this harness. Merge them into ~/.claude/settings.json with: python3 _bin/claude_settings.py merge (adds only what you do not have, asks first, keeps a backup). __VAULT__ becomes the vault path. Hooks are not here: guardian.py repair --hooks-only installs and repairs them.",
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(git status*)",
+      "Bash(git log *)",
+      "Bash(git diff *)",
+      "Bash(git fetch *)",
+      "Bash(git branch*)",
+      "Bash(git worktree list*)",
+      "Bash(bun run *)",
+      "Bash(python3 __VAULT__/_bin/query.py *)",
+      "Bash(python3 __VAULT__/_bin/retrieve.py *)",
+      "Bash(python3 __VAULT__/_bin/vw.py *)",
+      "Bash(python3 __VAULT__/_bin/claim.py *)",
+      "Bash(python3 __VAULT__/_bin/doctor.py*)",
+      "Bash(python3 __VAULT__/_bin/guardian.py status*)",
+      "Bash(python3 __VAULT__/_bin/kp.py status*)",
+      "Bash(python3 __VAULT__/integrations/first-run/first_run.py status*)",
+      "Read(__VAULT__/**)"
+    ]
+  },
+  "skipWorkflowUsageWarning": true
+}

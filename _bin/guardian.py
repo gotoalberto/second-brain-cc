@@ -102,7 +102,8 @@ def build_ports(args) -> application.Ports:
                                        vault=vault, home=HOME),
         config_dir=config_dir,
         vault=vault,
-        plugin=install_plugin.Syncer(os.path.join(vault, "integrations", "claude-code", "plugin", "brain"), config_dir, state, log=log))]
+        plugin=install_plugin.Syncer(os.path.join(vault, "integrations", "claude-code", "plugin", "brain"), config_dir, state,
+                                     log=log, vault=vault))]
     cfg = mailer.load_mail_config(mailer.mail_config_path(state, vault))
     outbox = mail_queue.FileMailQueue(os.path.join(state, "guardian-mail-queue.json"),
                                       mailer=mailer.build_mailer(cfg), log=log)

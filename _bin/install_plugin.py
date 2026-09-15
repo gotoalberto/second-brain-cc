@@ -21,6 +21,10 @@ three-way:
   removed-live   deleted from ~/.claude after a sync    report only: never reinstalled
   removed-vault  deleted from the vault after a sync    report only: live is never deleted
 
+Canonical skills and agents may say `__VAULT__` where they need the vault's path: an install writes
+this machine's vault path there, a back-port turns it back into `__VAULT__`, and the live copy is
+digested with the path turned back, so a fresh install still counts as `same`.
+
 Nothing is overwritten without its previous content going to
 <brain state>/plugin-backups/ first. The backup command follows
 30-Knowledge/2026-09-12-convention-back-up-a-skill-before-rewriting-it.md (tar.gz of the
@@ -87,23 +91,50 @@ def _files(path):
     return out
 
 
-def digest(path):
-    """sha256 of a file, or of a directory's relative paths and contents. None when missing."""
+PLACEHOLDER = "__VAULT__"
+
+
+def _unlocalized(data, vault):
+    return data.replace(vault.encode("utf-8"), PLACEHOLDER.encode("utf-8")) if vault else data
+
+
+def digest(path, vault=None):
+    """sha256 of a file, or of a directory's relative paths and contents. None when missing.
+
+    With `vault`, that path is read as `__VAULT__` first: how a live copy is compared with the
+    canonical one it was installed from."""
     if os.path.isfile(path):
         with open(path, "rb") as fh:
-            return hashlib.sha256(fh.read()).hexdigest()
+            return hashlib.sha256(_unlocalized(fh.read(), vault)).hexdigest()
     if not os.path.isdir(path):
         return None
     h = hashlib.sha256()
     for rel in _files(path):
         with open(os.path.join(path, rel), "rb") as fh:
-            h.update(rel.encode("utf-8") + b"\0" + hashlib.sha256(fh.read()).digest())
+            h.update(rel.encode("utf-8") + b"\0" + hashlib.sha256(_unlocalized(fh.read(), vault)).digest())
     return h.hexdigest()
 
 
+def _rewrite_text(path, old, new):
+    """Replace `old` with `new` in every text file at `path` (a file or a directory). Binary files stay."""
+    targets = [path] if os.path.isfile(path) else [os.path.join(path, rel) for rel in _files(path)]
+    for target in targets:
+        try:
+            with open(target, encoding="utf-8") as fh:
+                text = fh.read()
+        except (UnicodeDecodeError, OSError):
+            continue
+        if old in text:
+            mode = os.stat(target).st_mode
+            with open(target, "w", encoding="utf-8") as fh:
+                fh.write(text.replace(old, new))
+            os.chmod(target, mode)
+
+
 class Syncer:
-    def __init__(self, plugin_dir, claude_dir, state_dir, clock=time.time, log=None):
+    def __init__(self, plugin_dir, claude_dir, state_dir, clock=time.time, log=None, vault=None):
         self.plugin_dir, self.claude_dir, self.state_dir = plugin_dir, claude_dir, state_dir
+        self.vault = vault
         self.clock = clock
         self.log = log or (lambda s: None)
 
@@ -148,7 +179,7 @@ class Syncer:
             for name in sorted(self._names(self.plugin_dir, kind) | self._names(self.claude_dir, kind)):
                 key = "%s/%s" % (kind, name)
                 v = digest(self._path(self.plugin_dir, kind, name))
-                l = digest(self._path(self.claude_dir, kind, name))
+                l = digest(self._path(self.claude_dir, kind, name), self.vault)
                 items.append({"kind": kind, "name": name, "key": key, "vault": v, "live": l,
                               "base": base.get(key), "action": decide(v, l, base.get(key))})
         return items
@@ -191,7 +222,8 @@ class Syncer:
         for rel, a, b in pairs:
             try:
                 al = open(a, encoding="utf-8").read().splitlines(True) if os.path.isfile(a) else []
-                bl = open(b, encoding="utf-8").read().splitlines(True) if os.path.isfile(b) else []
+                bl = open(b, encoding="utf-8").read() if os.path.isfile(b) else ""
+                bl = (bl.replace(self.vault, PLACEHOLDER) if self.vault else bl).splitlines(True)
             except UnicodeDecodeError:
                 out.append("Binary file %s differs\n" % (rel or name))
                 continue
@@ -202,17 +234,22 @@ class Syncer:
             fh.writelines(out)
         return dest
 
-    def _replace(self, src, dest, kind):
-        """Copy src over dest through a temporary sibling, so a failure never leaves half a skill."""
+    def _replace(self, src, dest, kind, rewrite=None):
+        """Copy src over dest through a temporary sibling, so a failure never leaves half a skill.
+        `rewrite` is (old, new) applied to the copy's text files before it takes dest's place."""
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         tmp = os.path.join(os.path.dirname(dest), ".%s.sync-tmp-%d" % (os.path.basename(dest), os.getpid()))
         if kind == "agents":
             shutil.copy2(src, tmp)
+            if rewrite:
+                _rewrite_text(tmp, *rewrite)
             os.replace(tmp, dest)
             return
         if os.path.exists(tmp):
             shutil.rmtree(tmp)
         shutil.copytree(src, tmp, ignore=_IGNORE)
+        if rewrite:
+            _rewrite_text(tmp, *rewrite)
         old = tmp + ".old"
         if os.path.exists(dest):
             os.rename(dest, old)
@@ -236,15 +273,17 @@ class Syncer:
                 elif action == "install":
                     if i["live"] is not None:
                         entry["backup"] = self._backup(self.claude_dir, kind, name, "live")
-                    self._replace(vault_path, live_path, kind)
-                    manifest[key] = digest(live_path)
+                    self._replace(vault_path, live_path, kind,
+                                  (PLACEHOLDER, self.vault) if self.vault else None)
+                    manifest[key] = digest(live_path, self.vault)
                 elif install_only and action in ("backport", "conflict"):
                     entry["action"] = "%s (skipped: install only)" % action
                 elif action == "backport":
                     if i["vault"] is not None:
                         entry["backup"] = self._backup(self.plugin_dir, kind, name, "vault")
                         entry["diff"] = self._diff(kind, name)
-                    self._replace(live_path, vault_path, kind)
+                    self._replace(live_path, vault_path, kind,
+                                  (self.vault, PLACEHOLDER) if self.vault else None)
                     manifest[key] = digest(vault_path)
                 elif action == "conflict":
                     entry["backups"] = [self._backup(self.plugin_dir, kind, name, "vault"),
@@ -267,7 +306,7 @@ def default_syncer(log=None):
 
     vault = os.environ.get("BRAIN_VAULT") or os.path.dirname(HERE)
     return Syncer(os.path.join(vault, "integrations", "claude-code", "plugin", "brain"), os.path.join(os.path.expanduser("~"), ".claude"),
-                  brain_paths.state_dir(), log=log)
+                  brain_paths.state_dir(), log=log, vault=vault)
 
 
 def main(argv=None):
