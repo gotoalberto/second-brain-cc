@@ -1,67 +1,63 @@
 #!/bin/bash
-# Core bootstrap for the Second Brain — agent-agnostic, cross-platform.
-# Sets up the vault engine (index + health) and points you at an integration.
+# Core bootstrap for the Second Brain: agent-agnostic, macOS and Linux.
+# Sets up the vault engine (index and health), then offers the first run.
 #
 #   git clone <this-repo> ~/Brain && bash ~/Brain/bootstrap.sh
 #
-# This installs NOTHING into any specific agent. Pick an integration afterwards:
-#   - MCP server (any MCP agent):     integrations/mcp/README.md
-#   - Command line (any shell agent): integrations/cli/README.md
-#   - Claude Code (deepest):          bash integrations/claude-code/install.sh
+# It installs nothing into any agent and schedules nothing. Afterwards:
+#   - the first run, one yes at a time:  bash integrations/first-run/setup.sh
+#   - MCP server (any MCP agent):        integrations/mcp/README.md
+#   - command line (any shell agent):    integrations/cli/README.md
+#   - Claude Code (deepest):             bash integrations/claude-code/install.sh
 set -euo pipefail
 VAULT="${BRAIN_VAULT:-$(cd "$(dirname "$0")" && pwd)}"
 PY3="$(command -v python3 || echo /usr/bin/python3)"
-echo "== Second Brain — core bootstrap =="
+export BRAIN_VAULT="$VAULT"
+echo "== Second Brain: core bootstrap =="
 echo "   vault: $VAULT"
 
 echo "-> checking python3 and SQLite/FTS5 (the only hard requirement)"
 "$PY3" - <<'PYEOF'
 import sys, sqlite3
-assert sys.version_info >= (3, 8), "Python 3.8+ required, found %s" % sys.version.split()[0]
+assert sys.version_info >= (3, 9), "Python 3.9+ required, found %s" % sys.version.split()[0]
 c = sqlite3.connect(":memory:")
 c.execute("CREATE VIRTUAL TABLE t USING fts5(b)")
-print("   OK — Python", sys.version.split()[0], "· SQLite", sqlite3.sqlite_version, "· FTS5 available")
+print("   OK: Python", sys.version.split()[0], "with SQLite", sqlite3.sqlite_version, "and FTS5")
 PYEOF
 
-# Optional niceties. Obsidian is a great vault UI but not required; ripgrep is handy.
-if command -v brew >/dev/null 2>&1; then
-  [ -d /Applications/Obsidian.app ] || echo "   tip: 'brew install --cask obsidian' for a GUI over the vault (optional)"
-  command -v rg >/dev/null 2>&1 || echo "   tip: 'brew install ripgrep' for faster ad-hoc search (optional)"
+echo "-> optional tools"
+command -v git >/dev/null 2>&1 || echo "   git not found: the vault cannot sync between machines without it"
+if command -v keepassxc-cli >/dev/null 2>&1; then
+  echo "   keepassxc-cli found: credentials can live in a local KeePass database (the first run asks)"
 else
-  echo "   tip: install Obsidian (https://obsidian.md) to browse the vault as a GUI — optional"
+  echo "   keepassxc-cli not found: install KeePassXC only if you want credentials in a KeePass database"
+  echo "     macOS: brew install --cask keepassxc    Linux: your distribution's keepassxc package"
 fi
+command -v aws >/dev/null 2>&1 || echo "   aws not found: needed only for S3 file storage (s3v.py)"
+[ -d /Applications/Obsidian.app ] || command -v obsidian >/dev/null 2>&1 \
+  || echo "   tip: Obsidian (https://obsidian.md) gives the vault a GUI; optional"
 
 echo "-> building the initial search index"
 "$PY3" "$VAULT/_bin/index_vault.py" --full
 
-echo "-> credentials module (1Password CLI 'op', optional)"
-# No secrets are stored in this repo; notes only ever carry op://vault/item/field refs.
-if command -v op >/dev/null 2>&1; then
-  if [ -n "$(op account list 2>/dev/null || true)" ]; then
-    echo "   op installed and an account is configured"
-  else
-    echo "   op installed but not signed in — run: op signin   (only if you use /secret)"
-  fi
-else
-  echo "   'op' not found — install it only if you want the credentials module:"
-  echo "     https://developer.1password.com/docs/cli/  (brew install --cask 1password-cli)"
-fi
-
 echo "-> health check"
-"$PY3" "$VAULT/_bin/doctor.py" </dev/null | sed -n '1,6p'
+"$PY3" "$VAULT/_bin/doctor.py" </dev/null 2>/dev/null | sed -n '1,6p' || true
+
+echo "-> first run"
+bash "$VAULT/integrations/first-run/setup.sh"
 
 cat <<EOF
 
-== Core ready. Now pick how your agent talks to the vault ==
+== Core ready ==
 
-  1) MCP server  — any MCP agent (Claude Desktop, Cline, Cursor, Zed, ...)
-                   see integrations/mcp/README.md
-  2) CLI         — any agent that can run a shell, or you at a terminal
-                   ln -s "$VAULT/integrations/cli/brain" /usr/local/bin/brain
-                   see integrations/cli/README.md
-  3) Claude Code — automatic recall, agents, slash commands (deepest)
-                   bash integrations/claude-code/install.sh
+  Connect your agent:
+  1) MCP server  (Claude Desktop, Cline, Cursor, Zed, OpenCode, ...)  integrations/mcp/README.md
+  2) CLI         (any agent that can run a shell, or you)             integrations/cli/README.md
+  3) Claude Code (automatic recall, agents, skills)                   bash integrations/claude-code/install.sh
 
-You can use more than one, but avoid running two write-back integrations at once.
-Open the vault in Obsidian ($VAULT) whenever you want a GUI.
+  The first run can be started, resumed or checked any time:
+     bash integrations/first-run/setup.sh
+     python3 integrations/first-run/first_run.py status
+
+  Every test, each in a scratch HOME:  python3 _bin/run_all_tests.py
 EOF

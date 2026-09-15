@@ -18,3 +18,5 @@ __pycache__/
 90-Meta/routine-tokens.json
 90-Meta/guardian-mail.json
 90-Meta/presence/
+# Per-machine skills catalogue index written by skills_index.py: named after the host
+40-Skills/INDEX-*.md

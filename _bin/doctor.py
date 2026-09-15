@@ -350,10 +350,16 @@ def main():
         print("no logs yet in %s" % B.LOGS)
 
     section("Test harness")
-    p = subprocess.run([PY3, os.path.join(B.VAULT, "_bin", "run_all_tests.py")],
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
-    tail = p.stdout.decode().strip().splitlines()
-    print("\n".join(tail[-6:]) if tail else "(no output)")
+    # Only when asked, and never from inside a test run: bootstrap.sh runs this doctor, and the
+    # suite runs bootstrap.sh, so a doctor that ran the suite by itself would start that loop.
+    if "--tests" in sys.argv[1:] and not os.environ.get("SECOND_BRAIN_TEST_RUN"):
+        p = subprocess.run([PY3, os.path.join(B.VAULT, "_bin", "run_all_tests.py")],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+        tail = p.stdout.decode().strip().splitlines()
+        print("\n".join(tail[-6:]) if tail else "(no output)")
+    else:
+        print("not run by default; every test, each in a scratch HOME: python3 %s/_bin/run_all_tests.py "
+              "(or doctor.py --tests)" % B.VAULT)
     con.close()
     return 0
 

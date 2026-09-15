@@ -45,7 +45,8 @@ def run_one(root, rel, python=sys.executable):
     home, state = os.path.join(scratch, "home"), os.path.join(scratch, "state")
     os.makedirs(home)
     env = {k: v for k, v in os.environ.items() if not k.startswith("BRAIN_")}
-    env.update(HOME=home, BRAIN_STATE=state, BRAIN_VAULT=root, PYTHONDONTWRITEBYTECODE="1")
+    # SECOND_BRAIN_TEST_RUN tells scripts a test started them (doctor.py then never runs the suite).
+    env.update(HOME=home, BRAIN_STATE=state, BRAIN_VAULT=root, PYTHONDONTWRITEBYTECODE="1", SECOND_BRAIN_TEST_RUN="1")
     start = time.time()
     try:
         p = subprocess.run([python, os.path.join(root, rel)], cwd=root, env=env, stdin=subprocess.DEVNULL,
