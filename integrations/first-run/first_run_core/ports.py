@@ -1,7 +1,7 @@
 """What the first run needs from the world, and nothing about how it is done.
 
 application.py talks only to these. adapters.py implements them with the terminal, kp.py,
-google.py, s3v.py, the agents' own CLIs and the guardian's scheduler adapters; the tests implement
+google.py, the files directory (brain_files.py), the agents' own CLIs and the guardian's scheduler adapters; the tests implement
 them in memory. Every method that changes the machine returns (ok, detail) and never raises.
 """
 
@@ -36,8 +36,10 @@ class Google(Protocol):
     def authorize(self, name: str) -> tuple: ...
 
 
-class Storage(Protocol):
-    def test(self, bucket: str, region: str, kp_entry: str) -> tuple: ...
+class Files(Protocol):
+    def propose_default(self) -> str: ...                  # the directory already configured, or ~/BrainFiles
+    def check(self, path: str) -> tuple: ...               # creates it, proves it writable: (ok, absolute path | why)
+    def persist(self, path: str) -> tuple: ...             # records it where files.py reads it: (ok, file | why)
 
 
 class MailConfig(Protocol):

@@ -1,6 +1,8 @@
 """The first run's flow: one question at a time, nothing installed without a yes, resumable.
 
-Each step asks whether to connect one piece. A yes leads to the few questions that piece needs and
+Each step asks whether to connect one piece, except the files step, which asks only where: Brain keeps
+files in a local directory and does not work without one, so that step has no yes or no and is asked
+until it is done. A yes leads to the few questions that piece needs and
 to the change itself, through a port; a no is recorded so it is never asked again (until
 `first_run.py reset <step>`). The state is saved after every step, so an interrupted run resumes.
 """
@@ -18,7 +20,7 @@ class Ports:
     state: object
     kdbx: object
     google: object
-    storage: object
+    files: object
     mail: object
     mcp: object
     scheduler: object
@@ -119,20 +121,23 @@ def _valid_account(name):
     return bool(re.match(r"^[a-z0-9][a-z0-9-]{0,31}$", name or ""))
 
 
-def _storage(c):
+def _files(c):
     p = c.p
-    if not p.prompt.yes_no("Connect S3 object storage for files (s3v.py)?", False):
-        return c.declined("storage")
-    bucket = c.ask_until("  Bucket name", lambda v: bool(v), "", "the bucket is required")
-    region = c.ask_until("  Region", lambda v: bool(v), "eu-west-1")
-    entry = c.ask_until("  KeePass entry with the access key (UserName = key id, Password = secret)",
-                        lambda v: bool(v), "aws/s3-access-key")
-    good, detail = p.storage.test(bucket, region, entry)
-    if not good:
-        return c.failed("storage", detail)
-    p.prompt.say("  Add to your shell profile, or to the scheduled jobs' environment:\n"
-                 "    export BRAIN_S3_BUCKET=%s BRAIN_S3_REGION=%s BRAIN_S3_KP_ENTRY=%s" % (bucket, region, entry))
-    c.done("storage", bucket=bucket, region=region, kp_entry=entry)
+    p.prompt.say("Brain keeps files (deliverables, intermediate steps, source material) in a local directory "
+                 "outside the vault, and notes point at them. This step is required: choose the directory.")
+    while True:
+        path = c.ask_until("Directory for files", lambda v: bool(v), p.files.propose_default(), "a directory is required")
+        if c.dry_run:
+            p.prompt.say("  Dry run: %s would be created if missing and recorded." % path)
+            return
+        good, detail = p.files.check(path)
+        if good:
+            break
+        p.prompt.say("  %s cannot be used (%s). Choose another directory." % (path, detail))
+    saved, why = p.files.persist(detail)
+    if not saved:
+        return c.failed("files", why)
+    c.done("files", dir=detail)
 
 
 def _alert_email(c):
@@ -237,7 +242,7 @@ def _routines(c):
     c.done("routines", tokens=count)
 
 
-STEP_FUNCS = {"kdbx": _kdbx, "google": _google, "storage": _storage, "alert_email": _alert_email, "mcp": _mcp,
+STEP_FUNCS = {"kdbx": _kdbx, "google": _google, "files": _files, "alert_email": _alert_email, "mcp": _mcp,
               "scheduler": _scheduler, "routines": _routines}
 
 
@@ -268,6 +273,38 @@ def run(ports, dry_run=False) -> RunResult:
         ports.state.save(c.state)
     c.result.complete = D.is_complete(c.state) and not dry_run
     return c.result
+
+
+def _files_unattended(ports):
+    """(ok, details or why not): the default files directory, created and recorded with no question."""
+    good, detail = ports.files.check(ports.files.propose_default())
+    if not good:
+        return False, detail
+    saved, why = ports.files.persist(detail)
+    return (True, {"dir": detail}) if saved else (False, why)
+
+
+UNATTENDED = {"files": _files_unattended}
+
+
+def skip_all(ports):
+    """`first_run.py skip-all`: answer every unanswered step without asking. A required step gets its default
+    (the files directory is created and recorded); every other step is declined. Returns (state, failed)."""
+    state, failed = ports.state.load(), []
+    for step in D.STEPS:
+        if step in state["steps"]:
+            continue
+        if step in D.REQUIRED:
+            good, result = UNATTENDED[step](ports)
+            if good:
+                result["reason"] = "default chosen by first_run.py skip-all"
+                state = D.record(state, step, "done", result, ports.clock.now())
+            else:
+                failed.append((step, result))
+            continue
+        state = D.record(state, step, "declined", {"reason": "skipped with first_run.py skip-all"}, ports.clock.now())
+    ports.state.save(state)
+    return state, failed
 
 
 def run_status(ports):

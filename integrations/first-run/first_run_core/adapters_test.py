@@ -2,7 +2,7 @@
 """Tests for first_run_core.adapters: what the first run does to the machine, isolated.
 
 Every test works under a temporary directory: a scratch HOME, vault and state, fake kp.py,
-google.py, s3v.py and claude scripts, a fake crontab, and BRAIN_FAKE_SCHEDULER=1 so launchctl
+google.py and claude scripts, a fake crontab, and BRAIN_FAKE_SCHEDULER=1 so launchctl
 and systemctl are never the real ones. Run standalone:
 
     python3 integrations/first-run/first_run_core/adapters_test.py
@@ -83,8 +83,8 @@ def test_files():
           and stat.S_IMODE(os.stat(path).st_mode) == 0o600)
 
 
-def test_kdbx_google_storage():
-    print("\n== kp.py, google.py and s3v.py ==")
+def test_kdbx_google():
+    print("\n== kp.py and google.py ==")
     d = tmpdir()
     kp, kp_log = recorder(d, "kp.py")
     k = AD.KpKdbx(kp)
@@ -110,12 +110,43 @@ def test_kdbx_google_storage():
     write(os.path.join(state, "google-accounts.json"), json.dumps({"accounts": {"personal": {}, "work": {}}}))
     check("accounts lists what google.py has on record", gc.accounts() == ["personal", "work"], gc.accounts())
 
-    s3, s3_log = recorder(d, "s3v.py")
-    good, _ = AD.S3Storage(s3).test("my-bucket", "eu-west-1", "aws/s3-access-key")
-    c = calls(s3_log)[-1]
-    check("the storage test lists the bucket with its settings in the environment",
-          good and c["args"] == ["ls"] and c["env"].get("BRAIN_S3_BUCKET") == "my-bucket"
-          and c["env"].get("BRAIN_S3_REGION") == "eu-west-1" and c["env"].get("BRAIN_S3_KP_ENTRY") == "aws/s3-access-key", c)
+
+def test_local_files_storage():
+    print("\n== the local files directory ==")
+    d = tmpdir()
+    home, state = os.path.join(d, "home"), os.path.join(d, "state")
+    target = os.path.join(home, "BrainFiles")
+    lf = AD.LocalFiles(home, environ={"BRAIN_STATE": state})
+    check("the proposed default is ~/BrainFiles", lf.propose_default() == target, lf.propose_default())
+    check("a directory already set in BRAIN_FILES_DIR is proposed instead",
+          AD.LocalFiles(home, environ={"BRAIN_STATE": state, "BRAIN_FILES_DIR": "/srv/files"}).propose_default()
+          == "/srv/files")
+    good, detail = lf.check("~/BrainFiles")
+    check("check expands ~ against this HOME, creates the directory and returns its absolute path",
+          good and detail == target and os.path.isdir(target), detail)
+    check("and leaves no probe file behind", os.listdir(target) == [], os.listdir(target))
+    check("an existing directory checks fine again", lf.check(target) == (True, target))
+    blocker = write(os.path.join(d, "a-file"), "x")
+    bad, why = lf.check(blocker)
+    check("a path that is a file is (False, why)", bad is False and bool(why), why)
+    bad, why = lf.check(os.path.join(blocker, "sub"))
+    check("a path that cannot be created is (False, why)", bad is False and bool(why), why)
+    if os.geteuid() != 0:
+        ro = os.path.join(d, "read-only")
+        os.makedirs(ro)
+        os.chmod(ro, 0o500)
+        bad, why = lf.check(ro)
+        os.chmod(ro, 0o700)
+        check("a directory that cannot be written is (False, why)", bad is False and bool(why), why)
+    good, written = lf.persist(target)
+    check("persist records it in <brain state>/files-dir.json, private",
+          good and written == os.path.join(state, "files-dir.json") and json.load(open(written)) == {"dir": target}
+          and stat.S_IMODE(os.stat(written).st_mode) == 0o600, written)
+    import brain_files
+
+    check("which is where files.py reads it",
+          brain_files.files_dir(environ={"BRAIN_STATE": state}, home=home) == target)
+    check("once recorded, it is what the next run proposes", lf.propose_default() == target)
 
 
 def test_mcp():
@@ -213,7 +244,7 @@ def main():
     except Exception as exc:
         check("first_run_core.adapters and domain import", False, "%s: %s" % (type(exc).__name__, exc))
     else:
-        for t in (test_files, test_kdbx_google_storage, test_mcp, test_scheduler, test_routines):
+        for t in (test_files, test_kdbx_google, test_local_files_storage, test_mcp, test_scheduler, test_routines):
             try:
                 t()
             except Exception as exc:

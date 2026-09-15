@@ -1,8 +1,8 @@
 """The first run's rules. Pure: no IO, no clock, no platform calls.
 
-The first run asks, one step at a time, whether to connect each optional piece. Every answer is
-kept in <brain state>/first-run.json, so running it again resumes where it stopped and never asks
-an answered question twice:
+The first run asks, one step at a time, whether to connect each optional piece, and where to keep
+files (the one step that cannot be declined). Every answer is kept in <brain state>/first-run.json,
+so running it again resumes where it stopped and never asks an answered question twice:
 
   steps       {step: {"status": "done" | "declined", "at": ISO time, ...details}}
   scheduler   {"kind": "launchd" | "systemd" | "cron" | "none", "jobs": [accepted job names]}
@@ -19,7 +19,9 @@ import json
 import os
 import re
 
-STEPS = ("kdbx", "google", "storage", "alert_email", "mcp", "scheduler", "routines")
+STEPS = ("kdbx", "google", "files", "alert_email", "mcp", "scheduler", "routines")
+# Steps that cannot be declined: Brain does not work without them. They are asked until they are done.
+REQUIRED = ("files",)
 ANSWERS = ("done", "declined")
 # A step that cannot work without another one: declined with it, left unasked while it is not done.
 DEPENDS = {"google": "kdbx", "routines": "kdbx"}
@@ -48,7 +50,7 @@ def parse_state(text: str) -> dict:
         return new_state()
     state = new_state()
     state["steps"] = {k: v for k, v in data["steps"].items() if k in STEPS and isinstance(v, dict)
-                      and v.get("status") in ANSWERS}
+                      and v.get("status") in ANSWERS and not (k in REQUIRED and v.get("status") == "declined")}
     sched = data.get("scheduler")
     if isinstance(sched, dict):
         state["scheduler"] = {"kind": sched.get("kind") if sched.get("kind") in SCHEDULERS else "none",
@@ -65,6 +67,8 @@ def record(state: dict, step: str, status: str, details: dict, now) -> dict:
         raise ValueError("unknown step %r" % step)
     if status not in ANSWERS:
         raise ValueError("a step is either done or declined, not %r" % status)
+    if status == "declined" and step in REQUIRED:
+        raise ValueError("%s cannot be declined" % step)
     out = copy.deepcopy(state)
     entry = {"status": status, "at": now.isoformat(timespec="seconds")}
     entry.update(details or {})

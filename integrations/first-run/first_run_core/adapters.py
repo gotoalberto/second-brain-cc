@@ -1,4 +1,4 @@
-"""The first run's adapters: the terminal, kp.py, google.py, s3v.py, agent CLIs, the shell profile,
+"""The first run's adapters: the terminal, kp.py, google.py, the files directory, agent CLIs, the shell profile,
 the guardian's scheduler adapters and the routine token pool.
 
 Each class implements one port from ports.py. Every method that changes the machine returns
@@ -165,17 +165,42 @@ class GoogleCli:
         return p.returncode == 0, "google.py auth exit %d" % p.returncode
 
 
-class S3Storage:
-    def __init__(self, s3v, run=subprocess.run):
-        self.s3v, self.run = s3v, run
+class LocalFiles:
+    """The files directory: proposed, proven writable, and recorded where files.py reads it (brain_files.py)."""
 
-    def test(self, bucket, region, kp_entry):
-        env = dict(os.environ, BRAIN_S3_BUCKET=bucket, BRAIN_S3_REGION=region, BRAIN_S3_KP_ENTRY=kp_entry)
+    def __init__(self, home, environ=None, config_path=None):
+        self.home, self.config_path = home, config_path
+        self.environ = os.environ if environ is None else environ
+
+    def propose_default(self):
+        import brain_files
+
+        return (brain_files.files_dir(self.environ, self.home, self.config_path)
+                or brain_files.default_files_dir(self.home))
+
+    def check(self, path):
+        full = path.strip()
+        if full == "~" or full.startswith("~/"):
+            full = self.home + full[1:]
+        full = os.path.abspath(full)
+        probe = os.path.join(full, ".brain-write-probe-%d" % os.getpid())
         try:
-            p = self.run([sys.executable, self.s3v, "ls"], env=env, capture_output=True, text=True, timeout=180)
-        except (OSError, subprocess.TimeoutExpired) as exc:
+            os.makedirs(full, exist_ok=True)
+            with open(probe, "w", encoding="utf-8") as fh:
+                fh.write("ok\n")
+            os.remove(probe)
+        except OSError as exc:
             return False, "%s: %s" % (type(exc).__name__, exc)
-        return p.returncode == 0, _last_line(p.stderr) or "s3v.py ls exit %d" % p.returncode
+        return True, full
+
+    def persist(self, path):
+        import brain_files
+
+        try:
+            return True, brain_files.set_files_dir(
+                path, config_path=self.config_path or brain_files.config_file(self.environ, self.home))
+        except OSError as exc:
+            return False, "%s: %s" % (type(exc).__name__, exc)
 
 
 # ---------------------------------------------------------------- MCP and the shell profile
@@ -350,7 +375,7 @@ def build_ports(vault=VAULT, environ=None, stdin=None, stdout=None):
         state=JsonStateStore(os.path.join(state, "first-run.json")),
         kdbx=KpKdbx(os.path.join(vault, "_bin", "kp.py")),
         google=GoogleCli(os.path.join(vault, "_bin", "google.py"), environ),
-        storage=S3Storage(os.path.join(vault, "_bin", "s3v.py")),
+        files=LocalFiles(home, environ),
         mail=MailConfigFile(os.path.join(state, "guardian-mail.json")),
         mcp=McpSetup(vault, home, environ),
         scheduler=SchedulerSetup(vault, home, state, environ=environ),

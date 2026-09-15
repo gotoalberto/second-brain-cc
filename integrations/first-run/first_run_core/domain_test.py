@@ -27,7 +27,7 @@ NOW = dt.datetime(2026, 9, 15, 18, 0, tzinfo=dt.timezone.utc)
 def test_steps(D):
     print("\n== steps and state ==")
     check("the steps are asked in this order",
-          D.STEPS == ("kdbx", "google", "storage", "alert_email", "mcp", "scheduler", "routines"), D.STEPS)
+          D.STEPS == ("kdbx", "google", "files", "alert_email", "mcp", "scheduler", "routines"), D.STEPS)
     state = D.new_state()
     check("a new state has no answers and is not complete",
           state["steps"] == {} and not D.is_complete(state) and D.next_step(state) == "kdbx", state)
@@ -37,16 +37,25 @@ def test_steps(D):
           s1["steps"]["kdbx"] == {"status": "done", "at": "2026-09-15T18:00:00+00:00", "db": "~/x.kdbx"}, s1)
     check("the next step is the first one with no answer", D.next_step(s1) == "google")
     s2 = D.record(s1, "google", "declined", {}, NOW)
-    check("declined counts as answered", D.next_step(s2) == "storage")
+    check("declined counts as answered", D.next_step(s2) == "files")
     bad = None
     try:
-        D.record(s2, "storage", "maybe", {}, NOW)
+        D.record(s2, "files", "maybe", {}, NOW)
     except ValueError as exc:
         bad = exc
     check("only done and declined are answers", bad is not None)
+    check("the files step is the one that cannot be declined", D.REQUIRED == ("files",), D.REQUIRED)
+    refused = None
+    try:
+        D.record(s2, "files", "declined", {}, NOW)
+    except ValueError as exc:
+        refused = exc
+    check("recording files as declined is refused", refused is not None)
+    check("a state file that says files was declined asks it again",
+          "files" not in D.parse_state(json.dumps({"steps": {"files": {"status": "declined", "at": "x"}}}))["steps"])
     full = s2
     for step in D.STEPS[2:]:
-        full = D.record(full, step, "declined", {}, NOW)
+        full = D.record(full, step, "done" if step in D.REQUIRED else "declined", {}, NOW)
     check("with every step answered the first run is complete",
           D.is_complete(full) and D.next_step(full) is None and D.status_exit(full) == 0)
     check("an incomplete one exits 3 on status", D.status_exit(s2) == 3)

@@ -30,7 +30,7 @@ class FakePrompt:
     """Answers are consumed in order; yes_no takes booleans, ask and secret take strings."""
 
     def __init__(self, answers=(), interactive=True):
-        self.answers, self.asked, self.said = list(answers), [], []
+        self.answers, self.asked, self.said, self.yes_nos = list(answers), [], [], []
         self._interactive = interactive
 
     def interactive(self):
@@ -43,6 +43,7 @@ class FakePrompt:
         return self.answers.pop(0)
 
     def yes_no(self, question, default=False):
+        self.yes_nos.append(question)
         return self._next(question)
 
     def ask(self, question, default=""):
@@ -92,7 +93,7 @@ class Clock:
         return dt.datetime(2026, 9, 15, 18, 0, tzinfo=dt.timezone.utc)
 
 
-SIDE_EFFECTS = ("init", "unlock", "add", "authorize", "test", "save", "register_claude", "append_profile",
+SIDE_EFFECTS = ("init", "unlock", "add", "authorize", "check", "persist", "save", "register_claude", "append_profile",
                 "install", "add_token")
 
 
@@ -102,7 +103,8 @@ def ports(answers=(), state=None, interactive=True, **over):
         state=MemoryState(state),
         kdbx=Recorder(configured="", exists=False),
         google=Recorder(accounts=[]),
-        storage=Recorder(),
+        files=Recorder(propose_default="/home/u/BrainFiles", check=lambda path: (True, path),
+                       persist=(True, "/state/files-dir.json")),
         mail=Recorder(save="/state/guardian-mail.json"),
         mcp=Recorder(snippets={"claude-code": "claude mcp add brain -- python3 /v/integrations/mcp/server.py"},
                      claude_available=True, profile_path="/home/u/.zshrc", vault="/v"),
@@ -119,21 +121,25 @@ def ports(answers=(), state=None, interactive=True, **over):
 
 def side_effects(p):
     out = []
-    for name in ("kdbx", "google", "storage", "mail", "mcp", "scheduler", "routines"):
+    for name in ("kdbx", "google", "files", "mail", "mcp", "scheduler", "routines"):
         out += ["%s.%s" % (name, c[0]) for c in getattr(p, name).calls if c[0] in SIDE_EFFECTS]
     return out
 
 
-NO_TO_ALL = [False] * 7
+NO_TO_ALL = [False, "", False, False, False]     # kdbx, files (the default directory), alert email, MCP, scheduler
 
 
 def test_decline_everything():
     print("\n== a user who says no to everything ==")
     p = ports(NO_TO_ALL)
     res = A.run(p)
-    check("nothing is installed, created, registered or written", side_effects(p) == [], side_effects(p))
-    check("every step is recorded as declined",
-          all(p.state.data["steps"][s]["status"] == "declined" for s in D.STEPS), p.state.data)
+    check("nothing is installed, created, registered or written but the files directory, which cannot be declined",
+          side_effects(p) == ["files.check", "files.persist"] and ("check", "/home/u/BrainFiles") in p.files.calls,
+          side_effects(p))
+    check("every other step is recorded as declined, and files as done with the default directory",
+          all(p.state.data["steps"][s]["status"] == "declined" for s in D.STEPS if s != "files")
+          and p.state.data["steps"]["files"]["status"] == "done"
+          and p.state.data["steps"]["files"]["dir"] == "/home/u/BrainFiles", p.state.data)
     check("the first run is complete and was saved", res.complete and p.state.saves >= 1, res)
     check("the scheduler answer says nothing was accepted", p.state.data.get("scheduler", {}).get("jobs", []) == [])
     p2 = ports([], state=p.state.data)
@@ -154,7 +160,7 @@ def test_kdbx_and_google():
     print("\n== KeePass, then Google ==")
     answers = [True, "", True, True,            # kdbx: yes, default path, create it, arm the cache
                True, "1", "personal", "me@example.com", "cid-1", "sec-1", True,   # google: one account, authorise
-               False, False, False, False, False]
+               "", False, False, False, False]
     p = ports(answers, kdbx=Recorder(configured="", exists=False))
     A.run(p)
     db = "/home/u/.local/share/brain/brain.kdbx"
@@ -168,18 +174,18 @@ def test_kdbx_and_google():
           p.state.data["steps"]["google"].get("accounts") == ["personal"]
           and "sec-1" not in repr(p.state.data), p.state.data["steps"]["google"])
 
-    answers = [True, "", True, True, True, "1", "Bad Name", "personal", "", "cid", "sec", False] + [False] * 5
+    answers = [True, "", True, True, True, "1", "Bad Name", "personal", "", "cid", "sec", False, "", False, False, False, False]
     p = ports(answers)
     A.run(p)
     check("an invalid account name is asked again", ("add", "personal", "cid", "sec", "") in p.google.calls,
           (p.google.calls, p.prompt.said))
 
-    p = ports([False] + [False] * 4)
+    p = ports([False, "", False, False, False])
     A.run(p)
     check("declining the database declines what needs it: Google is not asked and is recorded with the reason",
           p.state.data["steps"]["google"]["status"] == "declined" and "KeePass" in p.state.data["steps"]["google"]["reason"]
           and not any("Google" in q for q in p.prompt.asked) and A.run_status(p)[0], (p.prompt.asked, p.state.data["steps"]))
-    p = ports([True, "", True] + [False] * 4, kdbx=Recorder(configured="", exists=False, init=(False, "no cli")))
+    p = ports([True, "", True, "", False, False, False], kdbx=Recorder(configured="", exists=False, init=(False, "no cli")))
     A.run(p)
     check("a database step that failed leaves Google unasked and unrecorded, so a later run asks it",
           "google" not in p.state.data["steps"] and not A.run_status(p)[0], p.state.data["steps"])
@@ -187,7 +193,7 @@ def test_kdbx_and_google():
 
 def test_failure_resumes():
     print("\n== a step that fails is asked again next time ==")
-    p = ports([True, "", True] + [False] * 5, kdbx=Recorder(configured="", exists=False, init=(False, "keepassxc-cli not found")))
+    p = ports([True, "", True, "", False, False, False], kdbx=Recorder(configured="", exists=False, init=(False, "keepassxc-cli not found")))
     res = A.run(p)
     check("a failed step is reported and not recorded",
           "kdbx" not in p.state.data["steps"] and ("kdbx", "keepassxc-cli not found") in res.failed, (res, p.state.data))
@@ -198,7 +204,7 @@ def test_failure_resumes():
 
 def test_scheduler_step():
     print("\n== scheduled jobs ==")
-    answers = [False] * 4 + [True, True, True, False, False, True]   # yes; guardian, sync; install
+    answers = [False, "", False, False] + [True, True, True, False, False, True]   # yes; guardian, sync; install
     p = ports(answers)
     A.run(p)
     check("only the accepted jobs are installed, with the detected scheduler",
@@ -209,20 +215,20 @@ def test_scheduler_step():
     check("the accepted jobs are recorded where the guardian reads them",
           p.state.data["scheduler"] == {"kind": "systemd", "jobs": ["guardian", "sync"]}, p.state.data.get("scheduler"))
 
-    answers = [False] * 4 + [True, True, False, False, False, False]  # accepted guardian, refused the install
+    answers = [False, "", False, False] + [True, True, False, False, False, False]  # accepted guardian, refused the install
     p = ports(answers)
     A.run(p)
     check("refusing the final install installs nothing and accepts no job",
           "install" not in p.scheduler.names() and p.state.data["scheduler"]["jobs"] == [], p.state.data.get("scheduler"))
 
-    answers = [False] * 4 + [True, True, True, True, True]
+    answers = [False, "", False, False] + [True, True, True, True, True]
     p = ports(answers)
     res = A.run(p, dry_run=True)
     check("a dry run shows the units and installs nothing", "install" not in p.scheduler.names()
           and any("[Unit] preview" in s for s in p.prompt.said), p.scheduler.calls)
     check("and saves no answer", p.state.saves == 0 and not res.complete, p.state.saves)
 
-    p = ports([False] * 4, scheduler=Recorder(detect="none"))
+    p = ports([False, "", False, False], scheduler=Recorder(detect="none"))
     A.run(p)
     check("with no supported scheduler the step is not asked and is recorded as declined",
           p.state.data["steps"]["scheduler"]["status"] == "declined"
@@ -231,16 +237,16 @@ def test_scheduler_step():
     def partly(kind, jobs):
         return [(D.job_label(kind, "guardian"), True, "ok"), (D.job_label(kind, "sync"), False, "systemctl failed")]
 
-    p = ports([False] * 4 + [True, True, True, False, False, True], scheduler=Recorder(detect="systemd", preview="x", install=partly))
+    p = ports([False, "", False, False] + [True, True, True, False, False, True], scheduler=Recorder(detect="systemd", preview="x", install=partly))
     res = A.run(p)
     check("a job that failed to install is not recorded as accepted and the step is asked again",
           p.state.data.get("scheduler", {}).get("jobs") == ["guardian"] and "scheduler" not in p.state.data["steps"]
           and any(step == "scheduler" for step, _ in res.failed), (p.state.data, res.failed))
 
 
-def test_mail_mcp_storage_routines():
-    print("\n== alert email, MCP, object storage, routines ==")
-    answers = [False, False,                                   # kdbx, storage (google not asked without kdbx)
+def test_mail_mcp_files_routines():
+    print("\n== alert email, MCP, the files directory, routines ==")
+    answers = [False, "",                                      # kdbx, files (google not asked without kdbx)
                True, "smtp.example.com", "587", "me@example.com", "mail/smtp", "me@example.com", "me@example.com",
                False, False, False]
     p = ports(answers)
@@ -253,7 +259,7 @@ def test_mail_mcp_storage_routines():
                                                                                "kp_ref": "kp://mail/smtp#Password"}},
           saves)
 
-    answers = [False, True, "me@example.com", "", False, False, False]
+    answers = ["", True, "me@example.com", "", False, False, False]
     p = ports(answers, google=Recorder(accounts=["personal"]), kdbx=Recorder(configured="/k.kdbx", exists=True),
               state=D.record(D.record(D.new_state(), "kdbx", "done", {"db": "/k.kdbx"}, Clock().now()),
                              "google", "done", {"accounts": ["personal"]}, Clock().now()))
@@ -263,21 +269,54 @@ def test_mail_mcp_storage_routines():
           saves and saves[0][1]["adapter"] == "gmail-api" and saves[0][1]["account"] == "personal"
           and saves[0][1]["to"] == "me@example.com", saves)
 
-    answers = [False, False, False, True, True, True, False, False]
+    answers = [False, "", False, True, True, True, False, False]
     p = ports(answers)
     A.run(p)
     check("the MCP step shows the snippets, registers with Claude Code and exports BRAIN_VAULT only after a yes each",
           ("register_claude",) in p.mcp.calls and ("append_profile", 'export BRAIN_VAULT="/v"') in p.mcp.calls
           and any("claude mcp add" in s for s in p.prompt.said), (p.mcp.calls, p.prompt.said))
 
-    answers = [False, True, "my-bucket", "eu-west-1", "aws/s3-access-key", False, False, False, False]
-    p = ports(answers)
+    files = Recorder(propose_default="/home/u/BrainFiles", persist=(True, "/state/files-dir.json"),
+                     check=lambda path: (False, "read-only file system") if path == "/ro" else (True, path))
+    p = ports([False, "/ro", "/data/files", False, False, False], files=files)
     A.run(p)
-    check("object storage is tested with the bucket, region and KeePass entry before it counts",
-          ("test", "my-bucket", "eu-west-1", "aws/s3-access-key") in p.storage.calls
-          and p.state.data["steps"]["storage"].get("bucket") == "my-bucket", (p.storage.calls, p.state.data["steps"]))
+    check("a directory that cannot be used is refused and the question is asked again",
+          [c for c in files.calls if c[0] == "check"] == [("check", "/ro"), ("check", "/data/files")]
+          and any("read-only file system" in s for s in p.prompt.said), (files.calls, p.prompt.said))
+    check("the usable directory is persisted and recorded",
+          ("persist", "/data/files") in files.calls
+          and p.state.data["steps"]["files"] == {"status": "done", "at": "2026-09-15T18:00:00+00:00", "dir": "/data/files"},
+          (files.calls, p.state.data["steps"].get("files")))
+    check("the files step never asks a yes or no it could be declined with",
+          not any("file" in q.lower() for q in p.prompt.yes_nos), p.prompt.yes_nos)
 
-    answers = [False] * 5 + [True, "2"]
+    p = ports([False, "", False, False, False], files=Recorder(propose_default="/home/u/BrainFiles",
+                                                                 check=lambda path: (True, path),
+                                                                 persist=(False, "PermissionError: state")))
+    res = A.run(p)
+    check("when the choice cannot be saved the step is not recorded, and the next run asks it again",
+          "files" not in p.state.data["steps"] and ("files", "PermissionError: state") in res.failed
+          and not res.complete, (res, p.state.data["steps"]))
+
+    p = ports([False, "", False, False, False])
+    A.run(p, dry_run=True)
+    check("a dry run creates no directory and records nothing",
+          [c for c in p.files.calls if c[0] in ("check", "persist")] == [] and p.state.saves == 0, p.files.calls)
+
+    p = ports([], interactive=False)
+    state, failed = A.skip_all(p)
+    check("skip-all asks nothing, creates and records the default files directory, and declines the rest",
+          p.prompt.asked == [] and failed == [] and state["steps"]["files"]["status"] == "done"
+          and state["steps"]["files"]["dir"] == "/home/u/BrainFiles"
+          and all(state["steps"][s]["status"] == "declined" for s in D.STEPS if s != "files")
+          and p.state.data == state, (state, failed))
+    p = ports([], interactive=False, files=Recorder(propose_default="/ro", check=(False, "read-only file system")))
+    state, failed = A.skip_all(p)
+    check("when the default directory is not usable skip-all leaves files unanswered and says why",
+          "files" not in state["steps"] and failed == [("files", "read-only file system")]
+          and not D.is_complete(state), (state, failed))
+
+    answers = [False, "", False, False, False, True, "2"]
     p = ports(answers, state=D.record(D.new_state(), "kdbx", "done", {"db": "/k.kdbx"}, Clock().now()))
     A.run(p)
     tokens = [c for c in p.routines.calls if c[0] == "add_token"]
@@ -298,7 +337,7 @@ def main():
         check("first_run_core.application and domain import", False, "%s: %s" % (type(exc).__name__, exc))
     else:
         for t in (test_decline_everything, test_not_a_terminal, test_kdbx_and_google, test_failure_resumes,
-                  test_scheduler_step, test_mail_mcp_storage_routines):
+                  test_scheduler_step, test_mail_mcp_files_routines):
             try:
                 t()
             except Exception as exc:
