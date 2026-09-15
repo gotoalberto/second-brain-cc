@@ -191,8 +191,8 @@ def company_warning(sid, project):
     same line. Knowing it in time, you write a new note instead of appending.
     """
     B.presence_mark(sid, project)          # the git one: instant and local
-    B.presence_beat_async(sid, project)    # the S3 one: detached, ~1 s behind
-    # And the project note's lease is requested: if another machine holds it, `vw.py`
+    B.presence_beat_async(sid, project)    # the local files one: detached, a moment behind
+    # And the project note's lease is requested: if another session holds it, `vw.py`
     # redirects the appends by itself instead of causing a merge conflict.
     B.lease_acquire_async(B.project_note(project), sid)
     others = B.presence_all(sid, project)  # what was already known, from both paths

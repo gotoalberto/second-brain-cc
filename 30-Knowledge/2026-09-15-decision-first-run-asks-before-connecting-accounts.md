@@ -4,7 +4,7 @@ title: First run asks before connecting any account
 type: decision
 area: [onboarding, harness]
 projects: []
-tags: [first-run, onboarding, consent, kdbx, google, s3, mcp, scheduler, routines, decision]
+tags: [first-run, onboarding, consent, kdbx, google, files, mcp, scheduler, routines, decision]
 status: active
 confidence: high
 source: agent

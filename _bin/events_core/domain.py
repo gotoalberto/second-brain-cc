@@ -216,9 +216,10 @@ FIRST_RUN_BLOCK = [
     "Check whether this machine has had its first run: `python3 integrations/first-run/first_run.py status` "
     "(exit 0 done, exit 3 not yet; the answers live in `<brain state>/first-run.json`). If it has not, ask the "
     "user, before any other work, whether to run it now with `bash integrations/first-run/setup.sh` in their own "
-    "terminal. It asks one step at a time, and installs nothing without a yes, whether to connect a KeePass "
-    "database, Google accounts, object storage, an alert email, the MCP server for their agents, scheduled "
-    "jobs, and CLI-agent routines with a token pool. Never run it without the user's yes, and never answer its "
+    "terminal. It asks one step at a time. One step is required: the local directory where files are kept "
+    "(proposed as `~/BrainFiles`). Every other step installs nothing without a yes: a KeePass database, Google "
+    "accounts, an alert email, the MCP server for their agents, scheduled jobs, and CLI-agent routines with a "
+    "token pool. Never run it without the user's yes, and never answer its "
     "questions for them. If they decline, say it can be run any time and carry on; ask again only in a later "
     "session.",
     "",

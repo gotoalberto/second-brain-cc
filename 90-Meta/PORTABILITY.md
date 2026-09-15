@@ -1,8 +1,8 @@
 # Running this memory on any agent
 
 This vault does not depend on Claude Code. It depends on a few things any agent with shell
-access can use: Markdown files, a SQLite index, git, and (optionally) an object store for
-heavy files. The Claude Code hooks and skills are **automation, not substance**: without
+access can use: Markdown files, a SQLite index, git, and a local directory for heavy files,
+chosen on the first run. The Claude Code hooks and skills are **automation, not substance**: without
 them the system still works; you just run the queries yourself.
 
 There are three ready-made ways to connect an agent, in `integrations/`:

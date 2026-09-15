@@ -27,8 +27,8 @@ REINJECT_AFTER      = 25      # injections after which a note may repeat
 
 # --- relevance threshold --------------------------------------------------
 # BM25 on its own does NOT tell signal from noise: measured, an irrelevant query
-# ("check that memory is being consulted") scored 11.6 and a good one ("how are files
-# stored in s3") scored 3.8. What does separate them is COVERAGE: what fraction of the
+# ("check that memory is being consulted") scored 11.6 and a good one (a question
+# about where files are stored) scored 3.8. What does separate them is COVERAGE: what fraction of the
 # prompt's terms actually appears in the note.
 THRESHOLD_STEP     = 0.10        # how much it rises after a search with no matches
 THRESHOLD_CEILING  = 0.90        # no higher: it would stop injecting for good
