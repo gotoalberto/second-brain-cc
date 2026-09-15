@@ -5,20 +5,20 @@
   <key>Label</key><string>com.secondbrain.tasks</string>
   <key>ProgramArguments</key>
   <array>
-    <string>__VAULT__/_bin/pywrap.sh</string>
-    <string>__VAULT__/_bin/tasks.py</string>
+    <string>/home/brain-origin/Brain/_bin/pywrap.sh</string>
+    <string>/home/brain-origin/Brain/_bin/tasks.py</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
     <!-- launchd starts with a minimal PATH: without this, any Homebrew binary fails -->
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <key>HOME</key><string>__HOME__</string>
+    <key>HOME</key><string>/home/brain-origin</string>
   </dict>
-  <key>WorkingDirectory</key><string>__VAULT__</string>
+  <key>WorkingDirectory</key><string>/home/brain-origin/Brain</string>
   <key>RunAtLoad</key><true/>
   <key>StartInterval</key><integer>600</integer>
-  <key>StandardOutPath</key><string>__HOME__/Library/Application Support/brain/logs/tasks/_launchd.log</string>
-  <key>StandardErrorPath</key><string>__HOME__/Library/Application Support/brain/logs/tasks/_launchd.log</string>
+  <key>StandardOutPath</key><string>/home/brain-origin/Library/Application Support/brain/logs/tasks/_launchd.log</string>
+  <key>StandardErrorPath</key><string>/home/brain-origin/Library/Application Support/brain/logs/tasks/_launchd.log</string>
   <key>ProcessType</key><string>Background</string>
   <key>LowPriorityIO</key><true/>
   <key>Nice</key><integer>5</integer>

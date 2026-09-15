@@ -5,22 +5,22 @@
   <key>Label</key><string>com.secondbrain.watch</string>
   <key>ProgramArguments</key>
   <array>
-    <string>__VAULT__/_bin/pywrap.sh</string>
-    <string>__VAULT__/_bin/brain_watch.py</string>
+    <string>/home/brain-origin/Brain/_bin/pywrap.sh</string>
+    <string>/home/brain-origin/Brain/_bin/brain_watch.py</string>
     <string>tick</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
     <!-- launchd starts with a minimal PATH: without this, any Homebrew binary fails -->
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <key>HOME</key><string>__HOME__</string>
+    <key>HOME</key><string>/home/brain-origin</string>
   </dict>
-  <key>WorkingDirectory</key><string>__VAULT__</string>
+  <key>WorkingDirectory</key><string>/home/brain-origin/Brain</string>
   <key>RunAtLoad</key><true/>
   <!-- A poll, not a persistent process: one stat per watched file every 60 s. -->
   <key>StartInterval</key><integer>60</integer>
-  <key>StandardOutPath</key><string>__HOME__/Library/Application Support/brain/logs/watch-launchd.log</string>
-  <key>StandardErrorPath</key><string>__HOME__/Library/Application Support/brain/logs/watch-launchd.log</string>
+  <key>StandardOutPath</key><string>/home/brain-origin/Library/Application Support/brain/logs/watch-launchd.log</string>
+  <key>StandardErrorPath</key><string>/home/brain-origin/Library/Application Support/brain/logs/watch-launchd.log</string>
   <key>ProcessType</key><string>Background</string>
   <key>LowPriorityIO</key><true/>
   <key>Nice</key><integer>5</integer>

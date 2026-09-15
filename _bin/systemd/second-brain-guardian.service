@@ -1,11 +1,11 @@
 # Generated template: integrations/first-run installs it into ~/.config/systemd/user when
-# the user accepts it; guardian.py keeps it in step. __VAULT__ and __HOME__ are rendered.
+# the user accepts it; guardian.py keeps it in step. /home/brain-origin/Brain and /home/brain-origin are rendered.
 [Unit]
 Description=Second Brain: keep the vault machinery wired
 
 [Service]
 Type=oneshot
-WorkingDirectory=__VAULT__
+WorkingDirectory=/home/brain-origin/Brain
 Environment=BRAIN_JOB_LABEL=second-brain-guardian
-ExecStart=/bin/sh __VAULT__/_bin/pywrap.sh __VAULT__/_bin/guardian.py repair
+ExecStart=/bin/sh /home/brain-origin/Brain/_bin/pywrap.sh /home/brain-origin/Brain/_bin/guardian.py repair
 Nice=5
