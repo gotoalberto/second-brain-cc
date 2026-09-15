@@ -250,12 +250,13 @@ def test_pool_and_expiry(D):
     print("\n== the vault's own 90-Meta/routine-tokens.json ==")
     path = os.path.join(os.path.dirname(os.path.dirname(HERE)), "90-Meta", "routine-tokens.json")
     text = open(path, encoding="utf-8").read() if os.path.exists(path) else ""
-    check("90-Meta/routine-tokens.json exists", bool(text), path)
+    ignore = os.path.join(os.path.dirname(os.path.dirname(HERE)), ".gitignore")
+    ignored = open(ignore, encoding="utf-8").read().splitlines() if os.path.exists(ignore) else []
+    check("the token pool is machine-local: git ignores 90-Meta/routine-tokens.json",
+          "90-Meta/routine-tokens.json" in ignored, ignored)
     if text:
         pool = D.parse_pool(text)
-        check("its first entry is the routines token, issued 2026-09-15",
-              pool[0].kp_ref == "kp://Brain/apis/claude-code-oauth-routines-1" and pool[0].account == "routines"
-              and pool[0].issued == dt.date(2026, 9, 15), pool[0])
+        check("a pool this machine keeps parses", len(pool) >= 1, pool)
         check("it holds references only", "sk-ant-" not in text)
 
 
@@ -600,7 +601,8 @@ def test_vault_routines(D):
     print("\n== the vault's own 90-Meta/routines ==")
     vault = os.path.dirname(os.path.dirname(HERE))
     files = sorted(glob.glob(os.path.join(vault, "90-Meta", "routines", "*.md")))
-    check("the vault has its routine files", len(files) >= 5, files)
+    check("the vault ships at least the example routine",
+          any(os.path.basename(f) == "example-routine.md" for f in files), files)
     send = "Bash(python3 ~/Brain/_bin/google.py send:*)"
     for path in files:
         name = os.path.basename(path)
