@@ -30,7 +30,7 @@ follow only what is below. The `/dev` gates do not apply and forcing them would 
 ### 1. Context (always first)
 Invoke `context-scout` with the task. Wait. Read the pack it returns and mark the session:
 ```
-/usr/bin/python3 ~/Brain/_bin/mark_pack.py <pack-path>
+/usr/bin/python3 __VAULT__/_bin/mark_pack.py <pack-path>
 ```
 If the scout declares gaps that block the work, **ask the user before continuing**.
 
@@ -51,6 +51,17 @@ worktree path. For a single-file change, skip this step and say so.
 ### 4. Implementation
 Invoke `implementer` passing it: worktree path, pack path, plan path. Remind it not to go
 looking for context on its own.
+
+### Parallel implementers
+Only when the work splits cleanly by file (or each part needs its own build or server at once):
+- one worktree per implementer, all from the same base commit;
+- each prompt states the files that agent owns and the files it must not touch;
+- register the files with `/usr/bin/python3 __VAULT__/_bin/claim.py <file1> <file2> ...`;
+- one `verifier` per branch;
+- before merging, rebase each branch and run the full test suite on every supported interpreter,
+  then merge one branch at a time with a verifier after each merge.
+You coordinate and never implement. Roster, models and the background pattern:
+`~/Brain/30-Knowledge/2026-09-15-convention-agent-orchestration-per-task.md`.
 
 ### 5. Verification
 Invoke `verifier` in the same worktree. If the verdict is FAIL, go back to step 4 with
@@ -83,4 +94,4 @@ twice, propose `skill-forge`.
 - One subagent per step, in the foreground, in order. Do not parallelise unless the steps
   are genuinely independent.
 - If a step fails, stop and say so. Do not improvise an alternative path silently.
-- When done, release the claims: `/usr/bin/python3 ~/Brain/_bin/claim.py --release`
+- When done, release the claims: `/usr/bin/python3 __VAULT__/_bin/claim.py --release`
