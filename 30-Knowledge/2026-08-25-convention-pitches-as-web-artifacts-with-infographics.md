@@ -17,7 +17,7 @@ supersedes: []
 
 **A pitch or presentation is always a published web page**, not a slide file, a PDF or a memo, unless the
 user asks for another format for a specific case. The deliverable is the page and its link, plus the HTML
-file. [[2026-09-15-convention-every-artifact-also-as-html-file-to-s3]]
+file. [[2026-09-15-convention-every-artifact-also-as-html-file]]
 
 Every slide is built from three things at once:
 

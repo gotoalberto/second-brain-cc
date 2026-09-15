@@ -19,7 +19,7 @@ A deliverable meant to be public or shared with someone who does not run this se
 document, a published page) must not contain:
 
 - vault paths such as `~/Brain/_bin/kp.py`, or `~/.claude/skills/...` paths;
-- vault commands: `/recall`, `/save`, `vw.py`, `s3v.py`, `skills_index.py`;
+- vault commands: `/recall`, `/save`, `vw.py`, `files.py`, `skills_index.py`;
 - links to `30-Knowledge/` or `40-Skills/` notes;
 - credential entry names from the user's database.
 
@@ -35,7 +35,7 @@ example that named the local credential wrapper and a real entry name.
 ## How to apply
 
 Before publishing, grep the deliverable for
-`brain|~/\.claude|kp\.py|vw\.py|s3v|skills_index|/recall|/save|30-Knowledge|40-Skills` and fix every
+`brain|~/\.claude|kp\.py|vw\.py|files\.py|skills_index|/recall|/save|30-Knowledge|40-Skills` and fix every
 real hit. Watch for false positives: a domain term like "vault" in another product's documentation has nothing to do
 with this system.
 

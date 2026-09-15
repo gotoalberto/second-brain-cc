@@ -5,8 +5,8 @@ The contract for every Claude Code session on this machine. Injected at startup.
 ## 0. First session in a new vault
 If the vault has no first-run state yet (a fresh clone; `integrations/first-run/README.md` says
 where that state lives), **before any other work ask the user whether they want to connect
-accounts now**: the KeePass database, Google accounts, the files directory (required), the alert email, the MCP
-server, scheduled jobs and CLI agent routines. Run `integrations/first-run/setup.sh` only on a yes,
+accounts now**: the KeePass database, Google accounts, the files directory (required), the alert
+email, the MCP server, scheduled jobs and CLI agent routines. Run `integrations/first-run/setup.sh` only on a yes,
 one step at a time, and never write into an agent's configuration or the scheduler without that
 consent. A no is a valid answer: notes, search and the write path work with no account at all.
 Detail: `30-Knowledge/2026-09-15-decision-first-run-asks-before-connecting-accounts.md`.
@@ -125,7 +125,7 @@ Adapt this to your own taste; it is a convention note, not code. Detail:
 - Every deliverable, intermediate versions too, is stored with its project and cited from its
   note. A published page also goes to the user as an HTML file and is archived.
   `30-Knowledge/2026-08-25-convention-deliverables-to-the-vault.md`,
-  `30-Knowledge/2026-09-15-convention-every-artifact-also-as-html-file-to-s3.md`
+  `30-Knowledge/2026-09-15-convention-every-artifact-also-as-html-file.md`
 - Pitches and presentations are web pages: one infographic per slide that explains its concept,
   bullets, room to talk, subtle motion, the house style.
   `30-Knowledge/2026-08-25-convention-pitches-as-web-artifacts-with-infographics.md`

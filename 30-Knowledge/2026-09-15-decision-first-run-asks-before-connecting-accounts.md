@@ -25,15 +25,16 @@ whether they want to connect accounts now. Only with consent does it run the fir
 
 ## The flow
 
-Each step is an explicit yes or no, can be skipped, and records its outcome so a later run resumes
-where the previous one stopped:
+Each step is an explicit yes or no and can be skipped, except the files directory, which only asks
+where. Every step records its outcome so a later run resumes where the previous one stopped:
 
 1. **KeePass database.** Point at an existing `.kdbx` or create one, then test an unlock.
    [[2026-08-20-decision-credentials-in-keepass]]
 2. **Google accounts.** How many to connect and a name for each; one OAuth client and refresh token
    per account, stored in the kdbx, through `_bin/google.py`.
-3. **Object storage.** Bucket and key, stored in the kdbx and tested with `s3v.py`.
-   [[2026-08-26-decision-file-vault-in-s3]]
+3. **Files directory.** Where `files.py` keeps files, proposed as `~/BrainFiles`, created and proven
+   writable before it is recorded. This step is required and cannot be declined.
+   [[2026-09-15-decision-file-vault-in-a-local-directory]]
 4. **Alert email.** Where the guardian sends its alerts, and through which connected account.
 5. **MCP server.** Print the configuration block for the user's agent, or append it only when asked.
    Nothing is written into an agent's configuration uninvited.

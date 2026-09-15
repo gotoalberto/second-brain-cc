@@ -35,7 +35,7 @@ Quote it as it was said and write the surrounding sentence in English.
 - A short quote goes inline: the English, then the original in parentheses.
 - A whole transcript does not go in the note. Appending it makes the note mostly
   non-English, which is what this rule exists to prevent. It goes to the file store
-  (`s3v.py put --to <note> --kind material`) and the note keeps the translation and the
+  (`files.py put --to <note> --kind material`) and the note keeps the translation and the
   pointer.
 
 Deliberately not English: `GLOSARIO` and `STOP` in `brainlib.py` and `TASK_VERBS` in

@@ -37,4 +37,4 @@ A report written for the user once went unread because it arrived as a bare path
 ## Links
 
 - [[2026-08-28-convention-links-must-resolve-and-be-verified-open]]
-- [[2026-09-15-convention-every-artifact-also-as-html-file-to-s3]]
+- [[2026-09-15-convention-every-artifact-also-as-html-file]]

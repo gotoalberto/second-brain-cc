@@ -56,7 +56,7 @@ healthy" and skipped.
 
 | fix | change |
 |---|---|
-| `gate_write.py` matches Bash | a heuristic denies a command that names a protected folder and looks like a write; `vw.py`, `va.py`, `s3v.py` and `git` are exempt so the gate never blocks its own remedy |
+| `gate_write.py` matches Bash | a heuristic denies a command that names a protected folder and looks like a write; `vw.py`, `va.py`, `files.py` and `git` are exempt so the gate never blocks its own remedy |
 | `vault_ledger.py` detects what the gate misses | a protected note whose mtime moved without `vw.py` (which now marks its own writes) raises a warning |
 | `doctor.py` reports the graph | edges, broken, fixable, meeting topics, pending entities, classified by `linkfix` |
 | `gate_memory.py` sees a rewrite | compares `MAX(ts)` of the session's writes, not only the count; changes to agents, skills or scheduled-task prompts under `~/.claude` also count as work to save |

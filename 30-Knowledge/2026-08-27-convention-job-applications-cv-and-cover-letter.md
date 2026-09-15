@@ -49,12 +49,12 @@ action is blocked, stop and say so.
 An application that is not recorded did not happen. Record, once the user confirms it was sent:
 
 - the role, the organization, the date and the channel;
-- the documents actually sent, by name and hash, with the files in object storage;
+- the documents actually sent, by name and hash, with the files in the files directory;
 - **every free-text answer verbatim**, and any email exchanged about the application, because those are the
   sentences that get quoted back later;
 - the decisions taken while filling (yes or no answers, fields left blank and why).
 
 ## Links
 
-- [[2026-08-26-decision-file-vault-in-s3]]
+- [[2026-09-15-decision-file-vault-in-a-local-directory]]
 - [[2026-08-28-convention-links-must-resolve-and-be-verified-open]]

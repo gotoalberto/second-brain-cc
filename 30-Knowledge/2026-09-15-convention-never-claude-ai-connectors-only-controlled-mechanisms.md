@@ -32,7 +32,7 @@ reason to use it. A capability that exists only through a connector counts as un
 - **Google (Gmail, Calendar, Drive, Contacts):** `_bin/google.py`, one named account per Google
   identity, each with its own OAuth client and refresh token in the kdbx. Accounts are added
   during the first run.
-- **Object storage:** `_bin/s3v.py`, key in the kdbx. [[2026-08-26-decision-file-vault-in-s3]]
+- **Files:** `_bin/files.py` over a local directory, with no account to connect. [[2026-09-15-decision-file-vault-in-a-local-directory]]
 - **The vault itself, for any MCP client:** `integrations/mcp/server.py`.
 
 ## Why

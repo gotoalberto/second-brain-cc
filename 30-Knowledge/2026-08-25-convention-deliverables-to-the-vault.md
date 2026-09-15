@@ -4,7 +4,7 @@ title: Deliverables are stored with their project, intermediate versions include
 type: convention
 area: [deliverables, memory-system]
 projects: []
-tags: [deliverables, versions, object-storage, sources, projects, convention]
+tags: [deliverables, versions, files, sources, projects, convention]
 status: active
 confidence: high
 source: agent
@@ -19,8 +19,8 @@ Every project deliverable is stored and referenced from the project's note, inte
 every version shown to the user is a deliverable. Showing it in the chat and moving on does not count;
 the chat gets lost.
 
-Files go to object storage with `s3v.py`, anchored to the note that explains them.
-[[2026-08-26-decision-file-vault-in-s3]]
+Files go to the local files directory with `files.py`, anchored to the note that explains them.
+[[2026-09-15-decision-file-vault-in-a-local-directory]]
 
 ## What gets stored
 
@@ -47,5 +47,5 @@ ability to iterate on it instead of redoing it, and the reasons behind each chan
 
 ## Links
 
-- [[2026-09-15-convention-every-artifact-also-as-html-file-to-s3]]
+- [[2026-09-15-convention-every-artifact-also-as-html-file]]
 - [[2026-08-25-convention-pitches-as-web-artifacts-with-infographics]]
