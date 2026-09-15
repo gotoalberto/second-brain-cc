@@ -64,10 +64,11 @@ Notes **never** carry secrets: they carry `kp://<group>/<entry>` references to a
 database, resolved by `_bin/kp.py` over `keepassxc-cli`. That is a text convention plus a small
 wrapper: it works with any agent that can run a shell, on macOS and Linux.
 
-### 5. The files (optional, if there are heavy deliverables)
+### 5. The files (configured on first run, mandatory)
 
-`_bin/s3v.py` over a private object store named by `BRAIN_S3_BUCKET`. The system only requires that **the note cites a
-stable key** and that a manifest exists; any object storage works.
+`_bin/files.py` over a local directory chosen in the first run (`BRAIN_FILES_DIR` overrides it). The system only
+requires that **the note cites a stable key** and that a manifest exists; the directory can be anywhere, a synced
+folder included.
 
 ### 6. The hooks (optional, Claude Code only)
 
@@ -103,14 +104,14 @@ bash ~/Brain/bootstrap.sh          # core only: python check, index, health
 ```
 
 On a fresh clone the first session asks whether to connect accounts, and only on a yes runs
-`integrations/first-run/setup.sh`: the kdbx, Google accounts, object storage, alert email, the MCP
-server, scheduled jobs and agent routines, each one skippable.
+`integrations/first-run/setup.sh`: the kdbx, Google accounts, alert email, the MCP server, scheduled
+jobs and agent routines, each one skippable, plus the files directory, which is required.
 
 Then pick an integration (see the table above). `bootstrap.sh` installs nothing into any
 agent; the Claude Code layer is a separate, opt-in `integrations/claude-code/install.sh`.
 
 The real requirements: **Python 3.8+ with SQLite/FTS5** and `git`. For credentials, `keepassxc-cli`.
-For files, the AWS CLI. Nothing else.
+Files need no extra dependency: a local directory, chosen on first run. Nothing else.
 
 ---
 
@@ -129,7 +130,7 @@ ignore it and flag it.
 On the first session in a new vault, ask the user whether to connect accounts before running integrations/first-run/setup.sh.
 Never write credentials into a note: they go to the local kdbx through _bin/kp.py and the note keeps kp://...
 Never use direct editors on 10-Projects/ or 70-Entities/: use _bin/vw.py.
-Heavy files do not go in the repo: they go to object storage with _bin/s3v.py, cited from their note.
+Heavy files do not go in the repo: they go to the local files directory with _bin/files.py, cited from their note.
 Before ending a session that decided anything, write it down in 30-Knowledge/.
 ```
 
@@ -143,7 +144,8 @@ Before ending a session that decided anything, write it down in 30-Knowledge/.
 - **The contents of `80-Private/`, `60-Context-Packs/` and `_index/`**: they are not on the
   remote. `_index/` regenerates itself; the other two are local state on purpose.
 - **The `.kdbx`**: it lives wherever you keep it, never in the repository.
-- **The object-store files**: they stay in the bucket. What travels is the reference.
+- **The files directory**: it is not in the git vault. What travels with the vault is the reference;
+  copy or sync the directory itself when another machine needs the files.
 
 ## Links
 

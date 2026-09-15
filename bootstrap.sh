@@ -33,7 +33,6 @@ else
   echo "   keepassxc-cli not found: install KeePassXC only if you want credentials in a KeePass database"
   echo "     macOS: brew install --cask keepassxc    Linux: your distribution's keepassxc package"
 fi
-command -v aws >/dev/null 2>&1 || echo "   aws not found: needed only for S3 file storage (s3v.py)"
 [ -d /Applications/Obsidian.app ] || command -v obsidian >/dev/null 2>&1 \
   || echo "   tip: Obsidian (https://obsidian.md) gives the vault a GUI; optional"
 

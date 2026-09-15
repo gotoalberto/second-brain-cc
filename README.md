@@ -50,8 +50,8 @@ If you clone somewhere other than `~/Brain`, export `BRAIN_VAULT=/path/to/vault`
 run offers to add it to your shell profile); the MCP server and the CLI also detect it.
 
 **Requirements:** Python 3.9 or newer with SQLite/FTS5 (bundled with CPython) and `git`, on
-macOS or Linux. Optional: [KeePassXC](https://keepassxc.org) for credentials, the AWS CLI for
-S3 file storage, Obsidian as a GUI.
+macOS or Linux. Optional: [KeePassXC](https://keepassxc.org) for credentials and Obsidian as a
+GUI.
 
 ## First run
 
@@ -61,9 +61,11 @@ python3 integrations/first-run/first_run.py status
 ```
 
 The first run asks, step by step, whether to connect each optional piece, and installs
-nothing without a yes: a KeePass database, Google accounts, S3 object storage, an alert email
-for the guardian, the MCP server for your agents, scheduled jobs (launchd on macOS, systemd
-user units on Linux, cron where systemd is absent), and CLI-agent routines with a token pool.
+nothing without a yes: a KeePass database, Google accounts, an alert email for the guardian,
+the MCP server for your agents, scheduled jobs (launchd on macOS, systemd user units on Linux,
+cron where systemd is absent), and CLI-agent routines with a token pool. It also asks where to
+keep files, proposing `~/BrainFiles`. That step is required: the directory is created and
+recorded before the run can complete.
 Answers are remembered in `<brain state>/first-run.json`, so re-running resumes where it
 stopped. Every agent that reads the generated `AGENTS.md` is told to offer it in its first
 session on a machine that has not had one. Details:
@@ -71,6 +73,18 @@ session on a machine that has not had one. Details:
 
 `<brain state>` is `BRAIN_STATE` when set, otherwise `~/Library/Application Support/brain` on
 macOS and `~/.local/state/brain` on Linux (`_bin/brain_paths.py`).
+
+Files (deliverables, intermediate steps, source material) live in that directory, outside the
+vault, and the note that explains each one keeps its key. `BRAIN_FILES_DIR` overrides the
+directory chosen in the first run (`_bin/brain_files.py`).
+
+```bash
+python3 _bin/files.py put report.pdf --to 30-Knowledge/<note>.md --project <slug> \
+  --kind deliverable --caption "what it is"      # kinds: deliverable, intermediate, material
+python3 _bin/files.py ls --project <slug>
+python3 _bin/files.py get <key> --out <dir>
+python3 _bin/files.py check                      # broken references and orphaned files
+```
 
 ## How it works
 
@@ -183,7 +197,7 @@ which the installer replaces with yours.
 | `task` | Runs a task end to end: context, worktree, plan, implementation, verification, write-back | The vault and Python |
 | `ctx` | Gathers a task's context into a Context Pack before any work | The vault |
 | `recall` | Searches the vault for past decisions and conventions | The vault |
-| `save` | Writes what a session learned into the vault | The vault; uploads files only if S3 storage was connected (`BRAIN_S3_BUCKET` and the storage key in KeePass) |
+| `save` | Writes what a session learned into the vault | The vault, and the files directory chosen in the first run, where `files.py` stores the session's files |
 | `vault-doctor` | Diagnoses the vault and the memory system | The vault; reads `guardian.py status` when the guardian is installed |
 | `kp` | Reads and files credentials in your KeePass database | KeePassXC (`keepassxc-cli`) and a database connected in the first run |
 | `dev` | The development pipeline: hexagonal architecture, tests first, design and review gates for anything with an interface | The third-party skills below, and a browser or preview tool for the rendered checks |
@@ -246,7 +260,7 @@ described above, so they run with no desktop app open and on no particular logge
 ## What is tied to Claude Code, and what is not
 
 - **Agent-agnostic:** the vault, the search index and every `_bin/` tool; the MCP server and the
-  CLI; `kp.py`, `google.py` and `s3v.py`; the event registry, git hooks and the file watch; the
+  CLI; `kp.py`, `google.py` and `files.py`; the event registry, git hooks and the file watch; the
   guardian's scheduled jobs and alerts; the task runner (any CLI agent through
   `agent-command.txt`); the first run; `AGENTS.md`.
 - **Claude Code only:** automatic recall on every prompt, the stop gate and the other hooks; the
@@ -267,7 +281,7 @@ The deepest experience today is Claude Code with the plugin; nothing in the vaul
 | `doctor.py` | Health report. |
 | `kp.py` | Credentials in a local KeePass database. |
 | `google.py` | Named Google accounts: Gmail, Calendar, Drive. |
-| `s3v.py` | Optional S3 file storage (`BRAIN_S3_BUCKET`, `BRAIN_S3_REGION`, `BRAIN_S3_KP_ENTRY`). |
+| `files.py` / `files_core.py`, `brain_files.py` | The file store: deliverables, intermediates and material in a local directory, anchored to notes; where that directory is. |
 | `guardian.py` | Keeps hooks, git hooks and scheduled jobs wired, and alerts. |
 | `brain_watch.py` | The file watch and the generated hooks. |
 | `tasks.py` | The periodic task and routine runner. |

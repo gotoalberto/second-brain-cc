@@ -5,7 +5,7 @@ The contract for every Claude Code session on this machine. Injected at startup.
 ## 0. First session in a new vault
 If the vault has no first-run state yet (a fresh clone; `integrations/first-run/README.md` says
 where that state lives), **before any other work ask the user whether they want to connect
-accounts now**: the KeePass database, Google accounts, object storage, the alert email, the MCP
+accounts now**: the KeePass database, Google accounts, the files directory (required), the alert email, the MCP
 server, scheduled jobs and CLI agent routines. Run `integrations/first-run/setup.sh` only on a yes,
 one step at a time, and never write into an agent's configuration or the scheduler without that
 consent. A no is a valid answer: notes, search and the write path work with no account at all.
@@ -142,10 +142,14 @@ Adapt this to your own taste; it is a convention note, not code. Detail:
   the user. `30-Knowledge/2026-08-27-convention-job-applications-cv-and-cover-letter.md`
 
 ### Images and other binaries
-The vault is **markdown only**. Files go to S3 with `s3v.py` and **always through `va.py`**,
-never copied by hand:
+The vault is **markdown only**. Deliverables, intermediate steps and source material go to the
+local files directory with `files.py`; a small image that has to render inside a note goes
+through `va.py`. Neither is ever copied by hand:
 
 ```bash
+python3 ~/Brain/_bin/files.py put report.pdf --to 30-Knowledge/2026-01-01-my-note.md \
+  --project my-topic --kind deliverable --caption "what it is"
+python3 ~/Brain/_bin/files.py check    # broken references and orphaned files
 python3 ~/Brain/_bin/va.py add screenshot.png other.png \
   --to 30-Knowledge/2026-01-01-my-note.md --collection my-topic --caption "what it shows"
 python3 ~/Brain/_bin/va.py list        # what's there and who uses it
@@ -290,7 +294,7 @@ Detail and reasoning: `30-Knowledge/2026-08-21-convention-worktree-isolation-per
   credentials come from the kdbx; agent hooks are generated wiring that the guardian repairs and
   proves alive. `30-Knowledge/2026-09-15-decision-brain-machinery-independent-of-claude-app-and-account.md`
 - **Never vendor connectors.** Only mechanisms the vault controls: scripts with kdbx tokens
-  (`google.py` for named Google accounts, `s3v.py`), a generic MCP server.
+  (`google.py` for named Google accounts), `files.py` over a local directory, a generic MCP server.
   `30-Knowledge/2026-09-15-convention-never-claude-ai-connectors-only-controlled-mechanisms.md`
 - **A scheduled repair job exits non-zero only when the run itself fails**, never because it found
   something. `30-Knowledge/2026-09-15-convention-scheduled-job-exit-code-should-reflect-crash-not-findings.md`
