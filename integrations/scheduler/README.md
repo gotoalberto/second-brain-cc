@@ -106,3 +106,17 @@ python3 integrations/scheduler/run.py --tick --dry-run  # what --tick would run,
 - This is the generic engine. The reference implementation's private variant used
   Claude Code's own task MCP; here the same idea is reduced to files + cron + a stdin
   contract so it runs on anything.
+
+## This scheduler and the vault's task runner
+
+The harness has two ways to run things on a schedule. They coexist, and neither needs the other:
+
+| | `integrations/scheduler/` (this one) | `_bin/tasks.py` with `90-Meta/scheduled-tasks.md` |
+|---|---|---|
+| What a task is | a Markdown file with a cron expression and a prompt | a row in a table: machine, time, days, `shell` or `agent` |
+| How it runs the model | the prompt on stdin to any agent command | the routine file through the CLI agent in `90-Meta/agent-command.txt`, with a token from the KeePass pool, a per-run scratch directory and a success contract checked against the send log |
+| What starts it | one cron line you install with `install-cron.sh` | the tasks job the first run offers (launchd, systemd user timer or cron), kept in step by the guardian |
+| Failures | logged per task | raised as guardian alerts (notification, email, log) and cleared by the next success |
+| Pick it when | you want the simplest cron of prompts, on any model | you want routines that must not fail silently, pinned to machines, with credentials from KeePass |
+
+A task belongs in one of them, not both, or it runs twice.
