@@ -208,6 +208,23 @@ def _manual(event):
     return out
 
 
+# Every agent that reads AGENTS.md learns to offer the first run: nothing on the machine asks for accounts,
+# credentials or scheduled jobs until the user says yes to each one there.
+FIRST_RUN_BLOCK = [
+    "## First session on this machine",
+    "",
+    "Check whether this machine has had its first run: `python3 integrations/first-run/first_run.py status` "
+    "(exit 0 done, exit 3 not yet; the answers live in `<brain state>/first-run.json`). If it has not, ask the "
+    "user, before any other work, whether to run it now with `bash integrations/first-run/setup.sh` in their own "
+    "terminal. It asks one step at a time, and installs nothing without a yes, whether to connect a KeePass "
+    "database, Google accounts, object storage, an alert email, the MCP server for their agents, scheduled "
+    "jobs, and CLI-agent routines with a token pool. Never run it without the user's yes, and never answer its "
+    "questions for them. If they decline, say it can be run any time and carry on; ask again only in a later "
+    "session.",
+    "",
+]
+
+
 def render_agents_md(registry: Registry, protocol_text: str, known_triggers) -> str:
     """AGENTS.md: the protocol, every Brain event, and what is lost without an adapter.
 
@@ -227,6 +244,7 @@ def render_agents_md(registry: Registry, protocol_text: str, known_triggers) -> 
         "",
         strip_frontmatter(protocol_text).strip(),
         "",
+    ] + FIRST_RUN_BLOCK + [
         "## Brain events",
         "",
         "| event | what it does | fires automatically through |",
