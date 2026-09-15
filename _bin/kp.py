@@ -1097,8 +1097,8 @@ def resolve(pw, raw):
     leaf = e.rsplit("/", 1)[-1]
     out = cli(["search", DB, leaf], pw, check=False).stdout
     cands = [c.strip().lstrip("/") for c in out.split("\n") if c.strip()]
-    # An exact leaf match beats a substring one, so `dune-api-key` is not made ambiguous
-    # by `dune-api-key-old`.
+    # An exact leaf match beats a substring one, so `example-api-key` is not made ambiguous
+    # by `example-api-key-old`.
     exact = [c for c in cands if c.rsplit("/", 1)[-1].lower() == leaf.lower()]
     if exact:
         cands = exact
@@ -1329,8 +1329,8 @@ def rewrite_refs(old_one, new_one):
             path = os.path.join(raiz, f)
             try:
                 # Anchored at a reference boundary. A bare `str.replace` matched the old
-                # path as a SUBSTRING, so moving `Brain/apis/dune` rewrote every
-                # reference to `Brain/apis/dune-api-key` too and pointed it at an entry
+                # path as a SUBSTRING, so moving `Brain/apis/example` rewrote every
+                # reference to `Brain/apis/example-api-key` too and pointed it at an entry
                 # that does not exist.
                 rx = re.compile(r"kp://" + re.escape(old_one) + r"(?![\w./-])")
                 if not rx.search(open(path, errors="replace").read()):
@@ -1489,8 +1489,8 @@ def cmd_put(a):
         # SUBSTRING, which is what makes reads convenient and writes lethal: filing a
         # refresh_token under "<X> refresh" (which did not exist) resolved to "<X>" and
         # overwrote the client_secret that lived there, silently and with exit 0.
-        # A legitimate partial path differs from its entry in the GROUP ("apis/dune-api-key"
-        # -> "Brain/apis/dune-api-key"): the LEAF is always spelled in full. So a leaf that
+        # A legitimate partial path differs from its entry in the GROUP ("apis/example-api-key"
+        # -> "Brain/apis/example-api-key"): the LEAF is always spelled in full. So a leaf that
         # does not match is not the entry that was asked for, and guessing costs a credential.
         if leaf_of(found) != leaf_of(a.entry):
             die("\"%s\" does not exist. The nearest match is \"%s\", whose NAME is not the\n"
@@ -1598,8 +1598,8 @@ def cmd_locks(a):
 def cmd_ref(a):
     """The reference is RESOLVED, not just prefixed.
 
-    `with_group()` alone minted `kp://Brain/dune-api-key#Password` for an entry that
-    actually lives at `Brain/apis/dune-api-key` — a reference that looks right, gets
+    `with_group()` alone minted `kp://Brain/example-api-key#Password` for an entry that
+    actually lives at `Brain/apis/example-api-key` — a reference that looks right, gets
     pasted into a note, and fails the day someone tries to use it. `get` prints the
     resolved path for the same input; the two have to agree."""
     pw = unlocked()
