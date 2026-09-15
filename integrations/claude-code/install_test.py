@@ -32,8 +32,13 @@ def main():
     try:
         home, state = os.path.join(root, "home"), os.path.join(root, "state")
         os.makedirs(home)
+        # A scratch copy of the repository: install.sh writes generated files (the skills catalogue)
+        # into the vault it is given, and a test must never write into the real tree.
+        vault = os.path.join(root, "vault")
+        shutil.copytree(REPO, vault, ignore=shutil.ignore_patterns(".git", "_index", "__pycache__", "*.pyc"))
+        before = sorted(os.listdir(os.path.join(REPO, "40-Skills")))
         env = {k: v for k, v in os.environ.items() if not k.startswith("BRAIN_")}
-        env.update(HOME=home, BRAIN_STATE=state, BRAIN_VAULT=REPO)
+        env.update(HOME=home, BRAIN_STATE=state, BRAIN_VAULT=vault)
         script = open(INSTALL, encoding="utf-8").read()
         schedulers = [w for w in ("launchctl", "systemctl", "crontab") if w in script]
         check("install.sh never talks to a scheduler (the first run owns scheduled jobs)", schedulers == [], schedulers)
@@ -62,7 +67,7 @@ def main():
         data = json.load(open(settings)) if os.path.isfile(settings) else {}
         commands = [h.get("command", "") for groups in data.get("hooks", {}).values() for g in groups for h in g.get("hooks", [])]
         check("the hooks are merged into settings.json and name this vault's scripts",
-              any(os.path.join(REPO, "_bin", "retrieve.py") in c for c in commands)
+              any(os.path.join(vault, "_bin", "retrieve.py") in c for c in commands)
               and not any("brain-origin" in c for c in commands), commands[:4])
         check("recommended settings are shown but not merged without a terminal",
               "permissions" not in data and "claude_settings.py merge" in out, (sorted(data), out[-600:]))
@@ -70,6 +75,8 @@ def main():
               not os.path.exists(os.path.join(home, "Library", "LaunchAgents"))
               and not os.path.exists(os.path.join(home, ".config", "systemd")), out[-400:])
         check("it points at the first run for everything else", "first-run/setup.sh" in out, out[-400:])
+        check("nothing was written into the real repository's tree",
+              sorted(os.listdir(os.path.join(REPO, "40-Skills"))) == before, sorted(os.listdir(os.path.join(REPO, "40-Skills"))))
     finally:
         shutil.rmtree(root, ignore_errors=True)
     print("\nRESULT: %d passed, %d failed" % (len(ok), len(fail)))
