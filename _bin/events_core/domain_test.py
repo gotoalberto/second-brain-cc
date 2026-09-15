@@ -347,13 +347,12 @@ def test_real_registry(D):
 
 OLD = "11111111-5e1f-4c1a-9d0e-000000000001"
 NEW = "22222222-2b7a-4f3e-8a11-000000000002"
-# Line shapes from 30-Knowledge/2026-09-13-diagnosis-claude-in-chrome-unreachable-after-desktop-account-switch.md
-# (its recipe greps "claude-in-chrome] Connecting to bridge" and "[account] Login-state transition"). The
-# timestamps and surrounding text are reconstructed; only those two fragments are from the note.
-CONNECT_OLD = ("2026-09-13 10:07:12 [info] [claude-in-chrome] Connecting to bridge: "
+# Line shapes of the Claude Desktop main.log: "claude-in-chrome] Connecting to bridge" and
+# "[account] Login-state transition". The timestamps and surrounding text are synthetic.
+CONNECT_OLD = ("2000-01-01 10:07:12 [info] [claude-in-chrome] Connecting to bridge: "
                "wss://bridge.claudeusercontent.com/chrome/%s" % OLD)
-SWITCH = "2026-09-13 12:12:40 [info] [account] Login-state transition (loggedOut: false \u2192 false, uuid: %s \u2192 %s)" % (OLD, NEW)
-CONNECT_NEW = ("2026-09-13 14:40:02 [info] [claude-in-chrome] Connecting to bridge: "
+SWITCH = "2000-01-01 12:12:40 [info] [account] Login-state transition (loggedOut: false \u2192 false, uuid: %s \u2192 %s)" % (OLD, NEW)
+CONNECT_NEW = ("2000-01-01 14:40:02 [info] [claude-in-chrome] Connecting to bridge: "
                "wss://bridge.claudeusercontent.com/chrome/%s" % NEW)
 
 

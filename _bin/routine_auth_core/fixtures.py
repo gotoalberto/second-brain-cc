@@ -27,7 +27,7 @@ FIXTURES = {
     },
     "ok_no_request_reply": {
         "verified": True,
-        "note": ("seen 2026-09-15: meeting-notes-to-vault-agent through tasks.py, exit 0 after 6 s, no tool used, "
+        "note": ("seen 2026-09-15: example-routine-b-agent through tasks.py, exit 0 after 6 s, no tool used, "
                  "when the routine body was handed over unframed. Only the result text is verified; the json "
                  "around it is reconstructed. The CLI succeeded, so this is ok to the classifier: the routine's "
                  "success contract is what catches it"),

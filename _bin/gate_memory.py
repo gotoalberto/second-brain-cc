@@ -5,8 +5,7 @@ It used to block once per session: ignoring it at the start was enough for the r
 the session to end without writing anything to the vault. Now the gate is evaluated every
 turn and warns again whenever new work appears.
 
-Both signals are MEASURED, not self-declared (2026-08-21, see
-30-Knowledge/2026-08-21-decision-gate-measures-effect-not-event.md):
+Both signals are MEASURED, not self-declared:
 
   did it work?    Edit/Write claims  ∪  the working tree fingerprint (and its worktrees)
                   changed against the startup snapshot. The second one sees work done

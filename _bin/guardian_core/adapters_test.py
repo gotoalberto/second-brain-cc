@@ -688,11 +688,11 @@ def test_desktop_tasks_probe():
         {"id": "digest-now", "enabled": False}]}))
     write(os.path.join(base, "acct-2222", "sess-b", "scheduled-tasks.json"), "{broken")
     write(os.path.join(base, "acct-2222", "sess-c", "scheduled-tasks.json"),
-          json.dumps({"scheduledTasks": [{"id": "meeting-notes-to-vault", "enabled": True}, "junk"]}))
+          json.dumps({"scheduledTasks": [{"id": "example-routine-b", "enabled": True}, "junk"]}))
     before = {p: os.path.getmtime(os.path.join(r, p)) for r, _, fs in os.walk(base) for p in fs}
     got = sorted(AD.DesktopScheduledTasksProbe(base).enabled())
     check("every enabled Claude app task, per account, across sessions",
-          got == [("daily-digest", "acct-1111"), ("meeting-notes-to-vault", "acct-2222")], got)
+          got == [("daily-digest", "acct-1111"), ("example-routine-b", "acct-2222")], got)
     check("an unreadable sessions file is skipped, not fatal", True)
     check("the probe writes nothing",
           before == {p: os.path.getmtime(os.path.join(r, p)) for r, _, fs in os.walk(base) for p in fs})

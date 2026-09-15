@@ -527,20 +527,20 @@ def test_token_pool(D):
 def test_duplicates_and_degraded(D):
     print("\n== routine frontmatter ==")
     text = ("---\nid: routine-x\nroutine_id: x\napp_task: daily-digest\n"
-            "needs_bridge: [meetings-mcp, claude-in-chrome, vault-write]\n---\n\nbody\napp_task: not-this\n")
+            "needs_bridge: [example-bridge, claude-in-chrome, vault-write]\n---\n\nbody\napp_task: not-this\n")
     m = D.routine_meta(text)
     check("app_task and needs_bridge come from the frontmatter only",
-          m == {"app_task": "daily-digest", "needs_bridge": ["meetings-mcp", "claude-in-chrome", "vault-write"]}, m)
+          m == {"app_task": "daily-digest", "needs_bridge": ["example-bridge", "claude-in-chrome", "vault-write"]}, m)
     check("no frontmatter is no metadata", D.routine_meta("just a prompt") == {"app_task": None, "needs_bridge": []})
     check("needs_bridge: none is an empty list",
           D.routine_meta("---\nneeds_bridge: none\n---\n")["needs_bridge"] == [])
 
     print("\n== a routine enabled twice ==")
     rows = [{"id": "daily-digest-agent", "enabled": True, "app_task": "daily-digest"},
-            {"id": "meeting-notes-to-vault-agent", "enabled": False, "app_task": "meeting-notes-to-vault"},
+            {"id": "example-routine-b-agent", "enabled": False, "app_task": "example-routine-b"},
             {"id": "weekly-report-agent", "enabled": True, "app_task": "weekly-report"},
             {"id": "no-app-agent", "enabled": True, "app_task": None}]
-    desktop = [("daily-digest", "acct-1111"), ("meeting-notes-to-vault", "acct-1111"),
+    desktop = [("daily-digest", "acct-1111"), ("example-routine-b", "acct-1111"),
                ("daily-digest", "acct-2222")]
     fs = D.duplicate_task_findings(desktop, rows)
     check("an agent row enabled while its Claude app task is enabled is a failure repair never touches",
@@ -553,16 +553,16 @@ def test_duplicates_and_degraded(D):
           and D.duplicate_task_findings([], rows) == [])
 
     print("\n== routines degraded by a stale browser bridge ==")
-    rows = [{"id": "meeting-notes-to-vault-agent", "enabled": True, "needs_bridge": ["meetings-mcp", "claude-in-chrome"]},
+    rows = [{"id": "example-routine-b-agent", "enabled": True, "needs_bridge": ["example-bridge", "claude-in-chrome"]},
             {"id": "daily-digest-agent", "enabled": True, "needs_bridge": ["email", "skill-defined"]},
             {"id": "off-agent", "enabled": False, "needs_bridge": ["browser"]}]
     fs = D.degraded_routine_findings(rows, bridge_stale=True)
     check("an enabled routine that needs the browser is a warning while the bridge is stale",
-          [(f.key, f.severity) for f in fs] == [("degraded:meeting-notes-to-vault-agent", "warn")]
+          [(f.key, f.severity) for f in fs] == [("degraded:example-routine-b-agent", "warn")]
           and "browser" in fs[0].summary and "restart" in fs[0].summary, fs)
     check("a healthy bridge degrades nothing", D.degraded_routine_findings(rows, bridge_stale=False) == [])
     check("degraded ids are listed for the status report",
-          D.degraded_routine_ids(rows, bridge_stale=True) == ["meeting-notes-to-vault-agent"])
+          D.degraded_routine_ids(rows, bridge_stale=True) == ["example-routine-b-agent"])
 
 
 def test_routine_permissions(D):

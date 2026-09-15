@@ -617,7 +617,7 @@ def main():
         check("a run that meets its contract succeeds and raises nothing",
               rc == 0 and "routine:routine-a" not in {c[0] for c in T.raise_alert.calls}, (rc, T.raise_alert.calls))
 
-        print("\n== replaying the first real runs (2026-09-15) ==")
+        print("\n== replaying the first real runs ==")
         delivery_routine = ('---\nid: routine-a\nneeds_bridge: [email]\n'
                             'success_contract: {"required_sends": 1, "sends_to": "me@example.com", '
                             '"forbidden": ["EMAIL NOT SENT:"]}\n---\n\n'
@@ -673,16 +673,16 @@ def main():
         check("the runner log names the run id and the kept scratch directory",
               env.get("BRAIN_ROUTINE_RUN_ID", "?") in runner_log and kept in runner_log, runner_log)
 
-        # (c) meeting-notes-to-vault-agent: the body arrived unframed and the model asked what to do.
-        meetings_routine = ('---\nid: routine-a\nneeds_bridge: [meetings-mcp]\n'
+        # (c) example-routine-b-agent: the body arrived unframed and the model asked what to do.
+        framed_routine = ('---\nid: routine-a\nneeds_bridge: [example-bridge]\n'
                          'success_contract: {"required": ["ROUTINE_OK"], "forbidden": ["ROUTINE_FAILED:"]}\n---\n\n'
-                         '<!-- What it does: sweeps 15 days of meetings into 15-Meetings.\n'
+                         '<!-- What it does: sweeps recent items into the vault.\n'
                          '     If the app task\'s prompt changes, update this copy too. -->\n\n'
-                         'Capture the outlines of the user\'s meetings into the Brain vault.\n')
+                         'Capture the outlines of recent items into the Brain vault.\n')
         root, args_file = setup(T, agent_body=(
             "printf '%s\\n' '{\"type\": \"result\", \"result\": \"I don\\u0027t see an actual request in your message, "
             "just session context and reminders. What would you like me to help with?\"}'"))
-        write(os.path.join(T.VAULT, "90-Meta", "routines", "routine-a.md"), meetings_routine)
+        write(os.path.join(T.VAULT, "90-Meta", "routines", "routine-a.md"), framed_routine)
         rc, _ = quiet(T.main, ["--force", "routine-a"])
         alert = routine_alert()
         check("a reply asking for a request is a contract breach, exit 65", rc == 65, (rc, alert))
@@ -691,7 +691,7 @@ def main():
         check("the prompt the CLI got opened as an order to run it now, with the HTML comment stripped",
               args.startswith('--prompt\nYou are running the Brain routine "routine-a" unattended, right now')
               and "<!--" not in args and "What it does" not in args
-              and "Capture the outlines of the user's meetings" in args, args[:400])
+              and "Capture the outlines of recent items" in args, args[:400])
 
         root, _ = setup(T)
         source = FakeTokenSource(FAKE_TOKEN)

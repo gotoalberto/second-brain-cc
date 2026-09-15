@@ -616,7 +616,7 @@ def frame_prompt(routine_id: str, body: str, run_id: str, scratch=None) -> str:
     this run, the rules of an unattended run, then the routine body.
 
     Handed over bare, a long body that opens with documentation reads as context, and the
-    model asks what to do (seen 2026-09-15, meeting-notes-to-vault-agent). The rules are the
+    model asks what to do (seen in a real run). The rules are the
     ones the first real runs broke: the `save` skill and a background agent after the work,
     `cd ... &&`, temporary files in /tmp or inside the vault, `cat`, and a timestamp line that
     vw.py adds a second time.

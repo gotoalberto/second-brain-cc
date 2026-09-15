@@ -426,16 +426,16 @@ def test_permission_problem(D):
               D.permission_problem(args))
 
 
-MEETINGS_LIKE = """---
-id: routine-meeting-notes-to-vault
+LONG_ROUTINE = """---
+id: routine-example-routine-b
 agent_args: ["--permission-mode", "acceptEdits"]
 ---
 
-<!-- What it does: sweeps 15 days of meetings into 15-Meetings.
-     Runs as the `meeting-notes-to-vault-agent` row, disabled until enabled by hand.
+<!-- What it does: sweeps recent items into the vault.
+     Runs as the `example-routine-b-agent` row, disabled until enabled by hand.
      If the app task's prompt changes, update this copy too. -->
 
-Capture the outlines of the user's meetings into the Brain vault.
+Capture the outlines of recent items into the Brain vault.
 
 Keep <!-- an inline note --> this sentence.
 """
@@ -448,22 +448,22 @@ def test_prompt_framing(D):
     check("several comments are stripped, the text between them kept",
           D.strip_html_comments("<!--x-->keep<!--y-->also") == "keepalso")
     check("an unterminated comment is left as it is", D.strip_html_comments("a <!-- open") == "a <!-- open")
-    body = D.routine_body(MEETINGS_LIKE)
+    body = D.routine_body(LONG_ROUTINE)
     check("the body has no frontmatter and no HTML comment, and starts with the procedure",
           body.startswith("Capture the outlines") and "<!--" not in body and "agent_args" not in body
           and "What it does" not in body, body[:120])
     check("text around an inline comment survives", "Keep  this sentence." in body, body)
     check("a routine with no frontmatter is its whole text, stripped", D.routine_body("\n\nDo it.\n") == "Do it.")
 
-    prompt = D.frame_prompt("meeting-notes-to-vault-agent", body, "meeting-notes-to-vault-agent-20260915T074500-ab12cd34",
-                            "/state/routine-scratch/meeting-notes-to-vault-agent-20260915T074500-ab12cd34")
+    prompt = D.frame_prompt("example-routine-b-agent", body, "example-routine-b-agent-20260915T074500-ab12cd34",
+                            "/state/routine-scratch/example-routine-b-agent-20260915T074500-ab12cd34")
     check("it opens as an instruction to run this routine now, unattended",
-          prompt.startswith('You are running the Brain routine "meeting-notes-to-vault-agent" unattended, right now, '
+          prompt.startswith('You are running the Brain routine "example-routine-b-agent" unattended, right now, '
                             "with nobody at the keyboard. Execute the procedure below from start to finish now. "
                             "Do not ask for a request, do not wait for input."), prompt[:300])
     check("it states the run id and the scratch directory",
-          "meeting-notes-to-vault-agent-20260915T074500-ab12cd34" in prompt
-          and "/state/routine-scratch/meeting-notes-to-vault-agent-20260915T074500-ab12cd34" in prompt, prompt)
+          "example-routine-b-agent-20260915T074500-ab12cd34" in prompt
+          and "/state/routine-scratch/example-routine-b-agent-20260915T074500-ab12cd34" in prompt, prompt)
     check("it names $BRAIN_ROUTINE_SCRATCH and forbids /tmp and temp files inside the vault",
           "$BRAIN_ROUTINE_SCRATCH" in prompt and "/tmp" in prompt and "~/Brain" in prompt, prompt)
     lower = prompt.lower()
@@ -475,9 +475,9 @@ def test_prompt_framing(D):
           "Read tool" in prompt and "Skill tool" in prompt, prompt)
     check("the routine body follows the wrapper, whole", prompt.rstrip().endswith(body.rstrip()), prompt[-200:])
     check("framing is pure: the same inputs give the same prompt",
-          prompt == D.frame_prompt("meeting-notes-to-vault-agent", body,
-                                   "meeting-notes-to-vault-agent-20260915T074500-ab12cd34",
-                                   "/state/routine-scratch/meeting-notes-to-vault-agent-20260915T074500-ab12cd34"))
+          prompt == D.frame_prompt("example-routine-b-agent", body,
+                                   "example-routine-b-agent-20260915T074500-ab12cd34",
+                                   "/state/routine-scratch/example-routine-b-agent-20260915T074500-ab12cd34"))
     bare = D.frame_prompt("r", "Do it.", "r-1", None)
     check("with no scratch directory it says not to write temporary files",
           "no scratch directory" in bare.lower() and "Do it." in bare, bare)

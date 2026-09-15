@@ -618,7 +618,7 @@ def same_account(a, b) -> bool:
 def advance_account_watch(memory: AccountWatch, text: str):
     """Walk new main.log text in order. Returns (memory, switches).
 
-    The recipe from the 2026-09-13 diagnosis: the bridge is pinned to the account it
+    The recipe from an earlier diagnosis: the bridge is pinned to the account it
     connected under, so it is stale once a transition moves away from that account, until
     it connects again under the current one.
     """

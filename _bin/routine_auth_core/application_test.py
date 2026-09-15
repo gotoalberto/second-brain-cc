@@ -499,10 +499,10 @@ def test_delivery():
     check("with no send log wired, a delivery requirement can only fail", res.rc == 65, res)
 
     p = ports(outcomes=["ok_no_request_reply"])
-    meetings = A.Routine("meeting-notes-to-vault-agent", "/h/Brain/90-Meta/routines/meeting-notes-to-vault.md", (), None,
+    routine_b = A.Routine("example-routine-b-agent", "/h/Brain/90-Meta/routines/example-routine-b.md", (), None,
                       contract=D.SuccessContract(None, ("ROUTINE_OK",), ("ROUTINE_FAILED:",)),
-                      text="---\nid: k\n---\n\n<!-- notes -->\nCapture the outlines of the user's meetings.\n")
-    res = A.run_routine(p, meetings, budget_s=1800)
+                      text="---\nid: k\n---\n\n<!-- notes -->\nCapture the outlines of recent items.\n")
+    res = A.run_routine(p, routine_b, budget_s=1800)
     check("a reply asking what to do is a contract breach that says the routine was not run",
           res.rc == 65 and res.kind == D.CONTRACT_BREACH and "did not run the routine" in res.summary, res.summary)
 

@@ -9,8 +9,8 @@
 The whole thing rests on knowing WHICH session is running it, and that turned out to
 be the hard part. It used to be worked out by comparing the current directory against
 the `sessions` table, and when nothing matched it settled for whichever session had
-beaten last. On 2026-09-02 that deleted a live session's claims and left the caller's
-own untouched: six sessions on this machine share the cwd `~`, so the tie-break was a
+beaten last. That once deleted a live session's claims and left the caller's own
+untouched: several concurrent sessions can share the same cwd, so the tie-break was a
 coin toss. Claims are the only thing keeping two agents off the same file, so a
 `--release` pointed at the wrong session disarms them with nobody the wiser.
 

@@ -187,7 +187,7 @@ def already_paths(con, sid):
 
 
 def links_check(con, sid):
-    """Every search looks for broken links (the user's rule, 2026-09-10).
+    """Every search looks for broken links (a standing rule).
 
     The classification is cheap and runs here, on every prompt. The repair runs in a
     detached linkfix.py, so a prompt never waits on it. Whatever has no safe fix is told

@@ -703,23 +703,23 @@ class FakeDesktopTasks:
 
 ROWS = [{"id": "daily-digest-agent", "machine": "box", "time": "06:06", "days": "*", "type": "agent",
          "enabled": True, "command": "90-Meta/routines/daily-digest.md"},
-        {"id": "meeting-notes-to-vault-agent", "machine": "box", "time": "07:45", "days": "*", "type": "agent",
-         "enabled": True, "command": "90-Meta/routines/meeting-notes-to-vault.md"},
+        {"id": "example-routine-b-agent", "machine": "box", "time": "07:45", "days": "*", "type": "agent",
+         "enabled": True, "command": "90-Meta/routines/example-routine-b.md"},
         {"id": "daily-digest", "machine": "box", "time": "06:06", "days": "*", "type": "claude-app",
          "enabled": True, "command": "(Claude app scheduler)"}]
 META = {"daily-digest-agent": {"app_task": "daily-digest", "needs_bridge": ["email"]},
-        "meeting-notes-to-vault-agent": {"app_task": "meeting-notes-to-vault",
-                                          "needs_bridge": ["meetings-mcp", "claude-in-chrome"]}}
+        "example-routine-b-agent": {"app_task": "example-routine-b",
+                                          "needs_bridge": ["example-bridge", "claude-in-chrome"]}}
 
 
 def test_permissions():
     print("\n== routine permissions ==")
     meta = dict(META)
-    meta["meeting-notes-to-vault-agent"] = dict(META["meeting-notes-to-vault-agent"],
+    meta["example-routine-b-agent"] = dict(META["example-routine-b-agent"],
                                                  permission_problem="--allowedTools grants bare Bash")
     r = A.run_check(make(routines=FakeRoutinesMeta(ROWS, meta)))
     check("a routine granting unrestricted permissions is a failure in check",
-          "routine-permissions:meeting-notes-to-vault-agent" in keys(r)
+          "routine-permissions:example-routine-b-agent" in keys(r)
           and not any(f.repairable for f in r.findings if f.key.startswith("routine-permissions:")), keys(r))
     check("narrow ones are not", "routine-permissions:daily-digest-agent" not in keys(r), keys(r))
 
@@ -748,9 +748,9 @@ def test_duplicates_and_degraded():
     p = make(routines=FakeRoutinesMeta(ROWS, META), raised=stale)
     r = A.run_check(p)
     check("while the bridge is stale, an enabled routine needing the browser is degraded",
-          "degraded:meeting-notes-to-vault-agent" in keys(r) and "degraded:daily-digest-agent" not in keys(r), keys(r))
+          "degraded:example-routine-b-agent" in keys(r) and "degraded:daily-digest-agent" not in keys(r), keys(r))
     text = A.run_status(p)
-    line = [l for l in text.splitlines() if "meeting-notes-to-vault-agent" in l]
+    line = [l for l in text.splitlines() if "example-routine-b-agent" in l]
     check("and status marks that routine degraded", line and "degraded" in line[0].lower(), text)
     text = A.run_status(make(routines=FakeRoutinesMeta(ROWS, META),
                              desktop_tasks=FakeDesktopTasks([("daily-digest", "acct-1111"), ("x", "acct-2222")])))

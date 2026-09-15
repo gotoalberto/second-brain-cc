@@ -8,6 +8,7 @@ touched (BRAIN_KP_CACHE_BACKEND=none, BRAIN_KP_NOPROMPT=1). Run standalone:
     python3 _bin/kp_test.py
 """
 import json
+import re
 import os
 import shutil
 import stat
@@ -79,8 +80,9 @@ def main():
             return 1
 
         src = open(KP, encoding="utf-8").read()
-        check("no mount point or cloud-drive path is hardcoded",
-              "/Volumes/" not in src and "Mobile Documents" not in src and "smb://" not in src)
+        check("no absolute or remote database path is hardcoded as a default",
+              not re.search(r"[\"'](?:/Users/|/home/|/Volumes/)", src)
+              and not re.search(r"[\"'](?!kp://)[a-z][a-z0-9+.-]*://", src))
         check("no 1Password reference remains", "op://" not in src and "1Password" not in src)
 
         # ------------------------------------------------ where the database is

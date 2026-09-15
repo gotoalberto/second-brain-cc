@@ -618,18 +618,18 @@ dicen dice dijo está están estás estoy digas hagas haga hagan podemos podamos
 acabo acabas acabes acaba supone tenido posible posibles continuar realizar trabajemos
 trabajaremos trabajamos asegurate asegúrate hazme dejame déjame quieres queremos ello ellos
 ellas eres soy sido siendo""".split())
-# The last block (2026-09-10) came from the log of real misses: Spanish function words
-# and filler verbs that sat in the coverage denominator of prompts like "en cualquier
-# iteracción donde se busque, se debe identificar...", each one pure dead weight.
+# The last block came from the log of real misses: Spanish function words and filler
+# verbs that sat in the coverage denominator of long prompts full of function words,
+# each one pure dead weight.
 
 
 # Spanish -> English bridge for queries.
 #
-# The vault was translated to English, but the user asks in Spanish. Retrieval is
+# The vault is written in English, but users who write in Spanish ask in Spanish. Retrieval is
 # LEXICAL — it counts what fraction of the prompt's terms actually appears in the note —
 # so a Spanish prompt against English notes scores near-zero coverage: measured, 3 of 4
 # questions went to ZERO notes while the same ones in English returned three each.
-# Translating the vault muted the memory in its owner's language, and it does not show:
+# Translating the vault muted the memory in its users' language, and it does not show:
 # no error, it simply finds nothing.
 #
 # Not a translator: it is the domain vocabulary, which is short and known because
@@ -747,8 +747,8 @@ GLOSARIO = {
     "clave": "key", "claves": "key",
     "certificado": "certificate", "certificados": "certificate",
     "correo": "email", "coste": "cost", "costes": "cost",
-    # facturacion / compras: faltaba entero. Un "pideme las facturas del proveedor X"
-    # no alcanzaba ninguna nota, porque el vault dice invoice/vendor y el usuario factura/proveedor.
+    # billing and purchasing terms were missing: a Spanish request for a vendor's invoices
+    # reached no note, because the vault says invoice/vendor.
     "factura": "invoice", "facturas": "invoice", "facturacion": "billing",
     "facturación": "billing", "recibo": "receipt", "recibos": "receipt",
     "proveedor": "vendor", "proveedores": "vendor", "gasto": "expense",
@@ -825,8 +825,9 @@ GLOSARIO = {
     "primera": "first", "ultima": "last", "última": "last", "ultimo": "last",
 }
 
-# 2026-09-10: from the real misses in the log (`below-threshold` terms), not invented.
-# Each one is a Spanish word the user actually typed whose English twin the vault uses.
+# From the real misses in the log (`below-threshold` terms), not invented.
+# Each one is a Spanish word that users who write in Spanish actually typed, whose English
+# twin the vault uses.
 GLOSARIO.update({
     "rotos": "broken", "arreglarlos": "fix", "arreglalo": "fix", "arreglalos": "fix",
     "arreglas": "fix", "busque": "search", "busques": "search", "buscamos": "search",
@@ -1158,7 +1159,7 @@ def session_live(pid, heartbeat):
 
 
 # ------------------------------------------- observed signals (not self-declared)
-# Ver 30-Knowledge/2026-08-21-decision-gate-measures-effect-not-event.md
+# The memory gate credits what it observes, never what a session declares.
 GIT_TOUCHED = os.path.join(STATE, "git-touched.json")
 
 
@@ -1355,8 +1356,8 @@ def agents_missing_rules():
 
 # The files under ~/.claude that decide HOW the vault gets written: agent definitions,
 # skills and scheduled-task prompts. They are not notes, so nothing in the vault ledger
-# sees them — and on 2026-09-08 a session changed sixteen of them (the language rule was
-# missing from every agent and nine skills) while gate_memory reported "nothing saved".
+# sees them — and a session once changed sixteen of them (a rule was missing from every
+# agent and nine skills) while gate_memory reported "nothing saved".
 # Work here is exactly the kind that has to end up in a note, so it must be visible.
 GOVERNANCE = ("agents", "skills", "scheduled-tasks")
 
@@ -1518,7 +1519,7 @@ def project_note(slug):
     """Relative path of `slug`'s note in 10-Projects, or "" if there is none.
 
     The index is asked rather than the disk because the filename is not derivable from
-    the slug: `brain` lives in `2026-08-20-project-brain-memory-system.md`.
+    the slug: `example-website-redesign` lives in `2026-01-15-project-example-website-redesign.md`.
     """
     if not slug:
         return ""
@@ -1781,10 +1782,10 @@ def current_sid(con, cwd=None, pid=None):
     nothing was saved. The question is what to work it out FROM.
 
     It used to be the working directory, falling back to "the first live session". Both
-    halves gave wrong answers the same way — several sessions share a cwd here, six of
-    them on `~` at once — and both did real damage: a write credited to the wrong
-    session on 2026-08-21, and on 2026-09-02 a `claim.py --release` that deleted a live
-    session's claims and left the caller's own intact.
+    halves gave wrong answers the same way — several concurrent sessions can share one
+    cwd — and both did real damage: a write credited to the wrong session, and a
+    `claim.py --release` that deleted a live session's claims and left the caller's own
+    intact.
 
     What does not lie is the PROCESS. `claude_session_pid()` climbs to the long-lived
     Claude Code process, and `sessions.pid` holds that same number, written by the

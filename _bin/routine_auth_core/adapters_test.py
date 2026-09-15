@@ -365,8 +365,8 @@ def test_raw_log_run_id(A, D):
     root = tmpdir()
     path = os.path.join(root, "logs", "routine-auth.log")
     log = A.RawOutputLog(path, clock=lambda: dt.datetime(2026, 9, 15, 13, 0))
-    rid = "meeting-notes-to-vault-agent-20260915T074500-ab12cd34"
-    log.record("meeting-notes-to-vault-agent", "routines-1", D.Classification(D.CONTRACT_BREACH, "unmet"), 65,
+    rid = "example-routine-b-agent-20260915T074500-ab12cd34"
+    log.record("example-routine-b-agent", "routines-1", D.Classification(D.CONTRACT_BREACH, "unmet"), 65,
                "out", "", secrets=[], run_id=rid)
     text = open(path).read() if os.path.exists(path) else ""
     check("a failed attempt's entry carries its run id, whole", "run=" + rid in text, text)

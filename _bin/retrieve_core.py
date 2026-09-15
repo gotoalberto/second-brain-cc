@@ -25,8 +25,9 @@ TOP_K_RENDER       = 3
 # The signal is the verb: if one of these shows up, the budget opens.
 #
 # The SPANISH verbs stay, and that is deliberate. Everything else got translated, but
-# this list is not read against the vault — it is read against what the USER types, and
-# the user types Spanish. Translating it would quietly switch off task detection, which
+# this list is not read against the vault — it is read against what USERS type, and
+# users who write in Spanish type these verbs. Translating it would quietly switch off
+# task detection, which
 # is the same class of failure as renaming a marker that old data still carries.
 TASK_VERBS = (
     "haz", "crea", "monta", "implementa", "arregla", "corrige", "cambia", "añade",
@@ -62,8 +63,7 @@ TASK_VERBS = (
 # than one that says nothing.
 #
 # The real fix for untranslated Spanish is GLOSSARY COVERAGE, which is measurable and has
-# no such failure mode: see 30-Knowledge/2026-08-27-decision-bilingual-retrieval-measured-not-assumed.md
-# and `_bin/bilingual_eval.py`.
+# no such failure mode.
 
 
 def coverage(con, path, terms):

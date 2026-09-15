@@ -661,8 +661,8 @@ def sanctioned_source(src):
     by its own backup, and by nothing else.
 
     `looks_like_kdbx` asks WHAT is being written. This asks WHERE IT CAME FROM, and
-    that is the question the 2026-09-02 accident actually failed: the fixture that
-    landed on the shared drive was eleven bytes, so the content check catches that one — but a
+    that is the question an earlier accident actually failed: the fixture that
+    landed on the real database was eleven bytes, so the content check catches that one — but a
     fixture that had looked like a database would have gone straight through, and the
     harness now builds fixtures that look exactly like databases on purpose.
 
@@ -689,9 +689,9 @@ def sanctioned_source(src):
 def write_over_db(src, why):
     """The ONLY way anything is allowed to land on the real database.
 
-    On 2026-09-02 the real .kdbx on the shared drive was left holding eleven bytes reading
-    `GOOD-BACKUP`. a test harness had pointed the module-level `DB` at a temporary file
-    to exercise the restore branch, but left `DBF[0]` pointing at the shared drive: with the two
+    A real .kdbx was once left holding eleven bytes reading `GOOD-BACKUP`. A test
+    harness had pointed the module-level `DB` at a temporary file to exercise the
+    restore branch, but left `DBF[0]` pointing at the real database: with the two
     roles swapped, `refresh_work_copy()` read `DBF[0] != DB` and copied the eleven-byte
     fixture ONTO the credential store. Nothing checked what was being written, so
     nothing complained.
@@ -741,7 +741,8 @@ def _drop_work_copy():
 def push_back():
     """Returns the written copy to the real database. Only after a write.
 
-    This is where a new credential reaches the shared drive. It happens immediately after the
+    This is where a new credential reaches the real database, which may sit on a network or
+    synced drive where concurrent writes can corrupt it. It happens immediately after the
     write, not at exit, so the file on the drive is the one that holds the secret and
     the local copy is never the only place it lives."""
     if DBF[0] == DB:
@@ -883,7 +884,7 @@ def unlocked(interactive=True):
     """Returns a master already validated against the database."""
     db_ok()
     # The local copy stays a FALLBACK, taken only when the direct read fails. Making it
-    # unconditional was tried on 2026-09-02 and reverted the same hour: the copy is taken
+    # unconditional was tried once and reverted the same hour: the copy is taken
     # while resolving the master, which happens BEFORE `write_lock()`, so three
     # simultaneous `put`s each copied the database, each wrote its own entry, and each
     # pushed back over the last — two credentials lost with nothing reporting it.
@@ -898,9 +899,9 @@ def unlocked(interactive=True):
         # local copy is tried.
         if (p.returncode != 0 and DBF[0] == DB
                 and not re.search(_BAD_KEY, (p.stderr or p.stdout or ""))):
-            copia = work_copy()
-            if copia:
-                p = _probe(pw, copia)
+            local_copy = work_copy()
+            if local_copy:
+                p = _probe(pw, local_copy)
         if p.returncode == 0:
             if not from_cache:
                 cache_put(pw, _ttl_wanted())
@@ -919,7 +920,7 @@ def _ttl_wanted():
     return _TTL[0]
 
 
-# ------------------------------------------------------------------ copias
+# ------------------------------------------------------------------ backups
 def backup():
     os.makedirs(BACKUPS, exist_ok=True)
     os.chmod(BACKUPS, 0o700)
@@ -1051,7 +1052,7 @@ def with_group(entry):
 
     It is not cosmetic: it keeps what an agent wrote separate from what you saved by
     hand, so it can be audited, moved or deleted as a block without touching
-    the rest of the database. Subgroups inside are allowed (`%s/servers/nas`), but
+    the rest of the database. Subgroups inside are allowed (`%s/servers/example`), but
     leaving is not: a path with its own group hangs off the group, it does not replace it.
     """ % (GROUP_DEF, GROUP_DEF)
     parts = [p for p in norm(entry).split("/") if p]
@@ -1495,7 +1496,7 @@ def cmd_put(a):
         if leaf_of(found) != leaf_of(a.entry):
             die("\"%s\" does not exist. The nearest match is \"%s\", whose NAME is not the\n"
                 "    one you asked for, so I am not overwriting it by guesswork (that is how a\n"
-                "    client_secret was lost on 2026-09-03).\n"
+                "    client_secret can be lost).\n"
                 "      to create it:        kp.py put \"%s\" ...\n"
                 "      to edit that one:    kp.py set \"%s\" ..." % (a.entry, found, a.entry, found))
         entry = found
