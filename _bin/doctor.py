@@ -38,7 +38,7 @@ def main():
             lat.append(ms)
         # A continuation stopped being its own event when the design changed: it is no
         # longer skipped, it searches anyway and only stays quiet if it finds nothing
-        # new. Counting the old `skip-continuation` bucket alone reported a frozen
+        # new. Counting the old `skip-continuation` counter alone reported a frozen
         # historical number and left today's continuations out of the denominator.
         if extra and ("continuation" in extra or "continuacion" in extra):
             cont += 1
@@ -46,7 +46,7 @@ def main():
     # prompt was searched and nothing cleared the coverage bar. Leaving it out of the
     # denominator made the injection rate flatter the better the noise filter worked —
     # it read 45% when the real figure was 17%. The comment two blocks down records
-    # fixing this exact mistake for the continuation bucket; the largest one stayed out.
+    # fixing this exact mistake for the continuation counter; the largest one stayed out.
     below = ev.get("below-threshold", 0) + ev.get("bajo-umbral", 0)   # old name, kept for history
     prompts = (ev["inject"] + ev["skip-trivial"] + ev["skip-continuation"]
                + ev["no-hits"] + below)
@@ -289,29 +289,26 @@ def main():
     else:
         print("no transcript exceeds 20 MB")
 
-    section("Coordination between machines")
+    section("Coordination on this machine")
     try:
         import presence as _P
         d = _P.cache_read()
         if d:
             age = B.now() - (d.get("read_at") or 0)
-            print("presence (S3), read %.0f s ago from %s:" % (age, d.get("machine", "?")))
+            print("presence, read %.0f s ago on %s:" % (age, d.get("machine", "?")))
             for v in d.get("alive") or []:
                 print("  %-16s sid=%-10s project=%-14s %.0fs ago"
                       % (v["machine"], v["sid"], v["project"], v.get("age", 0)))
             if not (d.get("alive") or []):
                 print("  nobody else alive")
         else:
-            print("presence (S3): no data — %s"
-                  % ("no credential database is configured (kp.py init)"
-                     if not B.kdbx_configured() else
-                     "no heartbeat yet, or no network"))
+            print("presence: no data — no heartbeat yet on this machine")
         import lease as _L
         ls = _L.cache_read()
         if ls:
             print("write leases:")
             for k, v in sorted(ls.items()):
-                est = _L.local_state(v.get("note", ""))
+                est = _L.local_state(v.get("note", ""), v.get("sid", ""))
                 print("  %-52s %-6s %s" % (v.get("note", k)[:52], est or "expired",
                                            v.get("owner", "")))
         else:

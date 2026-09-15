@@ -5,7 +5,7 @@ retrieve.py (the Claude Code UserPromptSubmit hook), the MCP server's `recall` a
 `brain recall` CLI all render vault notes the same way through this module. A temporary
 vault is indexed by index_vault.py in a subprocess (BRAIN_VAULT and HOME temporary), and
 this process imports brainlib only after pointing it there. retrieve.py's hook itself is
-not run: it pulls the vault from git and beats presence to S3, neither of which a test may
+not run: it pulls the vault from git and starts the presence heartbeat, neither of which a test may
 do. Run standalone:
 
     python3 _bin/retrieve_core_test.py

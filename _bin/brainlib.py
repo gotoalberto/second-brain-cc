@@ -34,7 +34,7 @@ SAVE_FOLDERS = RETRIEVABLE + ("00-Inbox",)
 OFF = os.environ.get("BRAIN_OFF") in ("1", "true", "yes")
 # Set by the guardian's hook probe (guardian_core.adapters.HookProbe), which runs every hook in a
 # scratch state: no presence or lease beat, no vault pull, no background reindex or link repair.
-# Those reach S3, KeePass or git, and a probe must never touch anything real.
+# Those write shared state, reach KeePass or git, and a probe must never touch anything real.
 OFFLINE = os.environ.get("BRAIN_OFFLINE") in ("1", "true", "yes")
 
 
@@ -858,9 +858,9 @@ def sanitize_fts(text, max_terms=12):
     words, seen = [], set()
     for w in re.findall(r"[0-9A-Za-zÀ-ÿ_\-]+", text.lower()):
         w = w.strip("-_")
-        # Two characters are kept when they mix a letter and a DIGIT: `s3`, `k8`, `v2`.
-        # Without this, "que pasa si se pierde la conexion con s3" reached the index with
-        # no `s3` in it. Pure two-letter words stay out — they are almost all filler.
+        # Two characters are kept when they mix a letter and a DIGIT: `k8`, `v2`, `h2`.
+        # Without this, a prompt naming a short versioned term such as `v2` reached the
+        # index with no `v2` in it. Pure two-letter words stay out — they are almost all filler.
         too_short = len(w) < 3 and not (len(w) == 2 and any(c.isdigit() for c in w)
                                         and any(c.isalpha() for c in w))
         if too_short or w in STOP or w in seen:
@@ -1462,7 +1462,7 @@ def presence_mark(sid, project=None, cwd=None):
             "---\ntitle: presence %s/%s\ntype: meta\nstatus: active\n"
             "machine: %s\nsid: %s\nproject: %s\nheartbeat: %d\n---\n\n"
             "Live session. `session_end.py` deletes it on close; if it is orphaned, the\n"
-            "daemon withdraws it once the heartbeat expires.\n"
+            "daemon removes it once the heartbeat expires.\n"
             % (_machine(), sid, _machine(), sid, project or "-", int(now())))
         return path
     except Exception as e:
@@ -1560,8 +1560,7 @@ def _lease_async(action, rel, sid):
             [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                           "lease.py"), action, rel, "--sid", sid],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, start_new_session=True,
-            env=dict(os.environ, BRAIN_KP_NOPROMPT="1"))
+            stderr=subprocess.DEVNULL, start_new_session=True)
     except Exception as e:
         log_error("brainlib._lease_async", e)
 
@@ -1575,11 +1574,11 @@ def lease_release_async(rel, sid):
 
 
 def presence_beat_async(sid, project=None):
-    """Fires the S3 heartbeat WITHOUT waiting for it. Never on a hook's path.
+    """Fires the local presence heartbeat WITHOUT waiting for it. Never on a hook's path.
 
-    Writing to S3 costs ~1 s (kp.py for the credentials, plus the call), and hooks have
-    a budget of tens of milliseconds. It is detached with `start_new_session=True` so it
-    neither dies with the session nor holds it, and what the hooks read is the cache it
+    A fresh interpreter, a lock and a walk of the presence directory cost more than a
+    hook's budget of tens of milliseconds. It is detached with `start_new_session=True` so
+    it neither dies with the session nor holds it, and what the hooks read is the cache it
     leaves behind — a 0.1 ms `open()`.
     """
     if OFFLINE:
@@ -1591,8 +1590,7 @@ def presence_beat_async(sid, project=None):
                                           "presence.py"),
              "beat", "--sid", sid, "--project", project or "-"],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, start_new_session=True,
-            env=dict(os.environ, BRAIN_KP_NOPROMPT="1"))
+            stderr=subprocess.DEVNULL, start_new_session=True)
     except Exception as e:
         log_error("brainlib.presence_beat_async", e)
 
@@ -1607,19 +1605,18 @@ def presence_withdraw_async(sid, project=None):
                                           "presence.py"),
              "withdraw", "--sid", sid, "--project", project or "-"],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL, start_new_session=True,
-            env=dict(os.environ, BRAIN_KP_NOPROMPT="1"))
+            stderr=subprocess.DEVNULL, start_new_session=True)
     except Exception:
         pass
 
 
 def presence_all(sid, project=None, ttl=SESSION_TTL):
-    """Merge both presences: the S3 one (fast) and the git one (works offline).
+    """Merge both presences: the local one (this machine) and the git one (every machine).
 
-    Neither replaces the other. S3 warns within seconds but needs credentials and
-    network; git takes up to 600 s but is always there. The S3 heartbeat is preferred
-    when it exists, because its clock is the server's and does not depend on two machines
-    agreeing on the time.
+    Neither replaces the other. The local heartbeat sees the sessions on this machine
+    within seconds but nothing beyond it; git reaches every machine but takes up to 600 s.
+    The local row is preferred for a session both know, because it is fresher and its
+    clock is the one every session here shares.
     """
     outside = {}
     for o in presence_others(sid, project, ttl):
@@ -1633,7 +1630,7 @@ def presence_all(sid, project=None, ttl=SESSION_TTL):
             outside[(v["machine"], v["sid"])] = {
                 "machine": v["machine"], "sid": v["sid"], "project": v["project"],
                 "same_project": bool(project) and v["project"] == str(project),
-                "age": v.get("age"), "via": "s3"}
+                "age": v.get("age"), "via": "local"}
     except Exception:
         pass
     return list(outside.values())
