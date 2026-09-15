@@ -28,7 +28,7 @@ _WRITERS = re.compile(
 
 # Sanctioned writers and version control: this is how a protected note is SUPPOSED to
 # be written, so they must never be denied or the gate blocks its own remedy.
-_ALLOWED = re.compile(r"\b(?:vw\.py|va\.py|s3v\.py|vault_sync\.py|index_vault\.py|git)\b")
+_ALLOWED = re.compile(r"\b(?:vw\.py|va\.py|files\.py|vault_sync\.py|index_vault\.py|git)\b")
 
 _SCRATCHPAD = re.compile(r"^/(private/)?tmp/claude-\d+/")
 

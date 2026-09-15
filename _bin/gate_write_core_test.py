@@ -2,7 +2,7 @@
 """Regression tests for gate_write_core — the protected-path rules gate_write.py enforces.
 
 These pin CURRENT behaviour, taken from gate_write.py's own comments and code: Bash
-counts, vw.py/va.py/s3v.py/vault_sync.py/index_vault.py/git are the sanctioned writers,
+counts, vw.py/va.py/files.py/vault_sync.py/index_vault.py/git are the sanctioned writers,
 reads are not writes, ~/.claude and the session scratchpad are exempt, and another live
 session's claim is a conflict. The rules move into a module both the Claude Code hook and
 the git pre-commit hook can call; these tests say they did not change on the way.
@@ -36,6 +36,8 @@ BASH_CASES = [
     ("grep -r decision 70-Entities/", None, "a search"),
     ("python3 ~/Brain/_bin/vw.py append 10-Projects/x.md --sid abc", None, "vw.py is the sanctioned writer"),
     ("git add 10-Projects/x.md && git commit -m x", None, "git is allowed"),
+    ("python3 ~/Brain/_bin/files.py put deck.pdf --to 10-Projects/x.md --project demo --caption \"cp of the deck\"",
+     None, "files.py is a sanctioned writer"),
     ("python3 _bin/vault_sync.py", None, "vault_sync is allowed"),
     ("echo hi > 30-Knowledge/x.md", None, "an unprotected folder"),
     ("", None, "empty command"),

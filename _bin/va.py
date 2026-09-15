@@ -17,12 +17,12 @@ Rules it enforces, and why:
   4. Whitelisted extensions: an executable binary is not documentation.
   5. In `10-Projects/` and `70-Entities/` it delegates to vw.py, as the protocol requires.
 
-SUPERSEDED by s3v.py (2026-08-26). Vault files no longer live in the repository:
-they go to a private S3 bucket and the note keeps the key. See
-30-Knowledge/2026-08-26-decision-file-vault-in-s3.md.
+SUPERSEDED by files.py. Vault files no longer live in the repository: they go to the
+local files directory chosen in the first run and the note keeps the key. See
+30-Knowledge/2026-09-15-decision-file-vault-in-a-local-directory.md.
 
 It stays because `_assets/` is still right for small images Obsidian has to render
-inside a note; for everything else, s3v.py.
+inside a note; for everything else, files.py.
 """
 import os, re, sys, time, shutil, hashlib, argparse, unicodedata, subprocess
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
