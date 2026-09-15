@@ -20,12 +20,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import brainlib as B
 
 # Cap for the whole startup block. It is an ALARM, never a trim: compass always injects
-# the whole block, and going over only warns. The rule: raise it
+# the whole block, and going over only warns. The user's rule (2026-09-10): raise it
 # whenever it is needed, and never cut context or lose effectiveness to stay under it.
 # It is cheap to raise (injected once per session and rides in the prompt cache). Before
 # raising, check the two cheap levers: not duplicating what the harness already injects,
 # and keeping bullets thin (MAX_LINE_TOKENS).
-MAX_TOKENS = 1600   # 1400 until 2026-09-10: at 96% any live session warning tipped it over
+MAX_TOKENS = 2000   # 1400 until 2026-09-10 (96%), 1600 until 2026-09-14 (99%)
 
 # Past this % of the cap it warns, even while it still fits.
 WARN_RATIO = 0.85

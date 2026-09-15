@@ -1,0 +1,4 @@
+# Cron fallback where there are no systemd user units: watch the vault's files for events.
+# integrations/first-run installs this line into Brain's block of the crontab when the user
+# accepts it. __VAULT__ is rendered; the job logs under the Brain state directory itself.
+*/1 * * * * BRAIN_JOB_LABEL=second-brain-watch /bin/sh __VAULT__/_bin/pywrap.sh __VAULT__/_bin/brain_watch.py tick >/dev/null 2>&1

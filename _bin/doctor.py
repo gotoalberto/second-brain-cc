@@ -173,8 +173,8 @@ def main():
         if missing:
             print("  most-used words a Spanish question cannot reach:")
             print("    " + ", ".join("%s(%d)" % (w, n) for w, n in missing[:14]))
-            print("  -> many are proper nouns and need no bridge; check a few by hand with")
-            print("     python3 %s/_bin/query.py \"<question in Spanish>\"" % B.VAULT)
+            print("  -> many are proper nouns and need no bridge; check with:")
+            print("     python3 %s/_bin/bilingual_eval.py --held-out" % B.VAULT)
     except Exception as exc:
         print("could not compute: %r" % exc)
 
@@ -258,7 +258,8 @@ def main():
     # forever. It happened with the portfolio one: 143 screenshots, 101 MB, ~229k tokens
     # of image alone, and the window stopped being able to finish a turn.
     import glob as _g2
-    tdir = os.path.join(os.path.expanduser("~/.claude/projects"), "-" + os.path.expanduser("~").strip("/").replace("/", "-"))
+    tdir = os.path.join(os.path.expanduser("~/.claude/projects"),
+                        "-" + os.path.expanduser("~").strip("/").replace("/", "-"))
     fat = []
     for f in _g2.glob(os.path.join(tdir, "*.jsonl")):
         mb = os.path.getsize(f) / 1048576.0
@@ -302,8 +303,8 @@ def main():
                 print("  nobody else alive")
         else:
             print("presence (S3): no data — %s"
-                  % ("the credentials volume is not mounted"
-                     if not __import__("shutil").which("op") else
+                  % ("no credential database is configured (kp.py init)"
+                     if not B.kdbx_configured() else
                      "no heartbeat yet, or no network"))
         import lease as _L
         ls = _L.cache_read()
@@ -348,6 +349,11 @@ def main():
     else:
         print("no logs yet in %s" % B.LOGS)
 
+    section("Test harness")
+    p = subprocess.run([PY3, os.path.join(B.VAULT, "_bin", "run_all_tests.py")],
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+    tail = p.stdout.decode().strip().splitlines()
+    print("\n".join(tail[-6:]) if tail else "(no output)")
     con.close()
     return 0
 

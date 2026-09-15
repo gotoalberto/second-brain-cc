@@ -1,0 +1,10 @@
+[Unit]
+Description=Second Brain: commit and push the vault, every 10 min
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

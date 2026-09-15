@@ -129,10 +129,46 @@ def build_sections(con, sid=None, cwd=None):
         if warns:
             secs.append(("warning", "\n## Warning\n" + "\n".join(warns), 95))
 
+    if sid is not None:                  # a session starting, not the budget report
+        health = health_section()
+        if health:
+            secs.append(health)
+
     total = con.execute("SELECT COUNT(*) FROM notes").fetchone()[0]
     secs.append(("footer", "\n%d notes indexed. Search with `/recall`, run with "
                  "`/task`, save with `/save`." % total, 80))
     return secs
+
+
+def health_section(state_dir=None):
+    """The guardian's open problems for the startup block: ("health", text, 96), or None.
+
+    Reads cached state only: <brain state>/guardian-state.json (what the guardian last
+    announced as open) and guardian-raised.json (what other processes raised). It never runs
+    a check: SessionStart has an 8 s budget and a guardian run takes seconds. A problem the
+    guardian found reaches every new session this way, even one nobody asked about. Never
+    raises; nothing is added while everything is healthy.
+    """
+    try:
+        import brain_paths
+        from guardian_core import domain as GD
+
+        state_dir = state_dir or brain_paths.state_dir()
+
+        def load(name):
+            try:
+                with open(os.path.join(state_dir, name), encoding="utf-8") as fh:
+                    data = json.load(fh)
+            except (OSError, ValueError):
+                return {}
+            return data if isinstance(data, dict) else {}
+
+        active = (load("guardian-state.json").get("alerts") or {}).get("active") or {}
+        text = GD.health_notice(active, load("guardian-raised.json"))
+        return ("health", "\n" + text, 96) if text else None
+    except Exception as e:
+        B.log_error("compass.health_section", e)
+        return None
 
 
 def fit(sections):
@@ -177,6 +213,7 @@ def company_warning(sid, project):
             % (len(others), ", ".join(o["machine"] for o in others)))
 
 
+@B.heartbeat("session-start")
 @B.fail_open
 def main():
     t0 = time.time()
@@ -210,6 +247,11 @@ def main():
         msg = ("Brain: startup is at %.0f%% of budget (%d/%d tokens), nothing was cut. %s"
                % (100 * verdict["ratio"], verdict["total"], verdict["max"],
                   PB.advice(verdict)))
+    # The guardian's open problems reach the user too, not only the agent (cached state only).
+    if any(s[0] == "health" for s in sections):
+        note = ("Brain health: the guardian has open problems (listed in the startup context). "
+                "Inspect: python3 ~/Brain/_bin/guardian.py status")
+        msg = "%s %s" % (msg, note) if msg else note
 
     B.metric(con, sid, "compass", tokens=verdict["total"],
              latency_ms=(time.time() - t0) * 1000, hits=n_projs,

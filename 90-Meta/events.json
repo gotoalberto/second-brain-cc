@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "_about": "Brain's event registry. Every Brain event, the _bin module that implements it, and every trigger wired to it. Claude Code's plugin/brain/hooks/hooks.json, AGENTS.md and githooks/ are generated from this file (brain_watch.py generate, gen_instructions.py); the file-watch job (brain_watch.py tick) reads its watch section and file-watch triggers. Validated by _bin/events_core/domain.py. Runbook: 30-Knowledge/2026-09-15-runbook-brain-events.md",
+  "watch": {
+    "paths": ["00-Inbox", "10-Projects", "20-Areas", "30-Knowledge", "40-Skills", "70-Entities", "90-Meta/routines", "90-Meta/events.json", "90-Meta/scheduled-tasks.md", "_bin", "integrations"],
+    "debounce_s": 120,
+    "unsynced_alert_s": 3600,
+    "unsaved_alert_s": 7200,
+    "save_prefixes": ["00-Inbox", "10-Projects", "20-Areas", "30-Knowledge", "70-Entities"],
+    "unsaved_ignore": ["40-Skills", "50-Sessions", "60-Context-Packs", "90-Meta", "integrations"]
+  },
+  "events": [
+    {
+      "id": "session-start",
+      "description": "startup context: protocol, active projects, warnings",
+      "handler": "compass",
+      "liveness": "session",
+      "triggers": [
+        {"kind": "claude-hook", "event": "SessionStart", "matcher": "startup|resume|clear|compact", "command": "compass.py", "timeout": 8},
+        {"kind": "cli", "command": "brain session-start"},
+        {"kind": "mcp", "tool": "session_start"}
+      ]
+    },
+    {
+      "id": "skills-catalogue",
+      "description": "refresh the skills catalogue in 40-Skills",
+      "handler": "skills_index",
+      "liveness": "regular",
+      "triggers": [
+        {"kind": "claude-hook", "event": "SessionStart", "matcher": "startup|resume|clear|compact", "command": "skills_index.py", "async": true},
+        {"kind": "cli", "command": "brain hook skills-catalogue"}
+      ]
+    },
+    {
+      "id": "prompt-submit",
+      "description": "retrieve relevant vault notes before answering",
+      "handler": "retrieve",
+      "liveness": "session",
+      "triggers": [
+        {"kind": "claude-hook", "event": "UserPromptSubmit", "command": "retrieve.py", "timeout": 8, "statusMessage": "Querying the vault..."},
+        {"kind": "cli", "command": "brain recall \"<terms from the question>\""},
+        {"kind": "mcp", "tool": "recall"}
+      ]
+    },
+    {
+      "id": "pre-write-gate",
+      "description": "shared notes only through vw.py; credentials never committed",
+      "handler": "gate_write",
+      "liveness": "regular",
+      "triggers": [
+        {"kind": "claude-hook", "event": "PreToolUse", "matcher": "Bash|Edit|Write|NotebookEdit", "command": "gate_write.py", "timeout": 5},
+        {"kind": "git-hook", "hook": "pre-commit", "command": "events_core/git_pre_commit.py"},
+        {"kind": "cli", "command": "brain hook pre-write-gate"}
+      ]
+    },
+    {
+      "id": "post-write-ledger",
+      "description": "credit written notes to the session that wrote them",
+      "handler": "vault_ledger",
+      "liveness": "regular",
+      "triggers": [
+        {"kind": "claude-hook", "event": "PostToolUse", "matcher": "Bash|Edit|Write|NotebookEdit", "command": "vault_ledger.py"},
+        {"kind": "file-watch", "action": "ledger-update", "command": "vault_ledger.py"},
+        {"kind": "cli", "command": "brain hook post-write-ledger"}
+      ]
+    },
+    {
+      "id": "protocol-guard",
+      "description": "warn when the startup context outgrows its budget",
+      "handler": "protocol_guard",
+      "liveness": "regular",
+      "triggers": [
+        {"kind": "claude-hook", "event": "PostToolUse", "matcher": "Bash|Edit|Write|NotebookEdit", "command": "protocol_guard.py"},
+        {"kind": "cli", "command": "brain hook protocol-guard"}
+      ]
+    },
+    {
+      "id": "subagent-log",
+      "description": "log which subagents finished",
+      "handler": "log_subagent",
+      "liveness": "conditional",
+      "triggers": [
+        {"kind": "claude-hook", "event": "SubagentStop", "matcher": "*", "command": "log_subagent.py", "async": true},
+        {"kind": "cli", "command": "brain hook subagent-log"}
+      ]
+    },
+    {
+      "id": "stop-memory-gate",
+      "description": "do not end a session that changed things without saving a note",
+      "handler": "gate_memory",
+      "liveness": "session",
+      "triggers": [
+        {"kind": "claude-hook", "event": "Stop", "command": "gate_memory.py", "timeout": 10},
+        {"kind": "cli", "command": "brain hook stop-memory-gate"}
+      ]
+    },
+    {
+      "id": "sync",
+      "description": "commit and push the vault",
+      "handler": "vault_sync",
+      "liveness": "regular",
+      "triggers": [
+        {"kind": "claude-hook", "event": "Stop", "command": "vault_sync.py --hook", "statusMessage": "Syncing the vault...", "async": true},
+        {"kind": "launchd", "label": "com.secondbrain.sync"},
+        {"kind": "file-watch", "action": "sync-debounce", "command": "vault_sync.py --hook"},
+        {"kind": "cli", "command": "brain sync"},
+        {"kind": "mcp", "tool": "sync"}
+      ]
+    },
+    {
+      "id": "session-end",
+      "description": "release the session's claims and mark the vault dirty",
+      "handler": "session_end",
+      "liveness": "regular",
+      "triggers": [
+        {"kind": "claude-hook", "event": "SessionEnd", "command": "session_end.py", "async": true},
+        {"kind": "cli", "command": "brain session-end"},
+        {"kind": "mcp", "tool": "session_end"}
+      ]
+    },
+    {
+      "id": "worktree-seed",
+      "description": "prepare a new git worktree",
+      "handler": "seed_worktree",
+      "liveness": "conditional",
+      "triggers": [
+        {"kind": "claude-hook", "event": "WorktreeCreate", "command": "seed_worktree.py", "timeout": 15},
+        {"kind": "cli", "command": "python3 ~/Brain/_bin/seed_worktree.py"}
+      ]
+    },
+    {
+      "id": "reindex",
+      "description": "keep the search index current",
+      "handler": "index_vault",
+      "triggers": [
+        {"kind": "file-watch", "action": "index-trigger", "command": "index_vault.py"},
+        {"kind": "cli", "command": "brain index"},
+        {"kind": "mcp", "tool": "reindex"}
+      ]
+    },
+    {
+      "id": "link-repair",
+      "description": "find and fix broken `[[links]]` when notes appear or disappear",
+      "handler": "linkfix",
+      "triggers": [
+        {"kind": "file-watch", "action": "linkfix-trigger", "command": "linkfix.py --hook"}
+      ]
+    },
+    {
+      "id": "post-commit-dirty",
+      "description": "mark the index dirty after any commit",
+      "handler": "git_post_commit",
+      "triggers": [
+        {"kind": "git-hook", "hook": "post-commit", "command": "events_core/git_post_commit.py"}
+      ]
+    }
+  ]
+}

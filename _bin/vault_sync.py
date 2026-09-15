@@ -72,6 +72,62 @@ def files_to_commit():
     return unicos
 
 
+def _sha(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def snapshot_unsettled(paths):
+    """mtime and content hash of pending CODE paths, taken just before the pull.
+
+    `pull --rebase --autostash` stashes every uncommitted file and writes it back, and the
+    write-back gives it mtime = now. The in-flight check reads mtime as "someone is still
+    editing this", so a file that was already at rest turned in flight again on every pass
+    that pulled. With other sessions live it was never committed, on any pass: found on
+    2026-09-14 with a skill's SKILL.md deferred over and over while its
+    source had not been touched for minutes. Notes are skipped: they are committed
+    regardless of mtime.
+    """
+    snap = {}
+    for rel in paths:
+        if rel.split("/")[0] in B.VAULT_NOTES:
+            continue
+        full = os.path.join(B.VAULT, rel)
+        try:
+            st = os.stat(full)
+            snap[rel] = (st.st_atime, st.st_mtime, _sha(full))
+        except OSError:
+            pass                              # deleted or unreadable: nothing to restore
+    return snap
+
+
+def restore_mtimes(snap):
+    """Give back the mtime the autostash took, only where the bytes are identical.
+
+    A file the rebase really changed keeps its new mtime, so the quiescence window still
+    protects anything that actually moved.
+    """
+    restored = []
+    for rel, (atime, mtime, digest) in snap.items():
+        full = os.path.join(B.VAULT, rel)
+        try:
+            if os.path.getmtime(full) != mtime and _sha(full) == digest:
+                os.utime(full, (atime, mtime))
+                restored.append(rel)
+        except OSError:
+            pass
+    return restored
+
+
+def ahead_of_remote():
+    """Local commits the remote does not have yet."""
+    code, out, _ = git("rev-list", "--count", "@{u}..HEAD")
+    return code == 0 and out.strip().isdigit() and int(out.strip()) > 0
+
+
 ALLOW_MARKER = "brain:allow-secrets"
 # The marker only counts as a declaration if it is at the TOP of the file.
 ALLOW_MARKER_LINES = 10
@@ -287,6 +343,7 @@ def push_with_retry(attempts=3):
     return False, "%d attempts and the remote is still ahead" % attempts
 
 
+@B.heartbeat("sync")
 def main():
     if not B.enabled():
         return 0
@@ -341,7 +398,9 @@ def main():
         # can wait for the daemon's next pass (10 min). It used to be ~2 s of pull+push on
         # EVERY turn, and if the network stalled, the turn never finished.
         if has_remote() and not hook:
+            unsettled = snapshot_unsettled(files_to_commit())
             fetch_from_remote()
+            restore_mtimes(unsettled)
 
         paths = files_to_commit()
 
@@ -366,6 +425,15 @@ def main():
 
         if not paths:
             print("nothing to commit (packs purged: %d)" % pruned)
+            # A commit made by a --hook pass (which never pushes) used to wait here until
+            # some later pass had something new of its own to commit. With nothing new, the
+            # daemon returned before the push and the cloud copy stayed behind.
+            if not hook and has_remote() and ahead_of_remote():
+                ok, reason = push_with_retry()
+                if not ok:
+                    print("push failed: %s" % reason)
+                    return 1
+                print("push OK (pending commits)")
             return 0
 
         hits = secret_gate(paths)

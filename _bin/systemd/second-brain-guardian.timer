@@ -1,0 +1,10 @@
+[Unit]
+Description=Second Brain: keep the vault machinery wired, every 15 min
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

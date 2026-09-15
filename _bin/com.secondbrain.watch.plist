@@ -2,11 +2,12 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.secondbrain.sync</string>
+  <key>Label</key><string>com.secondbrain.watch</string>
   <key>ProgramArguments</key>
   <array>
     <string>__VAULT__/_bin/pywrap.sh</string>
-    <string>__VAULT__/_bin/vault_sync.py</string>
+    <string>__VAULT__/_bin/brain_watch.py</string>
+    <string>tick</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -16,9 +17,10 @@
   </dict>
   <key>WorkingDirectory</key><string>__VAULT__</string>
   <key>RunAtLoad</key><true/>
-  <key>StartInterval</key><integer>600</integer>
-  <key>StandardOutPath</key><string>__HOME__/Library/Application Support/brain/logs/daemon.log</string>
-  <key>StandardErrorPath</key><string>__HOME__/Library/Application Support/brain/logs/daemon.log</string>
+  <!-- A poll, not a persistent process: one stat per watched file every 60 s. -->
+  <key>StartInterval</key><integer>60</integer>
+  <key>StandardOutPath</key><string>__HOME__/Library/Application Support/brain/logs/watch-launchd.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Application Support/brain/logs/watch-launchd.log</string>
   <key>ProcessType</key><string>Background</string>
   <key>LowPriorityIO</key><true/>
   <key>Nice</key><integer>5</integer>

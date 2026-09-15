@@ -80,8 +80,8 @@ def touched_agents(data):
 
 def warn_agent_rules():
     """Speak the moment an agent definition loses a rule a subagent cannot learn
-    elsewhere. `protocol_budget.py` reports it too, but a whole session can pass before
-    anyone runs it, and in that window every run of that agent is already wrong."""
+    elsewhere. The harness catches this too, but a whole session can pass between
+    harness runs, and in that window every run of that agent is already wrong."""
     missing = B.agents_missing_rules()
     sig = ";".join("%s:%s" % (a, ",".join(r)) for a, r in missing)
     try:
@@ -104,6 +104,7 @@ def warn_agent_rules():
                "; ".join("%s lacks %s" % (a, ", ".join(r)) for a, r in missing[:3])))
 
 
+@B.heartbeat("protocol-guard")
 @B.fail_open
 def main():
     data = B.read_hook_input()

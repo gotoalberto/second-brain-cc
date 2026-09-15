@@ -1,0 +1,10 @@
+[Unit]
+Description=Second Brain: watch the vault's files for events, every 1 min
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

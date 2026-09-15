@@ -6,12 +6,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/python3 __VAULT__/_bin/compass.py",
+            "command": "/usr/bin/python3 /home/brain-origin/Brain/_bin/compass.py",
             "timeout": 8
           },
           {
             "type": "command",
-            "command": "/usr/bin/python3 __VAULT__/_bin/skills_index.py",
+            "command": "/usr/bin/python3 /home/brain-origin/Brain/_bin/skills_index.py",
             "async": true
           }
         ]
@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/python3 __VAULT__/_bin/retrieve.py",
+            "command": "/usr/bin/python3 /home/brain-origin/Brain/_bin/retrieve.py",
             "timeout": 8,
             "statusMessage": "Querying the vault..."
           }
@@ -35,7 +35,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/python3 __VAULT__/_bin/gate_write.py",
+            "command": "/usr/bin/python3 /home/brain-origin/Brain/_bin/gate_write.py",
             "timeout": 5
           }
         ]
@@ -47,11 +47,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/python3 __VAULT__/_bin/vault_ledger.py"
+            "command": "/usr/bin/python3 /home/brain-origin/Brain/_bin/vault_ledger.py"
           },
           {
             "type": "command",
-            "command": "/usr/bin/python3 __VAULT__/_bin/protocol_guard.py"
+            "command": "/usr/bin/python3 /home/brain-origin/Brain/_bin/protocol_guard.py"
           }
         ]
       }
@@ -62,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/python3 __VAULT__/_bin/log_subagent.py",
+            "command": "/usr/bin/python3 /home/brain-origin/Brain/_bin/log_subagent.py",
             "async": true
           }
         ]
@@ -73,14 +73,14 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/python3 __VAULT__/_bin/gate_memory.py",
+            "command": "/usr/bin/python3 /home/brain-origin/Brain/_bin/gate_memory.py",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "/usr/bin/python3 __VAULT__/_bin/vault_sync.py --hook",
-            "async": true,
-            "statusMessage": "Syncing the vault..."
+            "command": "/usr/bin/python3 /home/brain-origin/Brain/_bin/vault_sync.py --hook",
+            "statusMessage": "Syncing the vault...",
+            "async": true
           }
         ]
       }
@@ -90,7 +90,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/python3 __VAULT__/_bin/session_end.py",
+            "command": "/usr/bin/python3 /home/brain-origin/Brain/_bin/session_end.py",
             "async": true
           }
         ]
@@ -101,7 +101,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/python3 __VAULT__/_bin/seed_worktree.py",
+            "command": "/usr/bin/python3 /home/brain-origin/Brain/_bin/seed_worktree.py",
             "timeout": 15
           }
         ]

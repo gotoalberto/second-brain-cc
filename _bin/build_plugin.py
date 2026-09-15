@@ -1,8 +1,19 @@
 #!/usr/bin/env python3
-"""Syncs agents, skills and hooks from ~/.claude into the vault plugin.
+"""Keeps the vault plugin and ~/.claude in step. The vault is canonical.
 
 The plugin is what makes the system portable: cloud/Cowork sessions and other machines
 do not read your ~/.claude, but they do install a plugin.
+
+Until 2026-09-15 this copied ~/.claude into the vault unconditionally — agents, whole
+skills, and the hooks block of settings.json. Now:
+
+- skills and agents go through install_plugin.py's three-way sync: live edits are
+  back-ported with a tar.gz backup and a diff, vault changes are installed into ~/.claude,
+  and a copy changed on both sides is left alone and reported;
+- hooks.json is generated from 90-Meta/events.json (events_core), never copied from a live
+  settings.json, which may carry hooks that are not Brain's.
+
+vault_sync.py still calls main() before every commit.
 """
 import os, sys, json, shutil, glob
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -53,32 +64,39 @@ def sync_skills(src_root, dst_root):
 
 
 def main():
-    n_agents = sync_dir(os.path.join(HOME, ".claude", "agents"),
-                        os.path.join(PLUGIN, "agents"),
-                        os.path.join(HOME, ".claude", "agents", "*.md"))
-    n_skills, stale = sync_skills(os.path.join(HOME, ".claude", "skills"),
-                                  os.path.join(PLUGIN, "skills"))
-    if stale:
-        print("warning: the plugin has skills that no longer exist in ~/.claude: %s"
-              % ", ".join(stale))
-    st = json.load(open(os.path.join(HOME, ".claude", "settings.json")))
-    os.makedirs(os.path.join(PLUGIN, "hooks"), exist_ok=True)
-    # Written ONLY when the content changes. Rewriting it unconditionally advanced its
-    # mtime on every run, and `vault_sync.py` calls refresh_plugin() before deciding what
-    # to commit — so `hooks.json` never sat still for the QUIESCENCE window and was never
-    # committed, on any pass, ever. The skill and agent copies use shutil.copy2, which
-    # preserves mtime, so only this generated file had the problem.
-    hooks_path = os.path.join(PLUGIN, "hooks", "hooks.json")
-    body = json.dumps({"hooks": st.get("hooks", {})}, indent=2, ensure_ascii=False)
+    import brain_paths
+    import install_plugin as IP
+    from events_core import adapters as EAD, application as EA, domain as ED
+
+    syncer = IP.Syncer(PLUGIN, os.path.join(HOME, ".claude"), brain_paths.state_dir(),
+                       log=lambda s: B.log("plugin", "sync", detail=s))
+    report = syncer.apply()
+    moved = [r for r in report if r["action"] not in ("same", "none")]
+    for r in moved:
+        print("%-14s %s/%s%s" % (r["action"], r["kind"], r["name"],
+                                 ("  " + (r.get("error") or r.get("backup") or ", ".join(r.get("backups") or [])))
+                                 if (r.get("error") or r.get("backup") or r.get("backups")) else ""))
+
+    registry_path = os.path.join(B.VAULT, "90-Meta", "events.json")
     try:
-        current = open(hooks_path, encoding="utf-8").read()
-    except OSError:
-        current = None
-    if current != body:
-        B.atomic_write(hooks_path, body)
-    print("plugin updated: %d agents, %d skills, hooks included" % (n_agents, n_skills))
+        with open(registry_path, encoding="utf-8") as fh:
+            registry = ED.load_registry(fh.read())
+    except (OSError, ED.RegistryError) as exc:
+        registry = None
+        print("warning: hooks.json left as it is — cannot load %s (%s)" % (registry_path, exc))
+    hooks_note = "hooks unchanged"
+    if registry is not None:
+        # Written ONLY when the content changes: vault_sync.py refreshes the plugin before
+        # deciding what to commit, and a file whose mtime never settles is never committed.
+        ports = EA.Ports(snapshot=None, state=None, runner=None, session=None, alerts=None, git=None,
+                         files=EAD.VaultFiles(B.VAULT), clock=None)
+        hooks_note = "hooks.json %s from events.json" % (
+            "regenerated" if EA.generate_claude_hooks(ports, registry).changed else "current")
+
+    print("plugin updated: %d skills and agents checked, %d moved, %s"
+          % (len(report), len(moved), hooks_note))
     print("install on another machine:")
-    print("  /plugin marketplace add %s" % os.path.join(B.VAULT, "integrations", "claude-code", "plugin"))
+    print("  /plugin marketplace add %s" % os.path.join(B.VAULT, "plugin"))
     print("  /plugin install brain@brain-marketplace")
 
 

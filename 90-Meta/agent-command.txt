@@ -1,0 +1,20 @@
+# The CLI agent that runs `type: agent` routines from 90-Meta/scheduled-tasks.md.
+#
+# The first line that is not blank and not a comment is the command template.
+#   {prompt}       the framed prompt, passed as one argument: an order to run the routine now, unattended,
+#                  the run's id and scratch directory, the rules of a headless run, then the routine's
+#                  body with its frontmatter and HTML comments stripped
+#   {prompt_file}  a temporary 0600 file holding that same prompt, removed when the run ends
+#   ~              the home directory
+# Each routine appends its own `agent_args` from its frontmatter (a JSON list of strings); the runner then
+# appends `--add-dir <scratch directory>`, the attempt's own <brain state>/routine-scratch/<run id>.
+# BRAIN_AGENT_CMD in the environment overrides this file.
+#
+# This is configuration, not code. The example below is the standalone Claude Code CLI (the native
+# install), never a desktop app's bundled copy and never with --bare: the runner refuses both. Every run
+# uses a token from 90-Meta/routine-tokens.json, read from KeePass, never the account the CLI or an app is
+# logged into. Another CLI agent is this one line plus that agent's own credential step, for example:
+#   opencode run {prompt}
+#   llm -m <model> {prompt}
+# Runbooks: 30-Knowledge/2026-09-15-runbook-brain-guardian.md, 30-Knowledge/2026-09-15-runbook-brain-routine-auth.md
+~/.local/bin/claude -p {prompt} --output-format json

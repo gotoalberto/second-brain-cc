@@ -12,3 +12,9 @@ _index/
 *.lock
 _assets/
 *.bak-*
+
+# Machine-local runtime state and configuration: never committed
+__pycache__/
+90-Meta/routine-tokens.json
+90-Meta/guardian-mail.json
+90-Meta/presence/

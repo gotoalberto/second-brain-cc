@@ -1,0 +1,11 @@
+# Generated template: integrations/first-run installs it into ~/.config/systemd/user when
+# the user accepts it; guardian.py keeps it in step. __VAULT__ and __HOME__ are rendered.
+[Unit]
+Description=Second Brain: watch the vault's files for events
+
+[Service]
+Type=oneshot
+WorkingDirectory=__VAULT__
+Environment=BRAIN_JOB_LABEL=second-brain-watch
+ExecStart=/bin/sh __VAULT__/_bin/pywrap.sh __VAULT__/_bin/brain_watch.py tick
+Nice=5

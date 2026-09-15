@@ -1,0 +1,4 @@
+# Cron fallback where there are no systemd user units: keep the vault machinery wired.
+# integrations/first-run installs this line into Brain's block of the crontab when the user
+# accepts it. __VAULT__ is rendered; the job logs under the Brain state directory itself.
+*/15 * * * * BRAIN_JOB_LABEL=second-brain-guardian /bin/sh __VAULT__/_bin/pywrap.sh __VAULT__/_bin/guardian.py repair >/dev/null 2>&1
