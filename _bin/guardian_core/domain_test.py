@@ -22,7 +22,7 @@ def check(name, cond, detail=""):
 
 
 PY = "/usr/bin/python3"
-V = "__VAULT__/_bin"
+V = "/home/brain-origin/Brain/_bin"
 
 
 def cmd(script, args=""):
@@ -128,7 +128,7 @@ def test_merge_hooks(D):
           len({c.key for c in D.merge_hooks(can, {})[1]}) == 3)
 
 
-VAULT = "__VAULT__"
+VAULT = "/home/brain-origin/Brain"
 
 
 def test_stale_hooks(D):
@@ -206,8 +206,8 @@ def test_localize(D):
     check("the original vault path is rewritten to this machine's vault",
           all("/home/x/Vault/_bin/" in c for c in cmds), cmds)
     check("nothing from the original home survives",
-          not any("__HOME__" in c for c in cmds), cmds)
-    same = D.localize_hooks(canonical(), vault="__VAULT__", home="__HOME__")
+          not any("/home/brain-origin" in c for c in cmds), cmds)
+    same = D.localize_hooks(canonical(), vault="/home/brain-origin/Brain", home="/home/brain-origin")
     check("on the original machine localize is the identity", same == canonical())
     paths = D.hook_command_paths(canonical())
     check("command paths lists interpreter and scripts once each, in order",

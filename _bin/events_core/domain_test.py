@@ -61,7 +61,7 @@ FIXTURE = {
 }
 
 PY = "/usr/bin/python3"
-BINP = "__VAULT__/_bin"
+BINP = "/home/brain-origin/Brain/_bin"
 
 EXPECTED_HOOKS = {"hooks": {
     "SessionStart": [{"matcher": "startup|resume", "hooks": [

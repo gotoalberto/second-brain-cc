@@ -104,7 +104,7 @@ def test_settings_store():
           isinstance(exc, P.SettingsUnreadable), repr(exc))
 
 
-def canonical_file(d, vault_bin="__VAULT__/_bin"):
+def canonical_file(d, vault_bin="/home/brain-origin/Brain/_bin"):
     return write(os.path.join(d, "hooks.json"), json.dumps({"hooks": {
         "Stop": [{"hooks": [
             {"type": "command", "command": "/usr/bin/python3 %s/gate_memory.py" % vault_bin, "timeout": 10},
@@ -194,10 +194,10 @@ def test_stale_hooks():
         write(os.path.join(vault, "_bin", script), "# stub\n")
     canonical_path = write(os.path.join(d, "hooks.json"), json.dumps({"hooks": {
         "UserPromptSubmit": [{"hooks": [
-            {"type": "command", "command": "/usr/bin/python3 __VAULT__/_bin/retrieve.py",
+            {"type": "command", "command": "/usr/bin/python3 /home/brain-origin/Brain/_bin/retrieve.py",
              "timeout": 8}]}],
         "Stop": [{"hooks": [
-            {"type": "command", "command": "/usr/bin/python3 __VAULT__/_bin/gate_memory.py",
+            {"type": "command", "command": "/usr/bin/python3 /home/brain-origin/Brain/_bin/gate_memory.py",
              "timeout": 10}]}]}}))
     config = os.path.join(d, "dot-claude")
     settings_path = os.path.join(config, "settings.json")

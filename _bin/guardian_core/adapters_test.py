@@ -89,13 +89,13 @@ TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
   <key>Label</key><string>%(label)s</string>
   <key>ProgramArguments</key>
   <array>
-    <string>__VAULT__/_bin/pywrap.sh</string>
-    <string>__VAULT__/_bin/guardian.py</string>
+    <string>/home/brain-origin/Brain/_bin/pywrap.sh</string>
+    <string>/home/brain-origin/Brain/_bin/guardian.py</string>
   </array>
   <key>EnvironmentVariables</key>
-  <dict><key>HOME</key><string>__HOME__</string></dict>
-  <key>StandardOutPath</key><string>__HOME__/.claude/state/brain/logs/sub/%(label)s.log</string>
-  <key>StandardErrorPath</key><string>__HOME__/.claude/state/brain/logs/sub/%(label)s.log</string>
+  <dict><key>HOME</key><string>/home/brain-origin</string></dict>
+  <key>StandardOutPath</key><string>/home/brain-origin/.claude/state/brain/logs/sub/%(label)s.log</string>
+  <key>StandardErrorPath</key><string>/home/brain-origin/.claude/state/brain/logs/sub/%(label)s.log</string>
 </dict>
 </plist>
 """
@@ -129,7 +129,7 @@ def test_launchd():
     check("install writes the plist into LaunchAgents", done and os.path.exists(installed), detail)
     rendered = open(installed).read()
     check("the original machine's paths are rewritten for this one",
-          "__HOME__" not in rendered and vault + "/_bin/pywrap.sh" in rendered, rendered)
+          "/home/brain-origin" not in rendered and vault + "/_bin/pywrap.sh" in rendered, rendered)
     parsed = plistlib.loads(rendered.encode())
     check("the installed plist is still a valid plist with its label",
           parsed["Label"] == "com.test.missing", parsed)
@@ -911,7 +911,7 @@ esac
 exit 3
 """
 SERVICE_TEMPLATE = ("[Service]\nType=oneshot\nEnvironment=BRAIN_JOB_LABEL=%(label)s\n"
-                    "ExecStart=/bin/sh __VAULT__/_bin/pywrap.sh __VAULT__/_bin/guardian.py repair\n")
+                    "ExecStart=/bin/sh /home/brain-origin/Brain/_bin/pywrap.sh /home/brain-origin/Brain/_bin/guardian.py repair\n")
 TIMER_TEMPLATE = "[Timer]\nOnUnitActiveSec=15min\n[Install]\nWantedBy=timers.target\n"
 
 
@@ -939,7 +939,7 @@ def test_systemd():
           done and os.path.exists(svc) and os.path.exists(os.path.join(units, "second-brain-missing.timer")), detail)
     text = open(svc).read() if os.path.exists(svc) else ""
     check("the vault path is rendered into the unit",
-          "__VAULT__" not in text and vault + "/_bin/pywrap.sh" in text, text)
+          "/home/brain-origin/Brain" not in text and vault + "/_bin/pywrap.sh" in text, text)
     calls = open(log).read() if os.path.exists(log) else ""
     check("install reloads the systemd user manager", "--user daemon-reload" in calls, calls)
     done, detail = sc.bootstrap("second-brain-missing")
@@ -978,7 +978,7 @@ def test_cron():
     fake = write(os.path.join(d, "crontab"), FAKE_CRONTAB % {"tab": tab}, mode=0o755)
     for label, when in (("second-brain-guardian", "*/15 * * * *"), ("second-brain-sync", "*/10 * * * *")):
         write(os.path.join(vault, "_bin", "cron", label + ".cron"),
-              "# comment\n%s /bin/sh __VAULT__/_bin/pywrap.sh __VAULT__/_bin/x.py\n" % when)
+              "# comment\n%s /bin/sh /home/brain-origin/Brain/_bin/pywrap.sh /home/brain-origin/Brain/_bin/x.py\n" % when)
     write(tab, "0 3 * * * /usr/bin/backup-my-photos\n")
     cc = AD.CronControl(vault=vault, home=os.path.join(d, "Home"), crontab=fake, environ={})
     check("the jobs are the cron templates the vault carries",
@@ -990,7 +990,7 @@ def test_cron():
           done and AD.CRON_BEGIN in body and "# brain:second-brain-guardian" in body
           and body.index(AD.CRON_BEGIN) < body.index("# brain:second-brain-guardian") < body.index(AD.CRON_END), body)
     check("the user's own lines are left as they were", body.startswith("0 3 * * * /usr/bin/backup-my-photos\n"), body)
-    check("the vault path is rendered into the line", vault + "/_bin/pywrap.sh" in body and "__VAULT__" not in body, body)
+    check("the vault path is rendered into the line", vault + "/_bin/pywrap.sh" in body and "/home/brain-origin/Brain" not in body, body)
     check("an installed cron job counts as loaded and needs no load step",
           cc.installed("second-brain-guardian") and cc.is_loaded("second-brain-guardian")
           and cc.bootstrap("second-brain-guardian")[0])
