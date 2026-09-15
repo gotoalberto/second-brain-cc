@@ -6,8 +6,8 @@
   migrate_state.py rollback <backup.tar.gz>    undo, from the backup migrate wrote
 
 The state (logs, the task runner's state, markers, caches) belongs to Brain, not to any
-agent, so it moves to brain_paths.state_dir() — ~/Library/Application Support/brain unless
-BRAIN_STATE says otherwise. ~/.claude/state/brain becomes a symlink to it, so any script or
+agent, so it moves to brain_paths.state_dir(): ~/Library/Application Support/brain on macOS,
+$XDG_STATE_HOME/brain or ~/.local/state/brain elsewhere, unless BRAIN_STATE says otherwise. ~/.claude/state/brain becomes a symlink to it, so any script or
 plist still naming the old path keeps working.
 
 What migrate does, in order:
@@ -17,7 +17,7 @@ What migrate does, in order:
      `<name>.legacy-<timestamp>`: nothing is overwritten or dropped;
   3. the emptied legacy directory replaced by the symlink, and the link verified.
 
-Run it with Brain's launchd jobs stopped and no agent session open, so nothing writes the
+Run it with Brain's scheduled jobs (launchd, systemd or cron) stopped and no agent session open, so nothing writes the
 legacy directory while it moves. It is idempotent: once linked, it reports `done`.
 """
 

@@ -2,8 +2,9 @@
 """Tests for migrate_state.py — moving Brain's state out of ~/.claude/state/brain.
 
 Every case runs in a temporary directory standing in for HOME: a legacy
-`.claude/state/brain` with files, a new `Library/Application Support/brain` that may
-already hold the guardian's own state, and the backup directory. The real machine's state
+`.claude/state/brain` with files, the new directory brain_paths.state_dir() names for this
+platform (`Library/Application Support/brain` on macOS, `.local/state/brain` elsewhere) that
+may already hold the guardian's own state, and the backup directory. The real machine's state
 is never read or moved; the actual cutover happens later, during integration. Run
 standalone:
 
@@ -18,6 +19,8 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+
+import brain_paths
 
 ok, fail = [], []
 TMP = []
@@ -45,7 +48,7 @@ def home():
     TMP.append(root)
     h = os.path.join(root, "home")
     legacy = os.path.join(h, ".claude", "state", "brain")
-    new = os.path.join(h, "Library", "Application Support", "brain")
+    new = brain_paths.state_dir(environ={}, home=h)
     backups = os.path.join(root, "backups")
     return h, legacy, new, backups
 
@@ -154,6 +157,7 @@ def test_cli():
     write(os.path.join(legacy, "tasks-state.json"), "{}")
     env = dict(os.environ, HOME=h)
     env.pop("BRAIN_STATE", None)
+    env.pop("XDG_STATE_HOME", None)
     p = subprocess.run([sys.executable, os.path.join(HERE, "migrate_state.py"), "status"], env=env,
                        capture_output=True, text=True, timeout=60)
     check("status names both locations and the pending migration, changing nothing",
