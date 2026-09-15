@@ -1,56 +1,53 @@
 # CLI integration
 
-`brain` is a tiny command-line wrapper over the vault, for **any agent that can run a
-shell command** (and for you at a terminal). No MCP, no plugin — just a command.
-
-Use it when your assistant can execute shell but doesn't speak MCP, or when you want to
-drive the vault from scripts, cron, a Makefile, or your own tooling.
+`brain` is a small command-line wrapper over the vault, for **any agent that can run a shell
+command** and for you at a terminal. No MCP, no plugin, no agent account: a command.
 
 ## Install
 
-Put it on your `PATH`:
-
 ```bash
-ln -s "$PWD/integrations/cli/brain" /usr/local/bin/brain    # or ~/.local/bin/brain
+chmod +x ~/Brain/integrations/cli/brain
+ln -s ~/Brain/integrations/cli/brain ~/.local/bin/brain     # or /usr/local/bin/brain
 ```
 
-The vault is auto-detected as this repository. If you keep the vault elsewhere, export
-`BRAIN_VAULT=/path/to/vault`.
+The vault is the repository the script lives in; export `BRAIN_VAULT=/path/to/vault` to point
+it elsewhere.
 
 ## Commands
 
 ```bash
-brain recall <terms...> [--all] [--limit N] [--type T] [--project P] [--full]
+brain recall <terms...>          # what the vault knows, rendered exactly as the prompt hook injects it
+brain search <terms...> [--all] [--limit N] [--type T] [--project P] [--full]
 brain recent [N]
-brain get   <vault/relative/path.md>
-brain new   <path> --title "T" [--type note] [--tag t] [--project p] [--area a]   # body on stdin
+brain get    <vault/relative/path.md>
+brain new    <path> --title "T" [--type note] [--tag t] [--project p] [--area a]   # body on stdin
 brain append <path>                                                              # text on stdin
 brain index [--full]
 brain sync
 brain status
-brain secret <get|put|ref|check> ...     # 1Password-backed credentials (optional)
-brain mcp                                 # run the MCP server on stdio
+brain session-start              # startup context: protocol, active projects, warnings
+brain session-end                # release this session's claims, mark the vault dirty
+brain hook <event-id> [--payload JSON]
+                                 # run any event's hook handler with the stdin JSON a Claude Code hook
+                                 # gets; exit code is the handler's. See 90-Meta/HOOKS-WITHOUT-CLAUDE.md
+brain mcp                        # run the MCP server on stdio
 ```
 
-## Examples
+## Sessions
 
-```bash
-brain recall "vector database decision"
-brain recent 5
-echo "Decided to use Postgres over Mongo because of the relational access pattern." \
-  | brain new 30-Knowledge/2026-01-20-decision-postgres.md --title "Postgres over Mongo" --type decision --tag database
-brain get 30-Knowledge/2026-01-20-decision-postgres.md
-brain sync
-```
+Every invocation runs under one session id: `BRAIN_SESSION_ID` if the caller exported it, else
+`cli-<pid>`. Notes written with `brain new` / `brain append` are credited to that session. An
+agent that wants a whole working session attributed as one should export `BRAIN_SESSION_ID`
+once, run `brain session-start`, work, and finish with `brain session-end`.
 
 ## Point an agent at it
 
-Any agent framework that can shell out can use the vault by calling `brain`. Tell your
-agent, in its system prompt or tool description:
+In the agent's system prompt or tool description:
 
-> To recall knowledge, run `brain recall "<terms>"`. To save a durable note, pipe the
-> body into `brain new <path> --title "<title>" --type <type>`. Never write secrets into
-> notes — store them with `brain secret put ...` and reference them by `op://` path.
+> Before answering anything non-trivial, run `brain recall "<terms from the question>"`. To
+> save a durable note, pipe the body into `brain new <path> --title "<title>" --type <type>`;
+> to add to a project or entity note, use `brain append <path>`. Write notes in English. Never
+> put credentials in a note: they live in the kdbx and a note keeps a `kp://` reference.
 
-That is the whole contract. See [`../../90-Meta/AGENT-PROTOCOL.md`](../../90-Meta/AGENT-PROTOCOL.md)
-for the full conventions.
+Without an agent adapter nothing fires on its own for that agent: see the degraded-mode table
+in `AGENTS.md` at the vault root for what to call and when.

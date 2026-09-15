@@ -1,122 +1,83 @@
 # MCP integration
 
-A zero-dependency [Model Context Protocol](https://modelcontextprotocol.io) server
-that exposes your vault to **any MCP-capable agent** — Claude Desktop, Cline, Cursor,
-Continue, Zed, Windsurf, or your own client. This is the universal way to plug the
-Second Brain into an assistant: if it speaks MCP, it can use the vault.
+A zero-dependency [Model Context Protocol](https://modelcontextprotocol.io) server that
+exposes Brain to **any MCP-capable agent**: Claude Desktop, Cline, Cursor, Continue, Zed,
+OpenCode, Windsurf or your own client. Standard library only, stdio transport.
 
-The server is `server.py`. It uses the Python standard library only (no `pip install`,
-no SDK) and speaks MCP over stdio.
-
-## Tools it exposes
+## Tools
 
 | Tool | What it does |
 |---|---|
-| `recall` | Full-text search over the vault (FTS5). The main entry point. |
+| `recall` | What the vault knows about a question, rendered exactly as Brain's Claude Code prompt hook injects it (`_bin/retrieve_core.py`). Empty when nothing is relevant. |
+| `search` | A plain list of matching notes, with filters (`_bin/query.py`). |
 | `list_recent` | The most recently updated notes. |
-| `get_note` | Read one note in full by its vault-relative path. |
-| `write_note` | Create a new note. Credentials are auto-redacted; write is atomic + reindexed. |
-| `append_note` | Append a timestamped entry to a note's log. |
-| `reindex` | Rebuild the search index (incremental unless `full`). |
-| `sync` | Commit & push the vault over git. |
-| `status` | Health report for the vault. |
+| `get_note` | Read one note by its vault-relative path (paths outside the vault are refused). |
+| `write_note` | Create a note through `vw.py`: redaction, lock, atomic write, reindex. |
+| `append_note` | Append to a note through `vw.py`, the only permitted writer for `10-Projects/` and `70-Entities/`. |
+| `reindex` | Rebuild the search index. |
+| `sync` | Commit and push the vault (`vault_sync.py`). |
+| `status` | Health report (`doctor.py`). |
+| `session_start` | The startup context `compass.py` gives a Claude Code session. Call it once at the start. |
+| `session_end` | Release this session's claims and mark the vault for the next sync. Call it at the end. |
 
-Every write goes through the same `_bin/` path the CLI and hooks use, so redaction,
-per-file locking and reindexing happen no matter which agent is driving.
+**There is no credential tool.** Secrets live in the kdbx and are not handed to an agent
+over an MCP stream; notes keep only `kp://` references.
 
-## Configure your client
+The server exports one `BRAIN_SESSION_ID` (`mcp-<pid>` unless the client already set one)
+for its whole process tree, so every write it makes is attributed to the same session.
 
-The server auto-detects the vault as the repository this file lives in. If your vault
-is elsewhere, set `BRAIN_VAULT` (or pass `--vault /path/to/vault`).
+## Register it
 
-Replace `/ABSOLUTE/PATH/TO/second-brain-cc` below with your clone's absolute path.
+Replace `/path/to/Brain` with the vault's absolute path.
 
-### Claude Desktop
-
-Edit `claude_desktop_config.json`
-(macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`,
-Windows: `%APPDATA%\Claude\claude_desktop_config.json`):
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
-{
-  "mcpServers": {
-    "second-brain": {
-      "command": "python3",
-      "args": ["/ABSOLUTE/PATH/TO/second-brain-cc/integrations/mcp/server.py"]
-    }
-  }
-}
+{"mcpServers": {"brain": {"command": "python3", "args": ["/path/to/Brain/integrations/mcp/server.py"]}}}
 ```
 
-### Cline / Cursor / Continue / Windsurf / Roo
-
-These read the same `mcpServers` shape (in the extension's MCP settings JSON):
+**Cline, Cursor, Continue, Windsurf, Roo** (their MCP settings JSON):
 
 ```json
-{
-  "mcpServers": {
-    "second-brain": {
-      "command": "python3",
-      "args": ["/ABSOLUTE/PATH/TO/second-brain-cc/integrations/mcp/server.py"],
-      "env": { "BRAIN_VAULT": "/ABSOLUTE/PATH/TO/second-brain-cc" }
-    }
-  }
-}
+{"mcpServers": {"brain": {"command": "python3",
+  "args": ["/path/to/Brain/integrations/mcp/server.py"],
+  "env": {"BRAIN_VAULT": "/path/to/Brain"}}}}
 ```
 
-### Claude Code (CLI)
+**OpenCode** (`opencode.json`):
 
-If you use Claude Code and want the MCP server *instead of* the native plugin:
+```json
+{"$schema": "https://opencode.ai/config.json",
+ "mcp": {"brain": {"type": "local", "command": ["python3", "/path/to/Brain/integrations/mcp/server.py"],
+                   "enabled": true, "environment": {"BRAIN_VAULT": "/path/to/Brain"}}}}
+```
+
+**Zed** (`settings.json`):
+
+```json
+{"context_servers": {"brain": {"command": {"path": "python3",
+  "args": ["/path/to/Brain/integrations/mcp/server.py"]}}}}
+```
+
+**Claude Code CLI**, if you want the server instead of the hooks (not both: the hooks already
+do what these tools do, and doing it twice double-counts):
 
 ```bash
-claude mcp add second-brain -- python3 /ABSOLUTE/PATH/TO/second-brain-cc/integrations/mcp/server.py
+claude mcp add brain -- python3 /path/to/Brain/integrations/mcp/server.py
 ```
 
-(The richer Claude Code integration — hooks, agents, slash commands — lives in
-[`../claude-code/`](../claude-code/). Use one or the other, not both, to avoid double writes.)
-
-### Zed
-
-In `settings.json` under `context_servers`:
-
-```json
-{
-  "context_servers": {
-    "second-brain": {
-      "command": { "path": "python3",
-        "args": ["/ABSOLUTE/PATH/TO/second-brain-cc/integrations/mcp/server.py"] }
-    }
-  }
-}
-```
-
-### Any other MCP client
-
-Run this command and speak MCP over its stdio:
-
-```bash
-python3 /ABSOLUTE/PATH/TO/second-brain-cc/integrations/mcp/server.py
-```
+Registration is per agent and per machine, by hand: there is no universal mechanism.
 
 ## Test it by hand
-
-You can drive the server with plain JSON-RPC lines:
 
 ```bash
 printf '%s\n' \
   '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}' \
   '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"recall","arguments":{"query":"onboarding"}}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"recall","arguments":{"query":"guardian"}}}' \
   | python3 integrations/mcp/server.py
 ```
 
-You should see the `initialize` result, the tool list, and search results.
-
-## Notes
-
-- **Requirements:** Python 3.8+ with SQLite/FTS5 (bundled with CPython on macOS, Linux
-  and Windows). Nothing else.
-- **Logs** go to stderr (stdout is the protocol channel), so they never corrupt the stream.
-- The server is a thin wrapper: it shells out to `_bin/query.py`, `vw.py`,
-  `index_vault.py`, `vault_sync.py` and `doctor.py`. Read [`server.py`](server.py) — it's
-  short.
+You should see the `initialize` result, the tool list, and the notes about the guardian. Logs
+go to stderr, never to stdout (stdout is the protocol channel). The automated version of this
+handshake is `_bin/mcp_server_test.py`.
