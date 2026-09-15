@@ -34,7 +34,7 @@ Build a short digest of the vault notes that changed in the last day and email i
 1. List the recently updated notes with `python3 ~/Brain/_bin/query.py --recent 20`.
 2. Read the ones updated in the last day and write the digest to a file in this run's scratch directory: for
    each note, its title, its path and one sentence on what changed. Plain text, no headlines.
-3. Send it with `python3 ~/Brain/_bin/google.py send --to me@example.com --account personal --subject "Vault digest" --body-file <the digest file>`.
+3. Send it with `python3 ~/Brain/_bin/google.py send --account personal --to me@example.com --subject "Vault digest" --body-file <the digest file>`.
 4. If the send fails, answer with one line that starts with `EMAIL NOT SENT:` followed by the reason.
 
 Do not invoke the `save` skill and do not spawn subagents: this run only reads the vault and sends one email.

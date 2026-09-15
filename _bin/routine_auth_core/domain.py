@@ -367,8 +367,8 @@ def parse_pool(text: str) -> list:
 def kp_entry(kp_ref: str) -> str:
     """The entry name kp.py takes: `kp://Brain/apis/x#password` is `apis/x`.
 
-    kp.py puts every name inside its own `Claude` group, so the group is dropped here the
-    same way kp.py's with_group() drops it.
+    kp.py puts every name inside its agent group (`Brain` by default), so the group is dropped
+    here the same way kp.py's norm() drops it.
     """
     e = (kp_ref or "").strip()
     if e.startswith("kp://"):
