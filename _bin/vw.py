@@ -39,16 +39,16 @@ def frontmatter(title, ntype, projects, areas, tags, source="agent", provenance=
 
 
 def _lease_redirect(path, sid):
-    """If another machine holds this note's lease, where do we write instead?
+    """If another session on this machine holds this note's lease, where do we write instead?
 
-    Returns (alternative_path, owner) or (None, None). It is a LOCAL lookup — an open()
-    on the cache lease.py leaves behind — so it adds no network and no wait: if the cache
-    is not there, it says nothing and we write where we always do.
+    Returns (alternative_path, owner) or (None, None). It is a local lookup of the lease
+    files lease.py keeps in the Brain state directory, so it adds no wait: if there is no
+    lease, it says nothing and we write where we always do.
 
-    The redirect is not a restriction, it is how the text survives: two machines
+    The redirect is not a restriction, it is how the text survives: two sessions
     appending to the end of the same note produce a merge conflict git cannot resolve,
     and the work ends up in a `.rej` or in a hand resolution. A new linked note says the
-    same thing and merges by itself.
+    same thing and merges by itself. Across machines git is the safety net.
     """
     rel = os.path.relpath(path, B.VAULT)
     if rel.split("/")[0] not in ("10-Projects", "70-Entities"):
@@ -95,7 +95,7 @@ def cmd_append(args):
                     "session", [], [], [],
                     provenance="written separately because %s held the lease on [[%s]]"
                                % (owner, os.path.splitext(os.path.basename(source))[0]))
-                text += ("This would go in [[%s]], but another machine held it. Merge it\n"
+                text += ("This would go in [[%s]], but another session held it. Merge it\n"
                          "by hand or leave it linked here.\n\n%s\n"
                          % (os.path.splitext(os.path.basename(source))[0], LOG_HEADING))
             text = text.rstrip() + entry
