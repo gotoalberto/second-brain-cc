@@ -5,9 +5,11 @@
                                  --dry-run shows what would be installed and saves no answer
   first_run.py status            every step and its answer; exit 0 when all are answered, 3 when not
   first_run.py reset <step>      ask one step again next time (with the steps that depend on it)
-  first_run.py skip-all          record every unanswered step as declined (CI, unattended machines)
+  first_run.py skip-all          answer every unanswered step without asking (CI, unattended machines):
+                                 files gets the default directory, created and recorded; the rest is declined
 
-Steps, in order: kdbx, google, storage, alert_email, mcp, scheduler, routines. Answers live in
+Steps, in order: kdbx, google, files, alert_email, mcp, scheduler, routines. files cannot be declined:
+it records the local directory files.py keeps files in (proposed: ~/BrainFiles). Answers live in
 <brain state>/first-run.json; the guardian installs and repairs only the scheduled jobs accepted here.
 BRAIN_FAKE_SCHEDULER=1 writes job files under HOME without telling launchctl, systemctl or cron.
 Usually started through setup.sh.
@@ -31,7 +33,8 @@ INTRO = """Second Brain: first run on this machine
 
 Each step asks whether to connect one optional piece. Answer no to anything you do not want: nothing
 is installed, created or registered without a yes, and every answer is remembered, so running this
-again only asks what is left. Ctrl+C stops at any point; the steps already answered are kept.
+again only asks what is left. One step is required: the directory where Brain keeps files, which is
+created for you. Ctrl+C stops at any point; the steps already answered are kept.
 """
 
 
@@ -43,7 +46,7 @@ def main(argv=None):
     sub.add_parser("status", help="every step and its answer; exit 3 while any is unanswered")
     rs = sub.add_parser("reset", help="ask one step again next time")
     rs.add_argument("step")
-    sub.add_parser("skip-all", help="record every unanswered step as declined")
+    sub.add_parser("skip-all", help="set up the default files directory and decline every other unanswered step")
     args = ap.parse_args(sys.argv[1:] if argv is None else argv)
     if not args.cmd:
         ap.print_help(sys.stderr)
@@ -64,14 +67,14 @@ def main(argv=None):
         return 0
 
     if args.cmd == "skip-all":
-        state = ports.state.load()
-        for step in D.STEPS:
-            if step not in state["steps"]:
-                state = D.record(state, step, "declined", {"reason": "skipped with first_run.py skip-all"},
-                                 ports.clock.now())
-        ports.state.save(state)
-        print("every unanswered step recorded as declined; first_run.py reset <step> asks one again")
-        return 0
+        state, failed = A.skip_all(ports)
+        files = state["steps"].get("files", {})
+        if files.get("status") == "done":
+            print("files directory: %s" % files.get("dir"))
+        for step, why in failed:
+            print("first_run.py: %s is required and could not be set up: %s" % (step, why), file=sys.stderr)
+        print("every other unanswered step recorded as declined; first_run.py reset <step> asks one again")
+        return 1 if failed else 0
 
     if ports.prompt.interactive():
         print(INTRO)

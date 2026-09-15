@@ -54,9 +54,15 @@ def main():
               (p.returncode, p.stdout, p.stderr))
         rc, out, err = run("skip-all")
         data = json.load(open(path)) if os.path.exists(path) else {}
-        check("skip-all records every step as declined, for CI and unattended machines",
-              rc == 0 and len(data.get("steps", {})) == 7
-              and all(v["status"] == "declined" for v in data["steps"].values()), (rc, out, err, data))
+        steps = data.get("steps", {})
+        files_dir = os.path.join(root, "home", "BrainFiles")
+        config = os.path.join(state, "files-dir.json")
+        check("skip-all creates and records the default files directory, which cannot be declined",
+              rc == 0 and steps.get("files", {}).get("status") == "done" and steps["files"].get("dir") == files_dir
+              and os.path.isdir(files_dir) and os.path.exists(config)
+              and json.load(open(config)) == {"dir": files_dir}, (rc, out, err, data))
+        check("and records every other step as declined, for CI and unattended machines",
+              len(steps) == 7 and all(v["status"] == "declined" for k, v in steps.items() if k != "files"), steps)
         rc, out, err = run("status")
         check("after that status exits 0", rc == 0, (rc, out))
         rc, out, err = run("reset", "scheduler")
