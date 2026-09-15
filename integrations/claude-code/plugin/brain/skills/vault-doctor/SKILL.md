@@ -1,6 +1,6 @@
 ---
 name: vault-doctor
-description: Diagnoses the health of the Brain vault and the memory system — retrieval metrics, orphaned or duplicated notes, sync state and the test harness result. Use it when the context system behaves oddly, or to check whether it is earning its keep.
+description: Diagnoses the health of the Brain vault and the memory system: retrieval metrics, orphaned or duplicated notes, sync state and the test harness result. Use it when the context system behaves oddly, or to check whether it is earning its keep.
 ---
 
 ## Diagnosis
@@ -20,13 +20,16 @@ Interpret the report above for the user:
    failing, say so with the exact command to fix it.
 4. **Is the link graph healthy?** Broken links that `linkfix.py` could not fix come first:
    retrieval expands across links, so a hole there degrades every session silently.
+5. **Is the machinery alive?** If the guardian is installed, run
+   `python3 ~/Brain/_bin/guardian.py status` and read its hook liveness and hook probe lines:
+   hooks that do not fire mean memory is not being queried or saved, with no error anywhere.
 
 Finish with **three concrete actions**, ordered by impact. If everything is fine, say so
 in one line rather than inventing problems.
 
 ## Language
 
-- **Everything written into the vault goes in English** — `title:`, `tags:`, the prose.
+- **Everything written into the vault goes in English**: `title:`, `tags:`, the prose.
   A verbatim quote keeps the language it was said in, with the English alongside. Answer
   the user in their language; the note goes in English, because retrieval is lexical and a
   note in another language is unreachable by search:

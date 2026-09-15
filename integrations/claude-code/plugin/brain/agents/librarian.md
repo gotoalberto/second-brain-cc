@@ -26,7 +26,7 @@ not memory.
 
 ## How to write
 
-**Everything you write into the vault goes in English** — `title:`, `tags:`, the prose.
+**Everything you write into the vault goes in English**: `title:`, `tags:`, the prose.
 The one exception is a verbatim quote, which keeps the language it was said in (put the
 English alongside it). The user may write in another language and you answer in theirs;
 the note still goes in English, because retrieval is lexical and a note in another language
@@ -53,11 +53,29 @@ which is why this is repeated here.
    ```
    with the content on stdin, or `vw.py new` to create them.
 4. Link with `[[id-of-the-other-note]]`. A note with no links gets lost.
-5. Never write down credentials. Never paste external content verbatim: summarize it and
+5. Never write down credentials: a secret goes to the kdbx through `kp.py` and the note keeps
+   its `kp://` reference. Never paste external content verbatim: summarize it and
    mark `source: external`.
 6. Never delete a note.
 
+## Files the session produced
+
+The vault holds memory; files live in object storage when it is configured. If the delegation
+message lists files (PDFs, HTML, transcripts, screenshots, datasets, scripts), **upload every one
+of them** after writing the note that explains them:
+
+```
+python3 ~/Brain/_bin/s3v.py put <file...> --to <note path relative to the vault> \
+  --project <slug> --kind <kind> --caption "what it is"
+```
+
+- `--to` points at the note you just wrote or updated. A file with no note is not context.
+- Use the slug you were given. If none fits, a short descriptive one is fine: it is a folder in
+  the bucket, not a vault project.
+- Never skip a file because it sits in a temporary folder: that is exactly why it must go up now.
+- If a listed file no longer exists, or object storage is not configured, say so in your report.
+
 ## When you finish
 
-Say in two lines what you saved and where. If there genuinely was nothing to save, say so
+Say in two lines what you saved and where, plus the object keys of the files you uploaded. If there genuinely was nothing to save, say so
 plainly instead of inventing a filler note.

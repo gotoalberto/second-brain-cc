@@ -1,6 +1,6 @@
 ---
 name: recall
-description: Searches the Brain vault (~/Brain) for notes, past decisions, conventions or project context. Use it when the user asks what was decided before, how something is done here, or what we know about a topic — and whenever you need your own context before answering.
+description: Searches the Brain vault (~/Brain) for notes, past decisions, conventions or project context. Use it when the user asks what was decided before, how something is done here, or what we know about a topic, and whenever you need your own context before answering.
 argument-hint: [search terms]
 allowed-tools: Bash(/usr/bin/python3 __VAULT__/_bin/query.py:*), Read
 ---
@@ -26,7 +26,7 @@ Above are the vault index results for «$ARGUMENTS».
 
 ## Language
 
-- **Everything written into the vault goes in English** — `title:`, `tags:`, the prose.
+- **Everything written into the vault goes in English**: `title:`, `tags:`, the prose.
   A verbatim quote keeps the language it was said in, with the English alongside. Answer
   the user in their language; the note goes in English, because retrieval is lexical and a
   note in another language is unreachable by search:

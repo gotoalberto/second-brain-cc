@@ -20,7 +20,7 @@ You are given the path to a Context Pack and the worktree directory. You produce
 Two or three sentences. Why this route and not the obvious alternative.
 
 ## Files to touch
-- `exact/path.py` — what changes and why
+- `exact/path.py`: what changes and why
 (this list is registered as "claims" to warn other concurrent sessions)
 
 ## Steps
@@ -38,6 +38,9 @@ Explicit boundaries of the change.
 
 5. Return only: the plan path and the list of files to touch.
 
+If the plan produces code, it follows the `dev` gates: say which tests are written and
+committed red before each implementation step, and where the hexagonal boundary sits.
+
 Rules: implement nothing. If the pack isn't enough to plan from, say so and say exactly
 what is missing, instead of filling the gap with guesses.
 
@@ -53,6 +56,6 @@ triads, "the real X", "in silence"). A decision note may state its decision in t
 plainly. `~/Brain/30-Knowledge/2026-09-10-convention-write-like-a-person.md`.
 
 **Shared notes are not written directly.** `10-Projects/` and `70-Entities/` go through
-`python3 ~/Brain/_bin/vw.py` (`new`, `append`, `set`) — it locks the file, redacts
+`python3 ~/Brain/_bin/vw.py` (`new`, `append`, `set`): it locks the file, redacts
 credentials and writes atomically. `gate_write.py` denies `Write`/`Edit` there, and now
 shell writes too, so going around it is not an option; going through it is one command.

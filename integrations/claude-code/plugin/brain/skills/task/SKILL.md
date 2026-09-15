@@ -1,6 +1,6 @@
 ---
 name: task
-description: Runs a task end to end with the full protocol — searches the vault for context, isolates in a git worktree, plans, implements, verifies and saves what was learned. Use it for any task that touches code, has several steps or involves decisions.
+description: Runs a task end to end with the full protocol: searches the vault for context, isolates in a git worktree, plans, implements, verifies and saves what was learned. Use it for any task that touches code, has several steps or involves decisions.
 argument-hint: [task description]
 ---
 
@@ -16,13 +16,14 @@ keep your window clean. Do not read code files yourself except to unblock someth
 
 ## Before starting: does this produce code?
 
-If the task is going to produce **code** and you keep a code-development skill (for
-example a `dev` skill with tests-first and design gates; none ships with this repo),
-invoke it and follow both. This pipeline decides context, isolation and memory; that skill
-decides how the code gets written.
+If the task is going to produce **code** (backend, frontend, scripts, a website or an HTML
+deliverable), this pipeline is **not enough**: the `/dev` gates apply on top (tests committed
+red before the implementation, hexagonal architecture, and when there is an interface, a
+design interview and critique rounds). Invoke `dev` and follow both. This pipeline decides
+context, isolation and memory; `dev` decides how the code gets written.
 
 If the task produces no code (research, writing, data analysis, reorganising the vault),
-follow only what is below.
+follow only what is below. The `/dev` gates do not apply and forcing them would be ceremony.
 
 ## Procedure
 
@@ -64,13 +65,14 @@ If the rebase conflicts, **do not resolve it blind**: report it. If it is clean,
 
 ### 7. Memory (mandatory)
 
-- **Everything written into the vault goes in English** — `title:`, `tags:`, the prose.
+- **Everything written into the vault goes in English**: `title:`, `tags:`, the prose.
   A verbatim quote keeps the language it was said in, with the English alongside. Answer
   the user in their language; the note goes in English, because retrieval is lexical and a
   note in another language is unreachable by search:
   `~/Brain/30-Knowledge/2026-09-08-convention-vault-is-written-in-english.md`.
 Invoke `librarian` with: what was done, what was decided and why, what was learned about
-the code. Have it write the notes and update the project MOC.
+the code, and the files produced outside the vault (see `/save`). Have it write the notes and
+update the project MOC.
 
 ### 8. Closing
 Summarise for the user: what changed, where the worktree and branch are, the verification
