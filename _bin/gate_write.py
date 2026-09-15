@@ -14,40 +14,17 @@
 Deliberate exemptions so as not to self-block: subagents, the vault itself,
 ~/.claude, the scratchpad, and anything not inside a git repo.
 """
-import os, re, sys, json, fnmatch
+import os, sys, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import brainlib as B
 
 CONFIG = os.path.join(B.VAULT, "_index", "config.json")
-PROTECTED = ("10-Projects", "70-Entities")
 
-# A shell command cannot be parsed reliably, so this does not try. It asks two
-# questions: does the command name a protected folder, and does it look like it
-# writes? Both yes -> deny. That misses an obfuscated path and is fine: the point is
-# to stop the ordinary `>>`, `sed -i` and `open(...,"w")`, not to be a sandbox.
-# vault_ledger.py catches after the fact whatever gets through, by mtime.
-_WRITERS = re.compile(
-    r">>?\s*['\"]?[^\s|&;'\"]*(?:10-Projects|70-Entities)"   # > file  /  >> file
-    r"|\b(?:sed\s+-i|tee|truncate|dd|install)\b"             # in-place editors
-    r"|\b(?:cp|mv|rm|touch|mkdir|rsync|ln)\b"                # file moves
-    r"|open\s*\([^)]*['\"][wa]\+?['\"]"                      # python open(..., 'w')
-    r"|\.write(?:lines)?\s*\("                               # python .write(
-    r"|\bshutil\.(?:copy|move)\b"
-)
-
-# Sanctioned writers and version control: this is how a protected note is SUPPOSED to
-# be written, so they must never be denied or the gate blocks its own remedy.
-_ALLOWED = re.compile(r"\b(?:vw\.py|va\.py|s3v\.py|vault_sync\.py|index_vault\.py|git)\b")
-
-
-def bash_touches_protected(command):
-    """Which protected folder this shell command looks like it writes to, or None."""
-    if not command or _ALLOWED.search(command):
-        return None
-    hit = next((p for p in PROTECTED if p in command), None)
-    if not hit:
-        return None
-    return hit if _WRITERS.search(command) else None
+# The rules themselves live in gate_write_core, shared with the git pre-commit adapter.
+# This file is the Claude Code PreToolUse adapter: it reads the hook input, asks the
+# core, and answers in Claude Code's JSON.
+from gate_write_core import (PROTECTED, bash_touches_protected, claim_conflict,  # noqa: E402,F401
+                             is_exempt_path, protected_folder)
 
 
 def config():
@@ -70,6 +47,7 @@ def warn(msg):
     sys.exit(0)
 
 
+@B.heartbeat("pre-write-gate")
 @B.fail_open
 def main():
     data = B.read_hook_input()
@@ -100,7 +78,7 @@ def main():
     # 1. shared vault notes -> only through vw.py
     if B.in_vault(path):
         rel = os.path.relpath(path, os.path.realpath(B.VAULT))
-        if rel.split(os.sep)[0] in PROTECTED:
+        if protected_folder(rel.replace(os.sep, "/")):
             deny("This note is shared between sessions. Write it with:\n"
                  "  /usr/bin/python3 ~/Brain/_bin/vw.py append %s --sid %s\n"
                  "(locks the file, redacts credentials and writes atomically)."
@@ -110,26 +88,18 @@ def main():
     # exemptions: Claude config and the session's own ephemeral scratchpad.
     # The pattern is deliberately strict: a user project happening to be called
     # "scratchpad" must NOT be exempted.
-    home = os.path.expanduser("~")
-    if path.startswith(os.path.join(home, ".claude")):
-        sys.exit(0)
-    if re.match(r"^/(private/)?tmp/claude-\d+/", path) or path.startswith("/private/var/folders/"):
+    if is_exempt_path(path, os.path.expanduser("~")):
         sys.exit(0)
 
     con = B.db()
 
     # 2. claims held by other live sessions
-    conflict = None
-    for osid, pattern in con.execute("SELECT sid, pattern FROM claims WHERE sid != ?", (sid,)):
+    rows = []
+    for osid, pattern in con.execute("SELECT sid, pattern FROM claims WHERE sid != ?", (sid,)).fetchall():
         row = con.execute("SELECT heartbeat, pid, project FROM sessions WHERE sid=?", (osid,)).fetchone()
-        if not row:
-            continue
-        hb, opid, proj = row
-        if not B.session_live(opid, hb):
-            continue                      # ghost claim from a dead session
-        if fnmatch.fnmatch(path, pattern) or path == pattern:
-            conflict = (osid, proj)
-            break
+        if row:
+            rows.append((osid, pattern, row[0], row[1], row[2]))
+    conflict = claim_conflict(path, sid, rows, B.session_live)   # ghost claims are skipped there
 
     # record this session's dynamic claim
     try:

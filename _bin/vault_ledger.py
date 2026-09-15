@@ -17,10 +17,12 @@ towards crediting someone who did not save.
 import os, sys, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import brainlib as B
+import vault_ledger_core as L
 
-MAX_WINDOW = 120.0
+MAX_WINDOW = L.MAX_WINDOW
 
 
+@B.heartbeat("post-write-ledger")
 @B.fail_open
 def main():
     if not B.enabled():
@@ -36,10 +38,10 @@ def main():
     marker = os.path.join(B.STATE, "%s.vwin" % sid)
     now_ = B.now()
     try:
-        since = float(open(marker).read().strip())
+        marker_text = open(marker).read()
     except Exception:
-        since = 0.0
-    since = max(since, now_ - MAX_WINDOW)
+        marker_text = ""
+    since = L.window_since(marker_text, now_)
 
     # the marker is written BEFORE working: if something blows up later, the next call
     # starts from a short window instead of rescanning the whole vault.
@@ -62,18 +64,35 @@ def main():
     # fooled. Prevention is best-effort, detection is not — say it out loud rather than
     # let a shared note be edited unlocked in silence.
     # Detail: 30-Knowledge/2026-09-08-analysis-every-instrument-watches-one-surface-and-reports-on-all-of-them.md
-    raw = [n for n in notes
-           if os.path.relpath(n, B.VAULT).split(os.sep)[0] in ("10-Projects", "70-Entities")
-           and not B.vw_wrote_last(n)]
+    raw = L.unlocked_protected(notes, B.VAULT, B.vw_wrote_last)
     if raw:
-        print(json.dumps({"systemMessage":
-            "Brain: %d shared note(s) changed without vw.py, so unlocked and with no "
-            "secret redaction: %s. Write 10-Projects/ and 70-Entities/ with "
-            "`python3 ~/Brain/_bin/vw.py`." % (
-                len(raw), ", ".join(os.path.relpath(n, B.VAULT) for n in raw[:3]))},
-            ensure_ascii=False))
+        print(json.dumps({"systemMessage": L.unlocked_notice(raw, B.VAULT)}, ensure_ascii=False))
     sys.exit(0)
 
 
+def cli(argv):
+    """`vault_ledger.py --sid <sid> --paths <vault-relative notes...>`
+
+    The entry for triggers that are not a Claude Code hook: the file-watch job credits the
+    notes it saw change to the session id it resolved ("system" when no agent session is
+    behind the write). Paths that do not exist are ignored.
+    """
+    import argparse
+    ap = argparse.ArgumentParser(prog="vault_ledger.py", description="credit written notes to a session")
+    ap.add_argument("--sid", required=True)
+    ap.add_argument("--paths", nargs="+", required=True)
+    args = ap.parse_args(argv)
+    if not B.enabled():
+        return 0
+    notes = [os.path.join(B.VAULT, p) for p in args.paths if os.path.isfile(os.path.join(B.VAULT, p))]
+    if notes:
+        con = B.db()
+        B.record_vault_writes(con, args.sid, notes, B.now())
+        con.close()
+    return 0
+
+
 if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        sys.exit(cli(sys.argv[1:]))
     main()
