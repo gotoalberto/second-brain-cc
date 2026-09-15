@@ -1,45 +1,34 @@
 #!/usr/bin/env python3
-"""Presence heartbeat over S3: who is working, on what, and since when.
+"""Presence heartbeat on this machine: who is working, on what, and since when.
 
-There was already a git-based presence — one `.md` per session in `90-Meta/presence/` —
-and it is still there, because it works with no network and no credentials. What it does
-not do is arrive in time: it travels in a commit, so the other machine finds out **up to
-600 s later**, plus whatever its own push takes. To warn that two sessions are about to
-collide on the same note, 600 s is not warning at all.
+There is also a git-based presence — one `.md` per session in `90-Meta/presence/` — and it
+stays, because it is what reaches other machines. It travels in a commit, so another machine
+finds out **up to 600 s later**. This one answers the same question for the sessions on THIS
+machine, straight away, with nothing to authenticate to and no network.
 
-Here the heartbeat goes over S3 and takes ~130 ms. Two decisions make it cheap:
+Two decisions keep it cheap:
 
-1. **Everything lives in the KEY, not in the body.** `presencia/<project>/<machine>__<sid>`
-   with an empty body. A single listing of one prefix returns who is there and their
-   `LastModified`, which IS the heartbeat. Zero downloads, one call.
-2. **The clock is AWS's, nobody else's.** Age is computed from the `LastModified` the
-   listing itself returns, so clock skew between machines stops mattering entirely.
+1. **Everything lives in the file NAME, not in the body.**
+   `<state>/presence/<project>/<machine>__<sid>`, empty. One walk of that directory returns
+   who is there, and each file's mtime IS the heartbeat. Zero file bodies read.
+2. **One clock.** Every session here reads the same clock, so an age is just now - mtime.
 
-And the rule that governs the rest: **there is never network on a hook's path.** This is
-always invoked detached (`Popen(start_new_session=True)`), leaves the result in a local
-cache, and the hooks read that cache, which is an `open()`. With no credentials, no SMB
-mount or no network, no cache is written and the system behaves as before: git presence
-and nothing more.
+And the rule that governs the rest: **nothing slow on a hook's path.** This is always invoked
+detached (`Popen(start_new_session=True)`), leaves the result in a local cache, and the hooks
+read that cache, which is an `open()`. The naming and age rules live in presence_core.py,
+which touches no disk; this file only does the IO, each session's file guarded by B.flock.
 """
-import os, sys, json, time, subprocess
+import os, sys, json, time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import brainlib as B
+import brain_paths
+import presence_core as C
 
-BUCKET = os.environ.get("BRAIN_S3_BUCKET", "CHANGE-ME-your-bucket")
-REGION = os.environ.get("BRAIN_S3_REGION", "eu-west-1")
-KP_ENTRY = os.environ.get("BRAIN_S3_KP_ENTRY", "aws/s3-access-key")
-KP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kp.py")
-AWS = __import__("shutil").which("aws") or "/opt/homebrew/bin/aws"
-
-# DO NOT TRANSLATE. This string keys objects already in the bucket AND the AWS
-# lifecycle rules that expire them. It is read in two more places — s3v.py
-# `coordination_lifecycle()` and s3v.py `cmd_check()` (COORD) — which must agree.
-PREFIX = "presencia/"
-CACHE = os.path.join(B.STATE, "presence-s3.json")
+DIR = os.path.join(brain_paths.effective_state_dir(), "presence")
+CACHE = os.path.join(B.STATE, "presence-cache.json")
 TTL = 900.0            # no heartbeat in 15 min and the session counts as gone
 EVERY = 120.0          # never beat more than once every two minutes
-TIMEOUT = 6            # if S3 takes longer, give up: this is never urgent
 
 
 # One derivation, in brainlib. Three copies of the same body is how `skills_index.py`
@@ -48,98 +37,98 @@ TIMEOUT = 6            # if S3 takes longer, give up: this is never urgent
 _machine = B._machine
 
 
-def _aws(*args):
-    try:
-        p = subprocess.run([AWS] + list(args), capture_output=True, text=True,
-                           timeout=TIMEOUT)
-        return p.returncode, p.stdout, p.stderr
-    except Exception as e:
-        return 1, "", repr(e)
-
-
-def _key(project, sid):
-    return "%s%s/%s__%s" % (PREFIX, project or "-", _machine(), sid)
+def _path(key):
+    return os.path.join(DIR, *key.split("/"))
 
 
 def announce(sid, project):
     """Record that this session is alive and which project it is on.
 
-    Empty body on purpose: what gets consulted is the key and its date. A PUT on our own
-    key competes with nobody — one file per session, same as in git — so no condition is
-    needed.
+    Empty file on purpose: what gets consulted is the name and its mtime. One file per
+    session, same as in git, so a beat competes with nobody; the lock only keeps a purge
+    from removing the file between its check and our touch.
     """
-    # No `--body`: the object ends up zero bytes, which is exactly what we want.
-    # `--body /dev/null` does not work — the CLI demands a regular file and rejects the
-    # device with ParamValidation.
-    rc, _, err = _aws("s3api", "put-object", "--bucket", BUCKET,
-                      "--key", _key(project, sid))
-    return rc == 0, err
+    path = _path(C.key(project, _machine(), sid))
+    try:
+        with B.flock(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a"):
+                pass
+            os.utime(path, None)
+        return True, ""
+    except OSError as e:
+        return False, repr(e)
 
 
 def withdraw(sid, project):
-    rc, _, _ = _aws("s3api", "delete-object", "--bucket", BUCKET,
-                    "--key", _key(project, sid))
-    return rc == 0
+    path = _path(C.key(project, _machine(), sid))
+    try:
+        with B.flock(path):
+            os.remove(path)
+    except FileNotFoundError:
+        pass                        # already gone is what withdrawing asks for
+    except OSError:
+        return False
+    return True
+
+
+def _entries():
+    """(key, mtime) for every session file. A missing directory is nobody, not an error."""
+    out = []
+    try:
+        projects = list(os.scandir(DIR))
+    except FileNotFoundError:
+        return out
+    for project in projects:
+        if not project.is_dir(follow_symlinks=False):
+            continue
+        try:
+            files = list(os.scandir(project.path))
+        except OSError:
+            continue
+        for f in files:
+            try:
+                if f.is_file(follow_symlinks=False):
+                    out.append((project.name + "/" + f.name, f.stat(follow_symlinks=False).st_mtime))
+            except OSError:
+                continue            # withdrawn while we were looking
+    return out
 
 
 def read(own_sid=None):
-    """Who is alive, according to S3. One call, downloading no bodies."""
-    # `s3 ls` does NOT work here: on an empty prefix it returns **rc=1 with empty
-    # stderr**, indistinguishable from a real error. `list-objects-v2` returns rc=0 and
-    # the string "None", which genuinely means "nobody there". Verified against the real
-    # bucket.
-    rc, out, err = _aws("s3api", "list-objects-v2", "--bucket", BUCKET,
-                        "--prefix", PREFIX,
-                        "--query", "Contents[].[Key,LastModified]", "--output", "text")
-    if rc != 0:
-        return None, err            # None = "unknown", different from "nobody there"
-    now_ = time.time()
-    alive_ones, expired_ones = [], []
-    for line in out.splitlines():
-        if not line.strip() or line.strip() == "None":
-            continue
-        parts = line.split("\t")
-        if len(parts) < 2:
-            continue
-        key, sello = parts[0].strip(), parts[1].strip()
-        try:
-            # Server ISO stamp: one clock for every machine, so skew between local
-            # clocks stops mattering.
-            from datetime import datetime
-            t = datetime.fromisoformat(sello).timestamp()
-        except ValueError:
-            continue
-        rest = key[len(PREFIX):]
-        if "/" not in rest or "__" not in rest:
-            continue
-        project, who = rest.split("/", 1)
-        machine, _, sid = who.partition("__")
-        row = {"machine": machine, "sid": sid, "project": project,
-                "age": round(now_ - t, 1), "key": key}
-        (alive_ones if now_ - t <= TTL else expired_ones).append(row)
-    return {"alive": [v for v in alive_ones if v["sid"] != own_sid],
-            "expired": expired_ones, "read_at": now_}, ""
+    """Who is alive on this machine. One walk of the presence directory, no file bodies."""
+    try:
+        entries = _entries()
+    except OSError as e:
+        return None, repr(e)        # None = "unknown", different from "nobody there"
+    return C.rows(entries, time.time(), TTL, own_sid), ""
 
 
 def purge(expired_ones):
     """Withdraw heartbeats of sessions that are gone. No separate reaper: it happens in
-    passing, when someone comes through here, and only for the long-expired ones."""
+    passing, when someone comes through here, and only for the long-expired ones. The age
+    is checked again under the lock, so a session that beat meanwhile keeps its file."""
     n = 0
-    for c in expired_ones:
-        if c["age"] > TTL * 4:
-            rc, _, _ = _aws("s3api", "delete-object", "--bucket", BUCKET, "--key", c["key"])
-            n += 1 if rc == 0 else 0
+    for key in C.purgeable(expired_ones, TTL):
+        path = _path(key)
+        try:
+            with B.flock(path) as lk:
+                if not lk.held:
+                    continue
+                age = time.time() - os.path.getmtime(path)
+                if C.purgeable([{"key": key, "age": age}], TTL):
+                    os.remove(path)
+                    n += 1
+        except OSError:
+            continue
     return n
 
 
 def cache_read():
-    """What the hooks consult: an open(), no network. Never raises."""
+    """What the hooks consult: an open(), nothing else. Never raises."""
     try:
         with open(CACHE) as fh:
-            d = json.load(fh)
-        if time.time() - d.get("read_at", 0) > TTL:
-            return {}               # stale cache: better to say nothing than to lie
-        return d
+            return C.cache_view(json.load(fh), time.time(), TTL)
     except Exception:
         return {}
 
@@ -152,24 +141,23 @@ def cache_write(d):
         B.log_error("presence.cache_write", e)
 
 
-STAMP = os.path.join(B.STATE, "presence-s3.attempt")
+STAMP = os.path.join(B.STATE, "presence.attempt")
 
 
 def should_beat():
     """True at most once every EVERY seconds. Stamps the ATTEMPT, not the result.
 
-    It used to read the mtime of `presence-s3.json`, which is written only at the END of
-    the happy path. So on any failure — no kdbx, no network, a throttled bucket — the
-    throttle never advanced and EVERY prompt forked a detached interpreter that did
-    nothing but log and exit. Measured in this log: 2,722 `no-kdbx` lines against 100
-    successful beats. Anchoring on the attempt makes the throttle hold whether the beat
-    works or not.
+    It used to read the mtime of the cache, which is written only at the END of the happy
+    path. So on any failure the throttle never advanced and EVERY prompt forked a detached
+    interpreter that did nothing but log and exit. Anchoring on the attempt makes the
+    throttle hold whether the beat works or not.
     """
     try:
-        if time.time() - os.path.getmtime(STAMP) < EVERY:
-            return False
+        last = os.path.getmtime(STAMP)
     except OSError:
-        pass
+        last = None
+    if not C.beat_due(last, time.time(), EVERY):
+        return False
     try:
         os.makedirs(B.STATE, exist_ok=True)
         open(STAMP, "w").close()
@@ -178,25 +166,7 @@ def should_beat():
     return True
 
 
-def worker():
-    secret = sys.stdin.readline().strip()
-    if not secret:
-        sys.exit(4)
-    try:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        import s3v
-        key_id = s3v.access_key_id()
-    except Exception as e:
-        B.log_error("presence.key_id", e)
-        sys.exit(4)
-    os.environ.update({"AWS_ACCESS_KEY_ID": key_id,
-                       "AWS_SECRET_ACCESS_KEY": secret,
-                       "AWS_DEFAULT_REGION": REGION})
-    sys.argv = [sys.argv[0]] + sys.argv[2:]
-    sys.exit(_real() or 0)
-
-
-def _real():
+def main():
     import argparse
     p = argparse.ArgumentParser(prog="presence")
     p.add_argument("action", choices=["beat", "withdraw", "view"])
@@ -228,20 +198,6 @@ def _real():
     if a.action == "view":
         print(json.dumps(status, ensure_ascii=False, indent=1))
     return 0
-
-
-def main():
-    if len(sys.argv) > 1 and sys.argv[1] == "__worker":
-        worker()
-    # Without a credential database there is nothing to do, and no prompt is ever
-    # attempted: this runs unattended and a dialog here would be unacceptable.
-    if not B.kdbx_configured():
-        B.log("presence", "no-kdbx")
-        return 3
-    cmd = "%s %s __worker %s" % (sys.executable, os.path.abspath(__file__),
-                                 " ".join("'%s'" % x.replace("'", "'\\''")
-                                          for x in sys.argv[1:]))
-    os.execv(sys.executable, [sys.executable, KP, "get", KP_ENTRY, "--pipe", cmd])
 
 
 if __name__ == "__main__":
