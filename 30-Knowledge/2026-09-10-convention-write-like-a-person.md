@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-10
+updated: 2026-09-15
 supersedes: []
 ---
 
@@ -75,3 +75,5 @@ budget only warns and is raised when full").
 ## Links
 
 - [[2026-09-08-convention-vault-is-written-in-english]]
+- [[2026-09-15-convention-descriptive-language-no-internal-labels]]
+- [[2026-09-08-convention-one-question-at-a-time-when-answer-may-be-uncomfortable]]
