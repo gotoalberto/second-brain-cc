@@ -28,8 +28,8 @@ def check(name, cond, detail=""):
 
 FAKE_CLI = """#!/bin/sh
 # Fake keepassxc-cli: records argv and stdin, answers like a database that opens.
-printf '%s\\n' "$@" > "$KP_FAKE_DIR/argv"
-cat > "$KP_FAKE_DIR/stdin"
+printf '%s\\n' "$@" > "{dir}/argv"
+cat > "{dir}/stdin"
 exit 0
 """
 
@@ -40,11 +40,11 @@ def world(root, db=None):
     os.makedirs(state, exist_ok=True)
     fake = os.path.join(root, "keepassxc-cli")
     with open(fake, "w") as fh:
-        fh.write(FAKE_CLI)
+        fh.write(FAKE_CLI.replace("{dir}", root))
     os.chmod(fake, 0o755)
     env = {k: v for k, v in os.environ.items() if not k.startswith("BRAIN_")}
     env.update(HOME=home, BRAIN_STATE=state, BRAIN_KP_STATE=state, BRAIN_VAULT=os.path.dirname(HERE),
-               BRAIN_KP_CLI=fake, BRAIN_KP_NOPROMPT="1", BRAIN_KP_CACHE_BACKEND="none", KP_FAKE_DIR=root)
+               BRAIN_KP_CLI=fake, BRAIN_KP_NOPROMPT="1", BRAIN_KP_CACHE_BACKEND="none")
     if db:
         env["BRAIN_KP_DB"] = db
     return env, state
