@@ -195,6 +195,36 @@ def test_install_only(IP):
           and got.get("edited") == "backport (skipped: install only)", got)
 
 
+def test_vault_placeholder(IP):
+    print("\n== the __VAULT__ placeholder ==")
+    root = tmpdir()
+    vault = os.path.join(root, "My Vault")
+    plugin = os.path.join(vault, "integrations", "claude-code", "plugin", "brain")
+    claude, state = os.path.join(root, "home", ".claude"), os.path.join(root, "state")
+    os.makedirs(claude)
+    skill(plugin, "placeholder", "Run `python3 __VAULT__/_bin/query.py`.", script="VAULT = '__VAULT__'\n")
+    write(os.path.join(plugin, "agents", "scout.md"), "---\nname: scout\n---\nRead __VAULT__/AGENTS.md first.\n")
+    s = IP.Syncer(plugin, claude, state, vault=vault)
+    s.apply()
+    live = read(os.path.join(claude, "skills", "placeholder", "SKILL.md"))
+    check("an installed skill names this vault where the canonical copy says __VAULT__",
+          "python3 %s/_bin/query.py" % vault in live and "__VAULT__" not in live, live)
+    check("in every text file of the skill, and in agents",
+          read(os.path.join(claude, "skills", "placeholder", "scripts", "run.py")) == "VAULT = '%s'\n" % vault
+          and vault + "/AGENTS.md" in read(os.path.join(claude, "agents", "scout.md")))
+    check("the canonical copy keeps the placeholder",
+          "__VAULT__" in read(os.path.join(plugin, "skills", "placeholder", "SKILL.md")))
+    check("after installing, the two copies count as the same",
+          actions(s).get("skills/placeholder") == "same" and actions(s).get("agents/scout") == "same", actions(s))
+    write(os.path.join(claude, "skills", "placeholder", "SKILL.md"), live + "A live edit naming %s/_bin/vw.py.\n" % vault)
+    check("a live edit is still a back-port", actions(s).get("skills/placeholder") == "backport", actions(s))
+    s.apply()
+    back = read(os.path.join(plugin, "skills", "placeholder", "SKILL.md"))
+    check("the back-ported copy has the vault path turned back into __VAULT__",
+          "__VAULT__/_bin/vw.py" in back and vault not in back, back)
+    check("and then the copies are the same again", actions(s).get("skills/placeholder") == "same", actions(s))
+
+
 def test_cli():
     print("\n== install_plugin.py command line ==")
     root = tmpdir()
@@ -223,7 +253,7 @@ def main():
     except Exception as exc:
         check("install_plugin imports", False, "%s: %s" % (type(exc).__name__, exc))
         return finish()
-    for t in (test_decide, test_digest, test_sync, test_install_only):
+    for t in (test_decide, test_digest, test_sync, test_install_only, test_vault_placeholder):
         try:
             t(IP)
         except Exception as exc:
