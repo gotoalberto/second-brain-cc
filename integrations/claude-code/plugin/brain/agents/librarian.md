@@ -60,22 +60,22 @@ which is why this is repeated here.
 
 ## Files the session produced
 
-The vault holds memory; files live in object storage when it is configured. If the delegation
-message lists files (PDFs, HTML, transcripts, screenshots, datasets, scripts), **upload every one
-of them** after writing the note that explains them:
+The vault holds memory; files live in the local files directory chosen during the first run. If
+the delegation message lists files (PDFs, HTML, transcripts, screenshots, datasets, scripts),
+**store every one of them** after writing the note that explains them:
 
 ```
-python3 ~/Brain/_bin/s3v.py put <file...> --to <note path relative to the vault> \
-  --project <slug> --kind <kind> --caption "what it is"
+python3 ~/Brain/_bin/files.py put <file...> --to <note path relative to the vault> \
+  --project <slug> --kind deliverable|intermediate|material --caption "what it is"
 ```
 
 - `--to` points at the note you just wrote or updated. A file with no note is not context.
 - Use the slug you were given. If none fits, a short descriptive one is fine: it is a folder in
-  the bucket, not a vault project.
-- Never skip a file because it sits in a temporary folder: that is exactly why it must go up now.
-- If a listed file no longer exists, or object storage is not configured, say so in your report.
+  the files directory, not a vault project.
+- Never skip a file because it sits in a temporary folder: that is exactly why it must be stored now.
+- If a listed file no longer exists, or `files.py` fails, say so in your report.
 
 ## When you finish
 
-Say in two lines what you saved and where, plus the object keys of the files you uploaded. If there genuinely was nothing to save, say so
+Say in two lines what you saved and where, plus the keys of the files you stored. If there genuinely was nothing to save, say so
 plainly instead of inventing a filler note.

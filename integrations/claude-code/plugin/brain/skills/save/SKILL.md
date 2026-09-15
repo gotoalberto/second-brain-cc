@@ -24,19 +24,19 @@ Pass it, in the delegation message:
   directory. The librarian cannot see it and will not know those files exist unless you say so.
 - The user's specific instruction, if any: «$ARGUMENTS».
 
-## Files go to object storage, anchored to a note
+## Files go to the files directory, anchored to a note
 
-If object storage was set up during the first run, the librarian uploads every listed file with
+The librarian stores every listed file in the local files directory chosen during the first run:
 
 ```bash
-python3 ~/Brain/_bin/s3v.py put <file...> --to <note it wrote or updated> \
-  --project <slug> --kind <kind> --caption "what it is"
+python3 ~/Brain/_bin/files.py put <file...> --to <note it wrote or updated> \
+  --project <slug> --kind deliverable|intermediate|material --caption "what it is"
 ```
 
-(`s3v.py put --help` lists the kinds.) When it returns, verify with
-`python3 ~/Brain/_bin/s3v.py ls --project <slug>` that every file is there, and upload what is
-missing yourself. Without object storage, tell the user where the files are and that they were
-not archived.
+When it returns, verify with `python3 ~/Brain/_bin/files.py ls --project <slug>` that every file
+is there, and store what is missing yourself. If `files.py` says no files directory is configured,
+tell the user where the files are, that they were not archived, and that
+`integrations/first-run/first_run.py run` sets the directory up.
 
 Rules:
 - **Everything written into the vault goes in English**: `title:`, `tags:`, the prose.
