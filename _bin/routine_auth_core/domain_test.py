@@ -624,7 +624,7 @@ def test_vault_routines(D):
         if needs and "email" in needs[0]:
             check("%s emails through google.py send, allowed as one narrow Bash pattern" % name,
                   send in joined and "python3 ~/Brain/_bin/google.py send" in body, args)
-            to = re.findall(r"google\.py send --to (\S+)", body)
+            to = re.findall(r"google\.py send\b[^\n`]*?--to (\S+)", body)   # argparse takes flags in any order
             check("%s: delivery is proved by one recorded send to the address its prompt sends to" % name,
                   contract.required_sends == 1 and to and contract.sends_to == to[0], (contract, to))
             check("%s: a report that was not sent breaks its contract" % name, "EMAIL NOT SENT:" in contract.forbidden,
