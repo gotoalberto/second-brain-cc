@@ -1,6 +1,6 @@
 ---
 name: save
-description: Saves what this session learned into the Brain vault — decisions, conventions, project state. Use it before closing any session that changed code or made decisions, and whenever the user asks you to save or remember something.
+description: Saves what this session learned into the Brain vault: decisions, conventions, project state. Use it before closing any session that changed code or made decisions, and whenever the user asks you to save or remember something.
 argument-hint: [what to save, optional]
 ---
 
@@ -15,17 +15,38 @@ Pass it, in the delegation message:
 - **What was learned**: conventions discovered, traps found, commands that work in this
   project.
 - **What is still open** and what is blocking it.
+- **Files produced in the session**: every deliverable, intermediate and source file that
+  exists only outside the vault (a scratch directory, `/tmp`, a worktree about to be removed).
+  For each one: absolute path, kind (deliverable, intermediate or material), the project slug
+  and a one-line caption. Skip only what already lives in a git repository that will survive,
+  or a raw download that can be fetched again (name where it lives instead).
+  Build this list yourself before delegating: look back over the session and list the scratch
+  directory. The librarian cannot see it and will not know those files exist unless you say so.
 - The user's specific instruction, if any: «$ARGUMENTS».
 
+## Files go to object storage, anchored to a note
+
+If object storage was set up during the first run, the librarian uploads every listed file with
+
+```bash
+python3 ~/Brain/_bin/s3v.py put <file...> --to <note it wrote or updated> \
+  --project <slug> --kind <kind> --caption "what it is"
+```
+
+(`s3v.py put --help` lists the kinds.) When it returns, verify with
+`python3 ~/Brain/_bin/s3v.py ls --project <slug>` that every file is there, and upload what is
+missing yourself. Without object storage, tell the user where the files are and that they were
+not archived.
+
 Rules:
-- **Everything written into the vault goes in English** — `title:`, `tags:`, the prose.
+- **Everything written into the vault goes in English**: `title:`, `tags:`, the prose.
   A verbatim quote keeps the language it was said in, with the English alongside. Answer
   the user in their language; the note goes in English, because retrieval is lexical and a
   note in another language is unreachable by search:
   `~/Brain/30-Knowledge/2026-09-08-convention-vault-is-written-in-english.md`.
 - Do not invent content as filler. If there genuinely is nothing memorable, have the
   librarian say so and write nothing.
-- No credentials in notes.
+- No credentials in notes: they go to the kdbx through `/kp`, and the note keeps the `kp://` reference.
 - When done, say in two lines which notes were created or updated, with their paths.
 
 If the librarian wrote anything, sync the vault instead of waiting for the daemon:
@@ -35,7 +56,7 @@ python3 ~/Brain/_bin/vault_sync.py
 ```
 
 The daemon runs every 10 minutes, so without this whatever was just saved lives only on
-disk for that long. It is the same script the daemon runs — serialised with flock and
-with `pull --rebase` — so calling it by hand causes no races and no duplicate commits.
+disk for that long. It is the same script the daemon runs, serialised with flock and
+with `pull --rebase`, so calling it by hand causes no races and no duplicate commits.
 Do not call it if the librarian wrote nothing: there is nothing to commit and it only
 adds noise to the log.

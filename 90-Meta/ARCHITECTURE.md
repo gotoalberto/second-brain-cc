@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "implementation session 2026-08-20"
-updated: 2026-08-20
+updated: 2026-09-15
 supersedes: []
 ---
 
@@ -29,7 +29,9 @@ supersedes: []
    port of its own and seeds the pack.
 5. **Stop** → `gate_memory.py` blocks closing without saving (it blocks exactly once).
 6. **SessionEnd** → releases claims and marks `.dirty`. **No session touches git.**
-7. **launchd** every 10 min → `vault_sync.py`: reindexes, scans for secrets, commits, pushes.
+7. **The scheduler** (launchd, systemd or cron) every 10 min → `vault_sync.py`: reindexes, scans for
+   secrets, commits, pushes. Other jobs run the guardian, the file watch and the routines, with no
+   agent involved. See [[2026-09-15-decision-brain-machinery-independent-of-claude-app-and-account]].
 
 ## Structural decisions
 
@@ -65,7 +67,13 @@ supersedes: []
 | `_bin/vault_sync.py` | daemon: the only process that touches git; refreshes the plugin before committing |
 | `_bin/protocol_budget.py` | ceiling on the startup context: single source of the budget |
 | `_bin/protocol_guard.py` | hook: warns as the protocol grows, not sessions later |
-| `_bin/build_plugin.py` | dumps `~/.claude` (agents, whole skills, hooks) into the vault's plugin |
+| `_bin/build_plugin.py` | refreshes the vault's Claude Code plugin before a commit |
+| `_bin/install_plugin.py` | three-way sync of skills and agents between the vault (canonical) and `~/.claude`, with backups |
+| `_bin/kp.py` | credentials: a wrapper over `keepassxc-cli` for a local `.kdbx` |
+| `_bin/google.py` | named Google accounts, each with its OAuth client and refresh token in the kdbx |
+| `_bin/guardian.py` | repairs generated wiring and scheduler jobs, proves hooks fire, alerts |
+| `_bin/brain_watch.py` | file watch, git hooks and generation of agent wiring from `90-Meta/events.json` |
+| `_bin/tasks.py` | scheduled tasks and agent routines with a token pool |
 | `_bin/doctor.py` | health report (`/vault-doctor`) |
 | `bootstrap.sh` | installer for a new machine (see `README.md`) |
 
@@ -73,3 +81,7 @@ supersedes: []
 - [[2026-09-10-decision-every-search-finds-and-fixes-broken-links]]
 - [[2026-09-10-decision-startup-budget-warns-never-trims]]
 - [[2026-09-08-analysis-every-instrument-watches-one-surface-and-reports-on-all-of-them]]
+- [[2026-09-15-runbook-brain-events]]
+- [[2026-09-15-runbook-brain-guardian]]
+- [[2026-09-15-runbook-brain-routine-auth]]
+- [[2026-08-20-decision-credentials-in-keepass]]

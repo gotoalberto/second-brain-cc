@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-10
+updated: 2026-09-15
 supersedes: []
 ---
 
@@ -20,7 +20,8 @@ possible. That covers chat replies, questions, emails, messages, drafts, documen
 reports, READMEs, PR and commit text.
 
 1. **No dashes as punctuation.** No em dash, no en dash, no spaced hyphen used as a dash,
-   and none of their encoded forms (`---`, `--`, `&mdash;`, `&ndash;`). A hyphen inside a
+   and none of their encoded forms (`---`, `--`, `&mdash;`, `&ndash;`,
+   `\textemdash`, `\textendash`). A hyphen inside a
    word is fine. Use a comma, a full stop, a colon or parentheses; usually rewriting the
    sentence is best. For ranges write "to" (`pages 10 to 20`).
 2. **Plain words, short sentences.** Say it the way you would to a colleague. Answer first,
@@ -32,7 +33,8 @@ reports, READMEs, PR and commit text.
    decorative symbols; stock openers and closers ("Great question", "I hope this helps");
    recaps; lists of options that will not be pursued; forced triads; "it's not X, it's Y";
    stacked hedges; over-formal vocabulary where a normal word exists.
-5. **Messages in the user's name sound like them:** direct, friendly, brief.
+5. **Messages in the user's name sound like them:** direct, friendly, brief. No corporate filler,
+   no signature block unless the user uses one.
 
 Structure is still fine when the content really is a list or a table. The test: would a
 careful person writing by hand format it this way?
@@ -70,8 +72,19 @@ budget only warns and is raised when full").
   `90-Meta/PROTOCOL-COMPACT.md` and `90-Meta/AGENT-PROTOCOL.md`, and pasted into the agent
   definitions, because subagents never see the startup protocol.
 - Before sending any draft, scan it for dashes, then read the headings alone.
+- The dash ban also covers vault notes and code comments.
+- For generated documents (LaTeX, HTML rendered to PDF), run a check that fails on dash characters
+  and their encoded forms before rendering. A rule that only lives in template documentation gets
+  broken as soon as the work speeds up.
+- Text taken from other tools (transcripts, generated summaries, meeting notes) is rewritten into
+  this style, never copied through with its dashes and filler.
 - Adapt the list to your own taste. It is a convention, not code.
 
 ## Links
 
 - [[2026-09-08-convention-vault-is-written-in-english]]
+- [[2026-09-15-convention-language-per-audience]]
+- [[2026-09-15-convention-never-assess-peoples-workload]]
+- [[2026-08-29-convention-decisions-as-plain-text-lettered-lists]]
+- [[2026-09-15-convention-descriptive-language-no-internal-labels]]
+- [[2026-09-08-convention-one-question-at-a-time-when-answer-may-be-uncomfortable]]

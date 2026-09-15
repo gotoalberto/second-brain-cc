@@ -23,9 +23,17 @@ nobody invokes is worse than having none.
    If it exists, **improve it** instead of creating a new one.
 2. Use the `skill-creator` skill (`anthropic-skills:skill-creator`) for the creation
    itself. Don't reinvent its procedure.
-3. The skill goes in `~/.claude/skills/<name>/SKILL.md`. `description` in one sentence
-   that says what it does **and when to use it**: it is the only thing Claude sees when
-   deciding whether to invoke it.
+3. The skill is **canonical in the vault**: `~/Brain/integrations/claude-code/plugin/brain/skills/<name>/SKILL.md`.
+   Write it there, or in `~/.claude/skills/<name>/`, then run
+   `/usr/bin/python3 ~/Brain/_bin/install_plugin.py sync`, which installs or back-ports it with a
+   backup. A skill that was not synced is not saved. `description` in one sentence that says what
+   it does **and when to use it**: it is the only thing the agent sees when deciding whether to
+   invoke it.
+   **Self-contained**: everything the skill needs (method, playbooks, scripts) lives in its own
+   directory. No references to other repositories; provenance is a sentence, never a step. Before a
+   large rewrite of an existing skill, back up it and its siblings.
+   Credentials a skill needs are read with `kp.py get <entry> --pipe '<command>'`, never pasted
+   into the skill.
 4. Regenerate the vault catalogue:
    `/usr/bin/python3 ~/Brain/_bin/skills_index.py`
 5. Open the entry `~/Brain/40-Skills/<name>.md` and fill in, **below the
@@ -46,7 +54,7 @@ triads, "the real X", "in silence"). A decision note may state its decision in t
 plainly. `~/Brain/30-Knowledge/2026-09-10-convention-write-like-a-person.md`.
 
 **Shared notes are not written directly.** `10-Projects/` and `70-Entities/` go through
-`python3 ~/Brain/_bin/vw.py` (`new`, `append`, `set`) — it locks the file, redacts
+`python3 ~/Brain/_bin/vw.py` (`new`, `append`, `set`): it locks the file, redacts
 credentials and writes atomically. `gate_write.py` denies `Write`/`Edit` there, and now
 shell writes too, so going around it is not an option; going through it is one command.
 

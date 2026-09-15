@@ -19,5 +19,5 @@ Run `context-scout` for the task «$ARGUMENTS».
 
 ## Language
 
-The Context Pack, like every note, is written in **English** — `context-scout` carries the
+The Context Pack, like every note, is written in **English**, and `context-scout` carries the
 same rule: `~/Brain/30-Knowledge/2026-09-08-convention-vault-is-written-in-english.md`.
