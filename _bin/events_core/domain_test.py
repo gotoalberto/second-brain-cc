@@ -319,7 +319,7 @@ def test_real_registry(D):
     print("\n== the vault's own 90-Meta/events.json ==")
     vault = os.path.dirname(BIN)
     path = os.path.join(vault, "90-Meta", "events.json")
-    hooks = os.path.join(vault, "integrations", "claude-code", "integrations", "brain", "hooks", "hooks.json")
+    hooks = os.path.join(vault, "integrations", "claude-code", "plugin", "brain", "hooks", "hooks.json")
     if not os.path.exists(path):
         check("90-Meta/events.json exists", False, path)
         return
