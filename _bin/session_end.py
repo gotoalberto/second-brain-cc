@@ -5,6 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import brainlib as B
 
 
+@B.heartbeat("session-end")
 @B.fail_open
 def main():
     data = B.read_hook_input()

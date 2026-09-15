@@ -264,14 +264,13 @@ def main():
         worker()
     if len(sys.argv) > 1 and sys.argv[1] == "status":
         return _real()                     # local cache only: no credentials, no network
-    import shutil as _sh
-    if not _sh.which("op"):
-        B.log("lease", "no-secret")
+    if not B.kdbx_configured():
+        B.log("lease", "no-kdbx")
         return 3
     cmd = "%s %s __worker %s" % (sys.executable, os.path.abspath(__file__),
                                  " ".join("'%s'" % x.replace("'", "'\\''")
                                           for x in sys.argv[1:]))
-    os.execv(sys.executable, [sys.executable, P.SECRET, "get", P.SECRET_REF, "--pipe", cmd])
+    os.execv(sys.executable, [sys.executable, P.KP, "get", P.KP_ENTRY, "--pipe", cmd])
 
 
 if __name__ == "__main__":

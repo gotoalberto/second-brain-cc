@@ -41,7 +41,7 @@ def without_code(text):
     A `[[something]]` inside backticks is an EXAMPLE, not a link. Without this
     the graph filled up with invented edges: the note documenting the
     link convention created an edge to `note-id`, and a Next.js route
-    (`app/my-route/[[...slug]]/…`) created another to `...slug`. False edges to
+    (`app/colosseum/[[...slug]]/…`) created another to `...slug`. False edges to
     notes that do not exist, counted afterwards as broken links.
     """
     text = re.sub(r"(?ms)^```.*?^```", "", text)   # fenced blocks

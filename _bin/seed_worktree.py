@@ -33,6 +33,7 @@ def alloc_port(wt):
     return 3000 + (h % 1000)
 
 
+@B.heartbeat("worktree-seed")
 def main():
     try:
         if not B.enabled():

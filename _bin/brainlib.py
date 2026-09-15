@@ -5,11 +5,21 @@ Golden rules:
   - Nothing here may raise an exception into a hook. Every path has a fallback.
   - Python 3.9 stdlib only (no pyyaml, no rg, no node on this machine).
 """
-import os, re, sys, json, time, fcntl, sqlite3, hashlib, unicodedata, traceback
+import os, re, sys, json, time, fcntl, sqlite3, hashlib, functools, unicodedata, traceback
 
 VAULT = os.environ.get("BRAIN_VAULT") or os.path.join(os.path.expanduser("~"), "Brain")
 DB    = os.path.join(VAULT, "_index", "vault.db")
-STATE = os.path.join(os.path.expanduser("~"), ".claude", "state", "brain")
+# Brain's state directory, resolved in one place (brain_paths.py): ~/.claude/state/brain
+# while that is still a real directory on this machine, ~/Library/Application Support/brain
+# once migrate_state.py has moved it and left a symlink, BRAIN_STATE when set. kp.py and every
+# script that says B.STATE or B.LOGS follow it.
+try:
+    if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import brain_paths as _brain_paths
+    STATE = _brain_paths.effective_state_dir()
+except Exception:              # brainlib must still import where brain_paths is not beside it
+    STATE = os.path.join(os.path.expanduser("~"), ".claude", "state", "brain")
 
 # Folders whose content may be injected automatically (T0/T1).
 RETRIEVABLE = ("10-Projects", "20-Areas", "30-Knowledge", "70-Entities")
@@ -22,6 +32,10 @@ INDEXED     = RETRIEVABLE + ARCHIVAL
 SAVE_FOLDERS = RETRIEVABLE + ("00-Inbox",)
 
 OFF = os.environ.get("BRAIN_OFF") in ("1", "true", "yes")
+# Set by the guardian's hook probe (guardian_core.adapters.HookProbe), which runs every hook in a
+# scratch state: no presence or lease beat, no vault pull, no background reindex or link repair.
+# Those reach S3, KeePass or git, and a probe must never touch anything real.
+OFFLINE = os.environ.get("BRAIN_OFFLINE") in ("1", "true", "yes")
 
 
 # ---------------------------------------------------------------- utilidades
@@ -45,12 +59,11 @@ def sid8(session_id):
     return str(session_id or "nosess").replace("-", "")[:8]
 
 
-def read_hook_input(timeout=2.0):
-    """Reads the hook JSON from stdin. Never fails and NEVER hangs.
+_HOOK_INPUT = {}    # {"data": payload} once this process has read its hook stdin; the heartbeat reuses it
+_HOOK_ERROR = {}    # {"exc": class name} when fail_open swallowed an exception in this process
 
-    Without the select/isatty guard, running a hook by hand (or with an open, empty
-    stdin) blocks the process indefinitely.
-    """
+
+def _read_stdin_json(timeout):
     try:
         if sys.stdin is None or sys.stdin.isatty():
             return {}
@@ -62,6 +75,20 @@ def read_hook_input(timeout=2.0):
         return json.loads(raw) if raw.strip() else {}
     except Exception:
         return {}
+
+
+def read_hook_input(timeout=2.0):
+    """Reads the hook JSON from stdin. Never fails and NEVER hangs.
+
+    Without the select/isatty guard, running a hook by hand (or with an open, empty
+    stdin) blocks the process indefinitely.
+    """
+    data = _read_stdin_json(timeout)
+    if isinstance(data, dict) and (data or "data" not in _HOOK_INPUT):
+        _HOOK_INPUT["data"] = data
+    elif "data" not in _HOOK_INPUT:
+        _HOOK_INPUT["data"] = {}
+    return data
 
 
 def emit(event_name, context=None, system_message=None):
@@ -79,6 +106,7 @@ def emit(event_name, context=None, system_message=None):
 
 def fail_open(fn):
     """Decorator for hook main(): any error => clean output, exit 0."""
+    @functools.wraps(fn)
     def wrapper():
         if not enabled():
             sys.exit(0)
@@ -87,6 +115,7 @@ def fail_open(fn):
         except SystemExit:
             raise
         except Exception as exc:
+            _HOOK_ERROR["exc"] = type(exc).__name__     # the exit stays 0; the heartbeat still says error
             try:
                 log_error(fn.__module__ or "?", exc)
             except Exception:
@@ -95,7 +124,88 @@ def fail_open(fn):
     return wrapper
 
 
+def _exit_status(code):
+    if code is None:
+        return 0
+    if isinstance(code, bool):
+        return int(code)
+    return code if isinstance(code, int) else 1
+
+
+def heartbeat(event_id):
+    """Decorator for a hook's main(): one JSON line per run in STATE/logs/heartbeat.jsonl.
+
+    `event_id` is the event's id in 90-Meta/events.json. The line carries the short session
+    id, the Claude Code hook event, `ok`, `blocked` (exit 2), `off` (Brain switched off) or
+    `error` with the exception class, the exit code and the duration. The guardian reads it
+    to prove the hooks fire and succeed (guardian_core.domain.hook_liveness): a hook that is
+    wired but dead would otherwise go unnoticed for as long as nobody looks.
+
+    It goes OUTSIDE fail_open, so it sees the exit fail_open produces, and fail_open tells it
+    about an exception it swallowed. It writes in a `finally`, so a hook that dies still
+    leaves its line. Only a run that received a hook payload is recorded: launchd, the file
+    watch and a person at a terminal run the same scripts without one. And only when the
+    decorated function belongs to the running script: imported by another program (the MCP
+    server, selftest) it is returned untouched, so it never reads that program's stdin.
+    """
+    def deco(fn):
+        if getattr(fn, "__module__", None) != "__main__":
+            return fn
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            t0 = time.time()
+            code, exc = 0, ""
+            try:
+                rv = fn(*args, **kwargs)
+                if isinstance(rv, int) and not isinstance(rv, bool):
+                    code = rv
+                return rv
+            except SystemExit as e:
+                code = _exit_status(e.code)
+                raise
+            except BaseException as e:
+                code, exc = 1, type(e).__name__
+                raise
+            finally:
+                _heartbeat_write(event_id, t0, code, exc)
+        return wrapper
+    return deco
+
+
+def _heartbeat_write(event_id, t0, code, exc):
+    """Never raises: a heartbeat that broke a hook would be the very failure it exists to catch."""
+    try:
+        data = _HOOK_INPUT.get("data")
+        if data is None:
+            data = _read_stdin_json(0.1)          # the hook never read its stdin; the process is ending
+        if not isinstance(data, dict) or not (data.get("session_id") or data.get("hook_event_name")):
+            return
+        exc = exc or _HOOK_ERROR.get("exc") or ""
+        if exc:
+            status = "error"
+        elif not enabled():
+            status = "off"
+        elif code == 0:
+            status = "ok"
+        elif code == 2:
+            status = "blocked"
+        else:
+            status = "error"
+        rec = {"ts": round(time.time(), 3), "event": event_id, "sid": sid8(data.get("session_id")),
+               "status": status, "exit": code, "exc": exc, "ms": int((time.time() - t0) * 1000),
+               "hook_event": str(data.get("hook_event_name") or ""), "source": str(data.get("source") or ""),
+               "pid": os.getpid()}
+        os.makedirs(LOGS, exist_ok=True)
+        _log_rotate(HEARTBEAT_LOG)
+        with open(HEARTBEAT_LOG, "a") as fh:
+            fh.write(json.dumps(rec, sort_keys=True) + "\n")
+    except Exception:
+        pass
+
+
 LOGS          = os.path.join(STATE, "logs")
+HEARTBEAT_LOG = os.path.join(LOGS, "heartbeat.jsonl")
 LOG_MAX_BYTES = 2 * 1024 * 1024      # per file
 LOG_KEEP      = 5                    # .1 … .5, the rest is thrown away
 LOG_MAX_FIELD = 200                  # no whole value ever lands in the log
@@ -232,7 +342,7 @@ def atomic_write(path, content):
 # ---------------------------------------------------------------------- database
 # The FTS tokenizer stems English (porter) since 2026-09-10. Without it `fails`, `fail` and
 # `failure` were three unrelated words, so a Spanish question (`falla` -> `fail`) and its
-# English twin (`fails`) searched different notes. Measured on a bilingual query set: fitted
+# English twin (`fails`) searched different notes. Measured with bilingual_eval: fitted
 # failures 2 -> 1, held-out shared notes +4, false injections on out-of-vault prompts
 # unchanged (3/10). An existing table keeps the tokenizer it was created with; the
 # indexer rebuilds it once (index_vault.INDEX_VERSION 3).
@@ -331,8 +441,8 @@ class LinkResolver(object):
 
     Until 2026-09-10 each place resolved with `path LIKE '%' || target || '.md'`, a bare
     suffix on the path. It was both too loose and too strict: `[[api]]` landed on a
-    runbook that happens to end in `-mobile-api`, while a link by the note's
-    frontmatter `id:` (15 of the 29 broken ones) resolved to nothing.
+    runbook that happens to end in `-mobile-api`, while a link by the
+    note's frontmatter `id:` (15 of the 29 broken ones) resolved to nothing.
 
     `resolve()` returns (path, how). Canonical hows need no rewrite:
       exact     the filename
@@ -509,8 +619,8 @@ acabo acabas acabes acaba supone tenido posible posibles continuar realizar trab
 trabajaremos trabajamos asegurate asegúrate hazme dejame déjame quieres queremos ello ellos
 ellas eres soy sido siendo""".split())
 # The last block (2026-09-10) came from the log of real misses: Spanish function words
-# and filler verbs that sat in the coverage denominator of real prompts, each one pure
-# dead weight.
+# and filler verbs that sat in the coverage denominator of prompts like "en cualquier
+# iteracción donde se busque, se debe identificar...", each one pure dead weight.
 
 
 # Spanish -> English bridge for queries.
@@ -637,8 +747,8 @@ GLOSARIO = {
     "clave": "key", "claves": "key",
     "certificado": "certificate", "certificados": "certificate",
     "correo": "email", "coste": "cost", "costes": "cost",
-    # billing / purchasing was missing entirely: a question about a vendor's invoices
-    # reached no note, because the vault says invoice/vendor and the query factura/proveedor.
+    # facturacion / compras: faltaba entero. Un "pideme las facturas del proveedor X"
+    # no alcanzaba ninguna nota, porque el vault dice invoice/vendor y el usuario factura/proveedor.
     "factura": "invoice", "facturas": "invoice", "facturacion": "billing",
     "facturación": "billing", "recibo": "receipt", "recibos": "receipt",
     "proveedor": "vendor", "proveedores": "vendor", "gasto": "expense",
@@ -665,7 +775,7 @@ GLOSARIO = {
 # from). Every entry below maps a Spanish word onto a term this vault actually uses at
 # least a dozen times; the list was generated from the vault's own vocabulary, not guessed.
     "sistema": "system", "sistemas": "system",
-    # learned from a real miss in the retrieval log
+    # learned from a real miss via `bilingual_eval.py --from-misses`
     "gestiona": "manage", "gestionar": "manage", "gestion": "manage",
     "gestión": "manage", "maneja": "manage", "manejar": "manage",
     "trabajo": "work", "trabajar": "work", "trabaja": "work",
@@ -833,19 +943,35 @@ def scrub_secrets(text):
 
 
 # ------------------------------------------------------------- credenciales
-# A credential is never stored in the vault: it lives in the shared 1Password and
-# the note carries only a `op://vault/item/field` reference, resolved
-# with `_bin/secret.py`. See 90-Meta/AGENT-PROTOCOL.md §7.
-KP_BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "secret.py")
-KP_REF = re.compile(r"op://[^\s]+")
+# A credential is never stored in the vault: it lives in the local KeePass database and
+# the note carries only a `kp://Group/Entry#password` reference, resolved
+# with `_bin/kp.py`. See 90-Meta/AGENT-PROTOCOL.md §7.
+KP_BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kp.py")
+KP_REF = re.compile(r"kp://[^\s#]+(?:#[A-Za-z]+)?")
+
+
+def kdbx_configured(environ=None):
+    """True when this machine has a KeePass database on record: BRAIN_KP_DB, or the path
+    `kp.py init` wrote to <state>/kp-config.json, and the file is there. Unattended jobs ask
+    this before reaching for a credential, so a machine without one never prompts."""
+    environ = os.environ if environ is None else environ
+    path = (environ.get("BRAIN_KP_DB") or "").strip()
+    if not path:
+        try:
+            with open(os.path.join(environ.get("BRAIN_KP_STATE") or STATE, "kp-config.json"),
+                      encoding="utf-8") as fh:
+                path = str((json.load(fh) or {}).get("db") or "")
+        except Exception:
+            path = ""
+    return bool(path) and os.path.exists(os.path.expanduser(path))
 
 
 def redaction_notice(n):
     """The redaction message. It also says where the secret DOES belong: without that
     the agent would redact and lose the credential instead of filing it."""
     return ("%d credential(s) redacted — the vault stores no secrets.\n"
-            "    Their place is 1Password:  python3 %s put <Vault/Item> -f field=...\n"
-            "    and the note keeps the reference:  op://vault/item/field\n"
+            "    Their place is the kdbx:  python3 %s put <group/entry> -u <user>\n"
+            "    and the note keeps the reference:  kp://<group/entry>#password\n"
             % (n, KP_BIN))
 
 
@@ -870,8 +996,8 @@ def run(cmd, cwd=None, timeout=10):
     """Runs, and leaves a record of whatever takes too long.
 
     A slow subprocess does not show: the user only sees that "it is slow" and there is
-    nowhere to look. It happened with a slow credential CLI call, which could sleep on every
-    credential fetch with nothing saying so. With
+    nowhere to look. It happened with `keepassxc-cli clip`, which slept 20 s on every
+    `get` and every `put` with nothing saying so; it was found by timing it by hand. With
     this it would have surfaced on the first use.
     """
     import subprocess
@@ -991,6 +1117,25 @@ def claude_session_pid():
     except Exception:
         _CLAUDE_PID = 0
     return _CLAUDE_PID
+
+
+def brain_session_id():
+    """One session identity for every trigger, not only Claude Code hooks.
+
+    A hook knows its session from the hook input. The brain CLI, the MCP server, the git
+    hooks and the file-watch job do not, so they resolve it here: the BRAIN_SESSION_ID a
+    wrapper exported for its whole process tree, else the Claude Code session process
+    this runs under, else the literal "system". Never an invented id: a write nobody's
+    session can own is attributed to no one in particular, which is the honest answer.
+    """
+    explicit = (os.environ.get("BRAIN_SESSION_ID") or "").strip()
+    if explicit:
+        return explicit
+    try:
+        pid = int(claude_session_pid() or 0)
+    except Exception:
+        pid = 0
+    return str(pid) if pid > 0 else "system"
 
 
 def session_live(pid, heartbeat):
@@ -1268,7 +1413,7 @@ def vault_writes_count(con, sid):
 
 # What counts as WORK in the vault (harness code) versus what counts as MEMORY
 # (the notes). The gate needs the distinction: see _vault_fingerprint.
-VAULT_CODE = ("_bin", "plugin", "bootstrap.sh", "README.md")
+VAULT_CODE = ("_bin", "integrations", "githooks", "bootstrap.sh", "README.md")
 VAULT_NOTES  = ("00-Inbox", "10-Projects", "15-Meetings", "20-Areas", "30-Knowledge",
                 "40-Skills", "50-Sessions", "60-Context-Packs", "70-Entities", "80-Private",
                 "90-Meta")
@@ -1373,14 +1518,14 @@ def project_note(slug):
     """Relative path of `slug`'s note in 10-Projects, or "" if there is none.
 
     The index is asked rather than the disk because the filename is not derivable from
-    the slug: `my-project` may live in `2026-01-15-project-example-website-redesign.md`.
+    the slug: `brain` lives in `2026-08-20-project-brain-memory-system.md`.
     """
     if not slug:
         return ""
     try:
         con = db()
         # EXACT match against the project list, not `LIKE '%slug%'`:
-        # with a substring match, `alpha` would match `alpha-beta` and the
+        # with a substring match, `api` would match `api-mobile` and the
         # session would request the lease of a note that is not its own.
         rows = con.execute("SELECT path, projects, updated FROM notes "
                             "WHERE path LIKE '10-Projects/%' ORDER BY updated DESC")
@@ -1398,7 +1543,7 @@ def is_real_project(slug):
     """Does `slug` name a real project, or is it just a directory name?
 
     `project_name()` derives the name from the cwd, so working in `~` it returns
-    `myuser` (the OS user). Without this check, any two sessions open in the home directory warn
+    `myuser`. Without this check, any two sessions open in the home directory warn
     each other that they are "on the same project", which is noise and trains you to
     ignore the warning.
     """
@@ -1406,7 +1551,7 @@ def is_real_project(slug):
 
 
 def _lease_async(action, rel, sid):
-    if not rel or not sid:
+    if not rel or not sid or OFFLINE:
         return
     try:
         import subprocess
@@ -1431,11 +1576,13 @@ def lease_release_async(rel, sid):
 def presence_beat_async(sid, project=None):
     """Fires the S3 heartbeat WITHOUT waiting for it. Never on a hook's path.
 
-    Writing to S3 costs ~1 s (secret.py for the credentials, plus the call), and hooks have
+    Writing to S3 costs ~1 s (kp.py for the credentials, plus the call), and hooks have
     a budget of tens of milliseconds. It is detached with `start_new_session=True` so it
     neither dies with the session nor holds it, and what the hooks read is the cache it
     leaves behind — a 0.1 ms `open()`.
     """
+    if OFFLINE:
+        return
     try:
         import subprocess
         subprocess.Popen(
@@ -1450,6 +1597,8 @@ def presence_beat_async(sid, project=None):
 
 
 def presence_withdraw_async(sid, project=None):
+    if OFFLINE:
+        return
     try:
         import subprocess
         subprocess.Popen(
@@ -1632,8 +1781,8 @@ def current_sid(con, cwd=None, pid=None):
     nothing was saved. The question is what to work it out FROM.
 
     It used to be the working directory, falling back to "the first live session". Both
-    halves gave wrong answers the same way — several sessions can share a cwd,
-    often the home directory — and both did real damage: a write credited to the wrong
+    halves gave wrong answers the same way — several sessions share a cwd here, six of
+    them on `~` at once — and both did real damage: a write credited to the wrong
     session on 2026-08-21, and on 2026-09-02 a `claim.py --release` that deleted a live
     session's claims and left the caller's own intact.
 
@@ -1667,12 +1816,12 @@ def current_sid(con, cwd=None, pid=None):
     #    with no Claude process above it looks like: refusing there would take away
     #    something that worked.
     cwd = os.path.realpath(cwd or os.getcwd())
-    here = [r for r in rows if r[1] and os.path.realpath(r[1]) == cwd]
-    live = [r for r in here if session_live(r[2] or 0, r[3])]
-    if len(live) == 1:
-        return live[0][0], "cwd"
-    if not live and len(here) == 1:
-        return here[0][0], "cwd"
+    aqui = [r for r in rows if r[1] and os.path.realpath(r[1]) == cwd]
+    vivas = [r for r in aqui if session_live(r[2] or 0, r[3])]
+    if len(vivas) == 1:
+        return vivas[0][0], "cwd"
+    if not vivas and len(aqui) == 1:
+        return aqui[0][0], "cwd"
 
     # 3. Nothing else. Here there used to be "the first live session", and that is
     #    precisely what did the damage: an answer that looks like knowing.

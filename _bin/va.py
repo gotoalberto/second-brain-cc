@@ -255,7 +255,7 @@ def cmd_list(args):
             rel = "_assets/%s/%s" % (coll, f)
             usos = refs.get(rel, [])
             print("  %-46s %8s  %s" % (f, human(os.path.getsize(os.path.join(cdir, f))),
-                                       ("← " + usos[0]) if usos else "ORPHAN"))
+                                       ("← " + usos[0]) if usos else "HUÉRFANO"))
     print("\ntotal: %d files, %s" % (total_n, human(total_b)))
 
 

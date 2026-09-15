@@ -10,7 +10,7 @@ The whole thing rests on knowing WHICH session is running it, and that turned ou
 be the hard part. It used to be worked out by comparing the current directory against
 the `sessions` table, and when nothing matched it settled for whichever session had
 beaten last. On 2026-09-02 that deleted a live session's claims and left the caller's
-own untouched: several sessions on one machine can share the cwd `~`, so the tie-break was a
+own untouched: six sessions on this machine share the cwd `~`, so the tie-break was a
 coin toss. Claims are the only thing keeping two agents off the same file, so a
 `--release` pointed at the wrong session disarms them with nobody the wiser.
 
@@ -30,15 +30,15 @@ import brainlib as B
 current_sid = B.current_sid
 
 
-def candidates(con, cwd):
+def candidatas(con, cwd):
     """Who it might have been, to say so instead of only refusing."""
-    out = []
+    fuera = []
     for sid, scwd, spid, hb in con.execute(
             "SELECT sid, cwd, pid, heartbeat FROM sessions ORDER BY heartbeat DESC"):
         if B.session_live(spid or 0, hb):
-            same = scwd and os.path.realpath(scwd) == os.path.realpath(cwd)
-            out.append("%s%s" % (sid, " (this cwd)" if same else ""))
-    return out
+            misma = scwd and os.path.realpath(scwd) == os.path.realpath(cwd)
+            fuera.append("%s%s" % (sid, " (this cwd)" if misma else ""))
+    return fuera
 
 
 def arg_value(name):
@@ -56,8 +56,8 @@ def main():
         return 0
     con = B.db()
     cwd = os.getcwd()
-    explicit = arg_value("--sid")
-    sid, how = (explicit, "--sid") if explicit else current_sid(con, cwd)
+    explicito = arg_value("--sid")
+    sid, how = (explicito, "--sid") if explicito else current_sid(con, cwd)
 
     if "--list" in sys.argv:
         for s, pat, ts in con.execute("SELECT sid, pattern, created FROM claims ORDER BY created DESC"):
@@ -72,9 +72,9 @@ def main():
             # releasing none: nobody notices, and the next collision arrives with no
             # warning at all.
             print("I cannot tell which session this is, so I am releasing nothing.")
-            others = candidates(con, cwd)
-            if others:
-                print("live sessions right now: %s" % ", ".join(others))
+            otras = candidatas(con, cwd)
+            if otras:
+                print("live sessions right now: %s" % ", ".join(otras))
             print("name it: claim.py --release --sid <id>")
             return 1
         n = con.execute("SELECT COUNT(*) FROM claims WHERE sid=?", (sid,)).fetchone()[0]
@@ -89,7 +89,7 @@ def main():
     for arg in sys.argv[1:]:
         if arg.startswith("--"):
             continue
-        if explicit and arg == explicit:      # the value of --sid, not a file
+        if explicito and arg == explicito:      # the value of --sid, not a file
             continue
         path = os.path.abspath(os.path.expanduser(arg))
         con.execute("INSERT OR IGNORE INTO claims VALUES(?,?,?)", (sid, path, B.now()))

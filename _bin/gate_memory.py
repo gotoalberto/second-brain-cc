@@ -61,6 +61,7 @@ def _save(path, st):
     os.replace(tmp, path)
 
 
+@B.heartbeat("stop-memory-gate")
 @B.fail_open
 def main():
     data = B.read_hook_input()

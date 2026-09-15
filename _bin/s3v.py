@@ -12,7 +12,7 @@ never fattens and never has to be summarised or collapsed: every note carries po
     s3v.py url <key> [--min 60]       # temporary signed link
 
 The secret NEVER passes through argv nor stays in the shell environment: the process
-re-executes through `secret.py get ... --pipe`, which hands it over on stdin.
+re-executes through `kp.py get ... --pipe`, which hands it over on stdin.
 The `--kind` values and the S3 prefixes stay in Spanish on purpose: they are the
 layout of objects already in the bucket, and renaming them would orphan them.
 See 30-Knowledge on the file vault in S3.
@@ -29,19 +29,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import brainlib as B
 
 BUCKET = os.environ.get("BRAIN_S3_BUCKET", "CHANGE-ME-your-bucket")
-REGION = "eu-west-1"
-# S3 credentials, via the optional 1Password module (or the standard AWS environment).
-# The Secret Access Key is resolved through secret.py from a 1Password reference; the
-# Access Key ID comes from $AWS_ACCESS_KEY_ID or its own reference. Override with envs.
-SECRET_REF = os.environ.get("BRAIN_AWS_SECRET_REF", "op://Private/aws-brain-s3/credential")
-SECRET_ID_REF = os.environ.get("BRAIN_AWS_KEYID_REF", "op://Private/aws-brain-s3/username")
-SECRET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "secret.py")
-AWS = "/opt/homebrew/bin/aws"
+REGION = os.environ.get("BRAIN_S3_REGION", "eu-west-1")
+KP_ENTRY = os.environ.get("BRAIN_S3_KP_ENTRY", "aws/s3-access-key")
+KP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kp.py")
+AWS = __import__("shutil").which("aws") or "/opt/homebrew/bin/aws"
 
 KINDS = ("entregable", "intermedio", "material")
 MARKER = "## Files in S3"
 
-# The cached Access Key ID. It is the UserName field of the 1Password item entry, NOT the
+# The cached Access Key ID. It is the UserName field of the kdbx entry, NOT the
 # secret, and STATE lives outside the repository.
 CACHE_KEY_ID = os.path.join(B.STATE, "aws-key-id")
 # Coordination state, not content: one definition, read by cmd_check and by
@@ -124,9 +120,9 @@ def aws(*args, **kw):
 
 
 def _refresh_key_id():
-    """Drop the Access Key ID cache, reread it from the 1Password item and say if a retry is worth it.
+    """Drop the Access Key ID cache, reread it from the kdbx and say if a retry is worth it.
 
-    It is the counterpart of caching: without this, rotating the key in the 1Password item left the ID
+    It is the counterpart of caching: without this, rotating the key in the kdbx left the ID
     old one in the cache file and EVERY run that followed failed the same way, with no
     clue why. It happens once per process: if the reread ID is the same, the thing that is
     invalid is the secret, and retrying would be a loop.
@@ -482,7 +478,7 @@ def cmd_url(a):
             % (PRESIGN_MAX_MIN, a.min))
     # `presign` signs LOCALLY: it does not talk to AWS and always returns rc=0, so on
     # this path the credential is never exercised and the Access Key ID cache is never
-    # invalidated. After rotating the key in the 1Password item, this would keep signing links
+    # invalidated. After rotating the key in the kdbx, this would keep signing links
     # with the old ID —good-looking links that give 403 on opening, which is the worst
     # way to fail—. It is checked beforehand with a cheap call that DOES go to AWS.
     rc, _, err = aws("s3api", "head-object", "--bucket", BUCKET, "--key", a.key,
@@ -538,7 +534,7 @@ def cmd_check(a):
             rel = os.path.relpath(full, B.VAULT)
             for m in re.finditer(r'`((?:proyectos|material)/[^`]+)`', open(full, errors="replace").read()):
                 ref = m.group(1)
-                # A folder prefix (`material/my-project/`) is not an object: the
+                # A folder prefix (`material/project/`) is not an object: the
                 # notes cite them to explain the layout, not to point at
                 # a file. Marking them broken turns the check into noise.
                 if ref.endswith("/"):
@@ -585,14 +581,14 @@ def cmd_check(a):
 
 # -------------------------------------------------------------------- arranque
 def access_key_id(cache=True):
-    """The Access Key ID comes from the 1Password item entry's UserName field, not from the code.
+    """The Access Key ID comes from the kdbx entry's UserName field, not from the code.
 
     That way no AWS identifier is left in the repository (the secret scanner would block
-    it, and rightly so) and rotating the key means changing only the 1Password item.
+    it, and rightly so) and rotating the key means changing only the kdbx.
 
-    It is cached in STATE because asking the 1Password item costs a WHOLE secret.py invocation per
+    It is cached in STATE because asking the kdbx costs a WHOLE kp.py invocation per
     command — measured at 0.47 s with the master already cached, and considerably more
-    with the 1Password item cold on the network mount — against an `s3v.py ls` that takes 1.5 s in
+    with the kdbx cold on the network mount — against an `s3v.py ls` that takes 1.5 s in
     total. What is cached is the UserName, NEVER the secret, and STATE is outside the
     repository. If the ID stops working, _refresh_key_id() deletes the file and comes back
     here.
@@ -607,23 +603,24 @@ def access_key_id(cache=True):
         # has the shape of an Access Key ID.
         if re.match(r"^[A-Z0-9]{16,128}$", guardado):
             return guardado
-    # Prefer the standard AWS environment; fall back to the 1Password reference.
-    kid = os.environ.get("AWS_ACCESS_KEY_ID", "").strip()
-    if not kid:
-        kid = subprocess.run([sys.executable, SECRET, "get", SECRET_ID_REF, "--show"],
-                             capture_output=True, text=True, timeout=60).stdout.strip()
-    if re.match(r"^[A-Z0-9]{16,128}$", kid):
-        try:
-            B.atomic_write(CACHE_KEY_ID, kid + "\n")
-            os.chmod(CACHE_KEY_ID, 0o600)
-        except Exception:
-            pass        # without the cache it still works: only the saving is lost
-        return kid
-    die("could not read the Access Key ID (set $AWS_ACCESS_KEY_ID or %s)" % SECRET_ID_REF, 4)
+    out = subprocess.run([sys.executable, KP, "get", KP_ENTRY, "--info"],
+                         capture_output=True, text=True, timeout=60).stdout
+    for line in out.splitlines():
+        if line.startswith("UserName:"):
+            kid = line.split(":", 1)[1].strip()
+            if not kid:
+                break
+            try:
+                B.atomic_write(CACHE_KEY_ID, kid + "\n")
+                os.chmod(CACHE_KEY_ID, 0o600)
+            except Exception:
+                pass        # without the cache it still works: only the saving is lost
+            return kid
+    die("could not read the Access Key ID from the kdbx (%s)" % KP_ENTRY, 4)
 
 
 def worker():
-    """Second pass: the secret arrives on stdin from secret.py."""
+    """Second pass: the secret arrives on stdin from kp.py."""
     secret = sys.stdin.readline().strip()
     if not secret:
         die("no secret arrived on stdin", 4)
@@ -665,10 +662,10 @@ def main(directo=False):
 
     a = p.parse_args()
     if not directo:
-        # re-execute through secret.py to receive the secret on stdin
+        # re-execute through kp.py to receive the secret on stdin
         cmd = "%s %s __worker %s" % (sys.executable, os.path.abspath(__file__),
                                      " ".join(map(_q, sys.argv[1:])))
-        os.execv(sys.executable, [sys.executable, SECRET, "get", SECRET_REF, "--pipe", cmd])
+        os.execv(sys.executable, [sys.executable, KP, "get", KP_ENTRY, "--pipe", cmd])
     return a.fn(a)
 
 

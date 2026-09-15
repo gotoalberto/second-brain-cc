@@ -162,6 +162,7 @@ def remove_old_index():
         return False
 
 
+@B.heartbeat("skills-catalogue")
 @B.fail_open
 def main():
     data = B.read_hook_input()

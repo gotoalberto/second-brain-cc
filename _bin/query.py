@@ -25,8 +25,8 @@ def main():
     if not B.enabled():
         print("vault unavailable"); return 0
     con = B.db()
-    # Every search looks for broken links and fixes what has a safe fix. Before
-    # searching, so the results already use the fixed graph.
+    # Every search looks for broken links and fixes what has a safe fix (the user's
+    # rule, 2026-09-10). Before searching, so the results already use the fixed graph.
     links = None
     try:
         import linkfix as LF

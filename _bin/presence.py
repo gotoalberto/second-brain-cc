@@ -27,14 +27,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import brainlib as B
 
 BUCKET = os.environ.get("BRAIN_S3_BUCKET", "CHANGE-ME-your-bucket")
-REGION = "eu-west-1"
-# S3 credentials, via the optional 1Password module (or the standard AWS environment).
-# The Secret Access Key is resolved through secret.py from a 1Password reference; the
-# Access Key ID comes from $AWS_ACCESS_KEY_ID or its own reference. Override with envs.
-SECRET_REF = os.environ.get("BRAIN_AWS_SECRET_REF", "op://Private/aws-brain-s3/credential")
-SECRET_ID_REF = os.environ.get("BRAIN_AWS_KEYID_REF", "op://Private/aws-brain-s3/username")
-SECRET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "secret.py")
-AWS = "/opt/homebrew/bin/aws"
+REGION = os.environ.get("BRAIN_S3_REGION", "eu-west-1")
+KP_ENTRY = os.environ.get("BRAIN_S3_KP_ENTRY", "aws/s3-access-key")
+KP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kp.py")
+AWS = __import__("shutil").which("aws") or "/opt/homebrew/bin/aws"
 
 # DO NOT TRANSLATE. This string keys objects already in the bucket AND the AWS
 # lifecycle rules that expire them. It is read in two more places — s3v.py
@@ -163,9 +159,9 @@ def should_beat():
     """True at most once every EVERY seconds. Stamps the ATTEMPT, not the result.
 
     It used to read the mtime of `presence-s3.json`, which is written only at the END of
-    the happy path. So on any failure — no 1Password item, no network, a throttled bucket — the
+    the happy path. So on any failure — no kdbx, no network, a throttled bucket — the
     throttle never advanced and EVERY prompt forked a detached interpreter that did
-    nothing but log and exit. Measured in this log: 2,722 `no-secret` lines against 100
+    nothing but log and exit. Measured in this log: 2,722 `no-kdbx` lines against 100
     successful beats. Anchoring on the attempt makes the throttle hold whether the beat
     works or not.
     """
@@ -237,16 +233,15 @@ def _real():
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "__worker":
         worker()
-    # Without the credentials volume there is nothing to do, and mounting it is NOT
-    # attempted: this runs unattended and a Finder dialog here would be unacceptable.
-    import shutil as _sh
-    if not _sh.which("op"):
-        B.log("presence", "no-secret")
+    # Without a credential database there is nothing to do, and no prompt is ever
+    # attempted: this runs unattended and a dialog here would be unacceptable.
+    if not B.kdbx_configured():
+        B.log("presence", "no-kdbx")
         return 3
     cmd = "%s %s __worker %s" % (sys.executable, os.path.abspath(__file__),
                                  " ".join("'%s'" % x.replace("'", "'\\''")
                                           for x in sys.argv[1:]))
-    os.execv(sys.executable, [sys.executable, SECRET, "get", SECRET_REF, "--pipe", cmd])
+    os.execv(sys.executable, [sys.executable, KP, "get", KP_ENTRY, "--pipe", cmd])
 
 
 if __name__ == "__main__":

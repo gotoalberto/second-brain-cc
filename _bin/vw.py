@@ -156,9 +156,9 @@ def cmd_set(args):
         text = open(path, errors="replace").read()
         if args.section:
             # The section ends at the next heading of the SAME OR HIGHER level, not at any
-            # "#" line: a "## Entries" section whose entries are "### 1. ..." headings was
+            # "#" line: a "## Entries" section whose entries are "### 1. Company" was being
             # cut short at its own first entry, so every replacement appended a fresh copy
-            # and left the old one behind. That silently duplicated a whole log note.
+            # and left the old one behind. That silently duplicated the applications log.
             target = args.section.strip()
             level = len(target) - len(target.lstrip("#"))
             lines, out, inside, done = text.splitlines(True), [], False, False

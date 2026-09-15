@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """linkfix — finds broken [[links]] in the vault and repairs the ones with a safe fix.
 
-Design rule: every time the vault is searched, broken links are looked for and fixed. So this runs on every search, not when someone remembers:
+The user's rule (2026-09-10): every time the vault is searched, broken links are looked
+for and fixed. So this runs on every search, not when someone remembers:
 
   - retrieve.py (every prompt) classifies from the index, which is cheap, and launches
     this detached when there is something to fix;
@@ -15,7 +16,7 @@ What gets rewritten, and only this: a link that resolves (see brainlib.LinkResol
 but not by the note's filename. A link by frontmatter id, by an old filename or old id
 (git history), with the wrong date, or with `.md`/spaces, becomes `[[<filename>]]`.
 Nothing is guessed: a link with no resolution is REPORTED, never pointed somewhere
-plausible. Meeting topic links (`[[pricing]]` in 15-Meetings) are not broken, they are
+plausible. Meeting topic links (`[[cashback]]` in 15-Meetings) are not broken, they are
 topic nodes by convention, and pending `[[entity-...]]` participants connect on their
 own once the entity note exists.
 """
@@ -246,6 +247,8 @@ def spawn_detached():
 
 def maybe_spawn(res):
     """What retrieve.py calls with the cheap classification it already has."""
+    if B.OFFLINE:
+        return False              # the hook probe: nothing detached may outlive its scratch state
     st = load_state()
     if B.now() - st.get("spawned", 0) < SPAWN_EVERY:
         return False
