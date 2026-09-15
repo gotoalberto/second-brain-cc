@@ -15,6 +15,11 @@ The one-screen version. Full protocol: `~/Brain/90-Meta/AGENT-PROTOCOL.md`.
 - Titles and headings name the topic, never a headline: no teaser phrasing, no "X, not Y", no triads.
 - Text for the user: plain and short, like a person. No dashes as punctuation, no AI tells, no internal labels. Detail: `30-Knowledge/2026-09-10-convention-write-like-a-person.md`
 - Heavy files go to object storage with `_bin/s3v.py`, cited from their note by key, never into the repo.
+- Language per audience: the user's language for the user, a shared tool's language for what is published there, English in the vault. Never assess anyone's workload.
+- Decisions as plain-text lettered lists (A, B, C, then "explain more") plus your recommendation; one at a time; never widgets.
+- Links are clickable and verified: vault notes as repository URLs (sync first), apps by LAN IP (bind 0.0.0.0), deliverables sent as files.
+- Messages in the user's name: read the end of the thread first, draft, show, send only when told.
+- Deliverables are stored with their project; a published page also goes as an HTML file and is archived. Pitches: web page, one infographic per slide, subtle motion, house style.
 - Integrations only through what the vault controls (scripts with kdbx tokens such as `google.py`, a generic MCP server). Never vendor connectors.
 - A procedure or correction repeated twice → a skill (`skill-forge`). Skills are self-contained and canonical in the vault; `install_plugin.py sync` after editing.
 - Writing code or files → ALWAYS a git worktree, one per DELIVERABLE, never the main checkout (read-only exempt). Parallel agents split files (`claim.py`).

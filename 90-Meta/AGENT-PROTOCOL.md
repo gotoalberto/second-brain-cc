@@ -102,9 +102,44 @@ messages, documents) is written **the way a person would, as simply as possible*
 - Say what a thing is or does, never an internal label only the source document explains
   ("wave B", item ids, unexplained jargon).
 - Messages in the user's name sound like them: direct, friendly, brief.
+- Never assess anyone's workload: describe the work and the facts, never how much a person
+  carries. `30-Knowledge/2026-09-15-convention-never-assess-peoples-workload.md`
+- Language per audience: the user's language for everything handed to the user, the working
+  language of a shared tool for what is published there, English in the vault.
+  `30-Knowledge/2026-09-15-convention-language-per-audience.md`
+- Decisions go as plain-text lettered lists with an "explain more" option and your
+  recommendation, one at a time, never as widgets.
+  `30-Knowledge/2026-08-29-convention-decisions-as-plain-text-lettered-lists.md`
+- Links are clickable and verified: vault notes as repository URLs after syncing, apps by LAN
+  address, deliverables sent as files.
+  `30-Knowledge/2026-08-28-convention-clickable-links-and-send-files.md`
+- Messages in the user's name: read the end of the thread first, draft, show, and send only
+  when told. `30-Knowledge/2026-09-05-convention-read-thread-end-before-outbound-message.md`
+- Before reporting status from a plan, reconcile the plan with reality.
+  `30-Knowledge/2026-08-30-convention-reconcile-plan-doc-before-reporting-status.md`
 
 Adapt this to your own taste; it is a convention note, not code. Detail:
 `30-Knowledge/2026-09-10-convention-write-like-a-person.md`.
+
+### Documents and deliverables
+- Every deliverable, intermediate versions too, is stored with its project and cited from its
+  note. A published page also goes to the user as an HTML file and is archived.
+  `30-Knowledge/2026-08-25-convention-deliverables-to-the-vault.md`,
+  `30-Knowledge/2026-09-15-convention-every-artifact-also-as-html-file-to-s3.md`
+- Pitches and presentations are web pages: one infographic per slide that explains its concept,
+  bullets, room to talk, subtle motion, the house style.
+  `30-Knowledge/2026-08-25-convention-pitches-as-web-artifacts-with-infographics.md`
+- Reports: an HTML source rendered to PDF in the house style, verified and inferred said plainly,
+  built so a second language is cheap. `30-Knowledge/2026-09-10-convention-report-deliverable-shape.md`
+- Team chat posts: the title in the channel, the content or link in the thread, published only
+  when asked. `30-Knowledge/2026-08-28-convention-publishing-to-a-team-chat-channel.md`
+- Web deliverables meet the craft floor and the interface copy rules; text inside images is
+  audited with local OCR before shipping.
+  `30-Knowledge/2026-08-30-convention-impeccable-craft-floor-rules-for-web.md`,
+  `30-Knowledge/2026-09-02-convention-interface-copy-and-data-labels.md`,
+  `30-Knowledge/2026-08-24-convention-local-ocr-to-audit-text-in-images.md`
+- Application documents: CV and letter together, tailored, nothing invented, never submitted for
+  the user. `30-Knowledge/2026-08-27-convention-job-applications-cv-and-cover-letter.md`
 
 ### Images and other binaries
 The vault is **markdown only**. Files go to S3 with `s3v.py` and **always through `va.py`**,

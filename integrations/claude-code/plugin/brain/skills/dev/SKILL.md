@@ -162,7 +162,10 @@ After building, after every critique round and after every single correction, op
 agent's browser tool and look at it. A fix nobody saw rendered is a fix nobody knows works.
 
 - Start it through the agent's preview or browser tooling, not a stray background server.
-- Give the user a URL they can actually open from where they are.
+- Give the user the app's LAN address, not `localhost`, and verify in the agent's own browser on
+  `localhost`: `~/Brain/30-Knowledge/2026-08-22-convention-app-urls-with-local-ip.md`.
+- Follow the house style and the craft floor:
+  `~/Brain/30-Knowledge/2026-08-30-convention-impeccable-craft-floor-rules-for-web.md`.
 - Check the console and network requests, not only the screenshot.
 - Look at more than one size (phone, tablet, desktop) and both themes when the page has them.
 - Motion cannot be judged from a still: drive the interaction and watch the transition.
