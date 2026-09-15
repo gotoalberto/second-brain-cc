@@ -177,7 +177,7 @@ def test_sync(IP):
     check("and apply leaves it removed", not os.path.exists(os.path.join(claude, "skills", "vault-only")))
 
     check("nothing was written outside the vault plugin, ~/.claude and the state directory",
-          sorted(os.listdir(os.path.dirname(os.path.dirname(plugin)))) == ["home", "plugin", "state"])
+          sorted(os.listdir(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(plugin)))))) == ["home", "integrations", "state"])
 
 
 def test_install_only(IP):
