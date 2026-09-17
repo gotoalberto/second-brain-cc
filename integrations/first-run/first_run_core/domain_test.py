@@ -27,7 +27,8 @@ NOW = dt.datetime(2026, 9, 15, 18, 0, tzinfo=dt.timezone.utc)
 def test_steps(D):
     print("\n== steps and state ==")
     check("the steps are asked in this order",
-          D.STEPS == ("kdbx", "google", "files", "alert_email", "mcp", "scheduler", "routines"), D.STEPS)
+          D.STEPS == ("kdbx", "google", "files", "multi_machine", "alert_email", "mcp", "scheduler", "routines"),
+          D.STEPS)
     state = D.new_state()
     check("a new state has no answers and is not complete",
           state["steps"] == {} and not D.is_complete(state) and D.next_step(state) == "kdbx", state)

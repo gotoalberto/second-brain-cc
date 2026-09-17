@@ -149,6 +149,34 @@ def test_local_files_storage():
     check("once recorded, it is what the next run proposes", lf.propose_default() == target)
 
 
+def test_local_shared_storage():
+    print("\n== the shared coordination path ==")
+    d = tmpdir()
+    home, state = os.path.join(d, "home"), os.path.join(d, "state")
+    target = os.path.join(home, "BrainShared")
+    ls = AD.LocalShared(home, environ={"BRAIN_STATE": state})
+    check("no propose_default: this step is opt-in, unlike the files directory",
+          not hasattr(ls, "propose_default"))
+    good, detail = ls.check("~/BrainShared")
+    check("check expands ~ against this HOME, creates the directory and returns its absolute path",
+          good and detail == target and os.path.isdir(target), detail)
+    check("and leaves no probe file behind", os.listdir(target) == [], os.listdir(target))
+    check("an existing directory checks fine again", ls.check(target) == (True, target))
+    blocker = write(os.path.join(d, "a-shared-file"), "x")
+    bad, why = ls.check(blocker)
+    check("a path that is a file is (False, why)", bad is False and bool(why), why)
+    good, written = ls.persist(target)
+    check("persist records it in <brain state>/shared-dir.json, private",
+          good and written == os.path.join(state, "shared-dir.json") and json.load(open(written)) == {"dir": target}
+          and stat.S_IMODE(os.stat(written).st_mode) == 0o600, written)
+    import brain_shared
+
+    check("which is where presence.py and claims_sync.py read it",
+          brain_shared.shared_dir(environ={"BRAIN_STATE": state}, home=home) == target)
+    check("and brain_shared.configured() agrees",
+          brain_shared.configured(environ={"BRAIN_STATE": state}, home=home) is True)
+
+
 def test_mcp():
     print("\n== MCP registration and the shell profile ==")
     d = tmpdir()
@@ -244,7 +272,8 @@ def main():
     except Exception as exc:
         check("first_run_core.adapters and domain import", False, "%s: %s" % (type(exc).__name__, exc))
     else:
-        for t in (test_files, test_kdbx_google, test_local_files_storage, test_mcp, test_scheduler, test_routines):
+        for t in (test_files, test_kdbx_google, test_local_files_storage, test_local_shared_storage, test_mcp,
+                 test_scheduler, test_routines):
             try:
                 t()
             except Exception as exc:

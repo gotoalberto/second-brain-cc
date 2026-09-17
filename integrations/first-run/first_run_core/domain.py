@@ -19,7 +19,7 @@ import json
 import os
 import re
 
-STEPS = ("kdbx", "google", "files", "alert_email", "mcp", "scheduler", "routines")
+STEPS = ("kdbx", "google", "files", "multi_machine", "alert_email", "mcp", "scheduler", "routines")
 # Steps that cannot be declined: Brain does not work without them. They are asked until they are done.
 REQUIRED = ("files",)
 ANSWERS = ("done", "declined")

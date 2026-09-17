@@ -42,6 +42,13 @@ class Files(Protocol):
     def persist(self, path: str) -> tuple: ...             # records it where files.py reads it: (ok, file | why)
 
 
+class MultiMachine(Protocol):
+    # No propose_default(): there is no proposed shared path, unlike the files directory —
+    # this step is opt-in, off by default, and the one new step that may be declined.
+    def check(self, path: str) -> tuple: ...               # creates it, proves it writable: (ok, absolute path | why)
+    def persist(self, path: str) -> tuple: ...             # records it where brain_shared.py reads it: (ok, file | why)
+
+
 class MailConfig(Protocol):
     def save(self, config: dict) -> str: ...               # the path written
 

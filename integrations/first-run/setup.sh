@@ -1,8 +1,8 @@
 #!/bin/bash
 # The first run: asks, one step at a time, whether to connect each optional piece (a KeePass
-# database, Google accounts, alert email, the MCP server, scheduled jobs, CLI-agent routines), and
-# where to keep files, the one required step. Nothing is installed without a yes; answers are
-# remembered, so it is safe to re-run.
+# database, Google accounts, coordinating with other machines over a shared folder, alert email,
+# the MCP server, scheduled jobs, CLI-agent routines), and where to keep files, the one required
+# step. Nothing is installed without a yes; answers are remembered, so it is safe to re-run.
 #
 #   bash integrations/first-run/setup.sh            ask what is left
 #   bash integrations/first-run/setup.sh --dry-run  show what would be installed, save nothing

@@ -21,6 +21,7 @@ class Ports:
     kdbx: object
     google: object
     files: object
+    multi_machine: object
     mail: object
     mcp: object
     scheduler: object
@@ -140,6 +141,27 @@ def _files(c):
     c.done("files", dir=detail)
 
 
+def _multi_machine(c):
+    p = c.p
+    if not p.prompt.yes_no("Do you want this machine to coordinate presence and file claims "
+                           "with other machines over a shared folder you already sync — "
+                           "Dropbox, iCloud, a NAS, a USB drive?", False):
+        return c.declined("multi_machine")
+    while True:
+        path = c.ask_until("  Shared folder path", lambda v: bool(v), "", "a directory is required")
+        if c.dry_run:
+            p.prompt.say("  Dry run: %s would be created if missing and recorded." % path)
+            return
+        good, detail = p.multi_machine.check(path)
+        if good:
+            break
+        p.prompt.say("  %s cannot be used (%s). Choose another directory." % (path, detail))
+    saved, why = p.multi_machine.persist(detail)
+    if not saved:
+        return c.failed("multi_machine", why)
+    c.done("multi_machine", dir=detail)
+
+
 def _alert_email(c):
     p = c.p
     if not p.prompt.yes_no("Send the guardian's alerts by email?", False):
@@ -242,8 +264,8 @@ def _routines(c):
     c.done("routines", tokens=count)
 
 
-STEP_FUNCS = {"kdbx": _kdbx, "google": _google, "files": _files, "alert_email": _alert_email, "mcp": _mcp,
-              "scheduler": _scheduler, "routines": _routines}
+STEP_FUNCS = {"kdbx": _kdbx, "google": _google, "files": _files, "multi_machine": _multi_machine,
+              "alert_email": _alert_email, "mcp": _mcp, "scheduler": _scheduler, "routines": _routines}
 
 
 # ---------------------------------------------------------------- use cases

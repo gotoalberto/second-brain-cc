@@ -203,6 +203,40 @@ class LocalFiles:
             return False, "%s: %s" % (type(exc).__name__, exc)
 
 
+class LocalShared:
+    """The shared coordination path: proven writable, and recorded where presence.py and
+    claims_sync.py read it (brain_shared.py). No propose_default(): unlike the files
+    directory, there is no default to propose — this step is opt-in."""
+
+    def __init__(self, home, environ=None, config_path=None):
+        self.home, self.config_path = home, config_path
+        self.environ = os.environ if environ is None else environ
+
+    def check(self, path):
+        full = path.strip()
+        if full == "~" or full.startswith("~/"):
+            full = self.home + full[1:]
+        full = os.path.abspath(full)
+        probe = os.path.join(full, ".brain-write-probe-%d" % os.getpid())
+        try:
+            os.makedirs(full, exist_ok=True)
+            with open(probe, "w", encoding="utf-8") as fh:
+                fh.write("ok\n")
+            os.remove(probe)
+        except OSError as exc:
+            return False, "%s: %s" % (type(exc).__name__, exc)
+        return True, full
+
+    def persist(self, path):
+        import brain_shared
+
+        try:
+            return True, brain_shared.set_shared_dir(
+                path, config_path=self.config_path or brain_shared.config_file(self.environ, self.home))
+        except OSError as exc:
+            return False, "%s: %s" % (type(exc).__name__, exc)
+
+
 # ---------------------------------------------------------------- MCP and the shell profile
 
 
@@ -376,6 +410,7 @@ def build_ports(vault=VAULT, environ=None, stdin=None, stdout=None):
         kdbx=KpKdbx(os.path.join(vault, "_bin", "kp.py")),
         google=GoogleCli(os.path.join(vault, "_bin", "google.py"), environ),
         files=LocalFiles(home, environ),
+        multi_machine=LocalShared(home, environ),
         mail=MailConfigFile(os.path.join(state, "guardian-mail.json")),
         mcp=McpSetup(vault, home, environ),
         scheduler=SchedulerSetup(vault, home, state, environ=environ),
