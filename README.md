@@ -86,6 +86,70 @@ python3 _bin/files.py get <key> --out <dir>
 python3 _bin/files.py check                      # broken references and orphaned files
 ```
 
+## Multiple machines
+
+By default everything above is single-machine: one vault, one local KeePass database, one
+files directory. If you run this on more than one machine and already sync a folder between
+them — Dropbox, iCloud Drive, a NAS mount, a USB drive — the first run's `multi_machine` step
+can point at it, and two things start coordinating over it:
+
+- **Presence.** Each machine's heartbeat also lands at
+  `<shared>/presence/<project>/<machine key>__<sid>`, so `presence.py view` (and anything that
+  reads its cache) can tell you someone on ANOTHER machine has the same project open, not just
+  this one.
+- **File claims.** `_bin/claims_sync.py` lets a session declare which files it is editing —
+  `claims_sync.py claim <path...> --sid <sid>`, `claims_sync.py release <path...> --sid <sid>` —
+  as a warning for another machine to read (`claims_sync.py view`), the same way `lease.py`
+  warns two sessions on one machine. This is informational only: it is not wired into the
+  write gate or into `claim.py`'s local table, so nothing blocks a write because of it.
+
+The machine identity behind both is `_bin/machine_identity.py`: a hostname plus the first 8 hex
+characters of a hardware/boot UUID (`ioreg` on macOS, `/etc/machine-id` or
+`/sys/class/dmi/id/product_uuid` on Linux), so two machines that happen to share a hostname do
+not collide. Only that short derived key is ever written anywhere; the full UUID never is.
+
+**The harness never syncs this folder itself.** It only reads and writes files under the path
+you give it — keeping that path synced between your machines (Dropbox, iCloud, your NAS's own
+mechanism) is entirely up to whatever already syncs it for you.
+
+```bash
+python3 _bin/claims_sync.py claim src/x.ts --sid <sid>    # declare a claim
+python3 _bin/claims_sync.py view                          # fresh claims held by OTHER machines
+python3 _bin/claims_sync.py reap                           # clean up claims nobody is renewing
+```
+
+- The shared path is `BRAIN_SHARED_DIR`, else what the first run's `multi_machine` step
+  recorded in `<brain state>/shared-dir.json` (`_bin/brain_shared.py`). Unconfigured (the
+  default), nothing above does anything extra: single-machine behaviour is unchanged, byte for
+  byte.
+- Declining the `multi_machine` step (or skipping it with `first_run.py skip-all`) is the
+  default and always allowed — unlike the files step, it is never required.
+- A claim nobody renews for longer than 15 minutes plus a 2-minute margin is treated as
+  orphaned (a crashed session, a machine that vanished) and reaped automatically, piggybacked
+  on the same 120 s cadence the presence heartbeat already runs on — no separate scheduled job.
+
+### A second KeePass client: `kpcli`
+
+If two machines share a `.kdbx` over that same synced path, both need a way to read it.
+`keepassxc-cli` (the default `kp.py` already speaks) is not installable everywhere; a machine
+that has Perl instead can use `kpcli`'s underlying module, `File::KDBX`, through
+`_bin/kp_kdbx.pl`:
+
+```bash
+cpanm --local-lib=~/perl5 File::KDBX     # optional: only for the kpcli backend
+BRAIN_KP_BACKEND=kpcli python3 _bin/kp.py ls
+```
+
+- Set with `BRAIN_KP_BACKEND=kpcli`, or leave it unset: `kp.py` prefers `keepassxc-cli` and
+  only falls back to `kpcli` when nothing finds it. The default stays `keepassxc-cli`, unchanged.
+- `_bin/kp_backend.py` covers exactly what `kp.py` actually issues through its central `cli()`
+  function: `ls`, `search`, `show`, `mkdir`, `add`, `edit`. Everything else the kpcli backend
+  does not cover (`clip`, `kp.py init --create`, the `.lock`-file checks under `kp.py locks`)
+  refuses with a clear message instead of guessing or silently doing nothing — use
+  `keepassxc-cli` for those, or `--show`/`--info`/`--pipe` in place of the clipboard.
+- `File::KDBX` is not a Perl core module and is never required for the default backend: only
+  install it if `BRAIN_KP_BACKEND=kpcli` is what you actually want.
+
 ## How it works
 
 - **Folders.** Memory is plain Markdown with YAML frontmatter in numbered folders (see
