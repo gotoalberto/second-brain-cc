@@ -35,6 +35,8 @@ except Exception:                                   # kp.py must work without th
     B = None
     STATE = os.path.join(os.path.expanduser("~"), ".claude", "state", "brain")
 
+import kp_backend as KPB                            # backend resolution and argv translation
+
 # The harness redirects state to a temp dir: that way no test writes (or deletes) backups
 # backups under $HOME.
 STATE = os.environ.get("BRAIN_KP_STATE") or STATE
@@ -64,9 +66,13 @@ def resolve_db(environ, config):
 _CFG     = load_config()
 DB       = resolve_db(os.environ, _CFG)
 KEYFILE  = os.environ.get("BRAIN_KP_KEYFILE") or os.path.expanduser(str(_CFG.get("keyfile") or ""))
-CLI      = (os.environ.get("BRAIN_KP_CLI") or shutil.which("keepassxc-cli")
-            or next((p for p in ("/opt/homebrew/bin/keepassxc-cli", "/usr/local/bin/keepassxc-cli",
-                                 "/usr/bin/keepassxc-cli") if os.path.exists(p)), "keepassxc-cli"))
+# Backend and binary: kp_backend._resolve() (BRAIN_KP_BACKEND, then shutil.which(), then a
+# short fallback list) is the single place that owns this precedence now; kp.py only adds its
+# own long-standing BRAIN_KP_CLI override on top, and only for keepassxc-cli — kp_backend's
+# own resolution already ran at ITS import (KPB.KIND / KPB.PATH), so this is the same
+# precedence, relocated, not duplicated.
+KIND     = KPB.KIND
+CLI      = (os.environ.get("BRAIN_KP_CLI") or KPB.PATH) if KIND == "keepassxc" else KPB.PATH
 SERVICE  = "second-brain-kdbx"
 TTL_DEF  = 365 * 86400                             # 365 days from unlock, survives reboot
 PROMPT_TIMEOUT = int(os.environ.get("BRAIN_KP_PROMPT_TIMEOUT") or 45)
@@ -321,7 +327,20 @@ def ask_confirm(title_, body, button):
 def guard_lock(force):
     """Writing while the database is open in another client loses changes: whoever saves
     afterwards clobbers the other. Hence a write stops at a lock — unless it can be
-    proved that nobody holds that lock any more."""
+    proved that nobody holds that lock any more.
+
+    KeePassXC's `.lock` file convention (pid/user/host beside the database) is not something
+    kpcli/File::KDBX writes or reads, so there is nothing here to probe under that backend.
+    `cmd_put`, `cmd_mv` and `cmd_rmdir` all call this unconditionally before they write, so
+    dying here would make every kpcli write refuse outright — defeating the whole point of
+    the translated add/edit/mkdir. The skip is LOGGED rather than silent (never a quiet
+    no-op): the dedicated `kp.py locks` command, which exists only to probe or clear a lock
+    and nothing depends on it succeeding, is where this limitation is surfaced to the user —
+    see cmd_locks below.
+    """
+    if KIND == "kpcli":
+        _B_log("kp", "guard_lock-skip-kpcli")
+        return
     lk = lock_state()
     if lk["status"] == "free":
         return
@@ -766,6 +785,13 @@ def refresh_work_copy():
 
 
 def _probe(pw, path):
+    """Does the master open this file at all? `unlocked()` calls this directly, ahead of
+    every command, so it has to speak whichever backend is in use — the "ls" translation is
+    always available (one of the six), so this doubles as the kpcli backend's master check.
+    """
+    if KIND == "kpcli":
+        return KPB.run(KIND, CLI, ["ls", path], path, pw, timeout=CLI_TIMEOUT,
+                       pwfile_dir=os.path.join(STATE, "kp-pwfiles"))
     return subprocess.run([CLI, "ls", "-q"] + (["-k", KEYFILE] if KEYFILE else []) + [path],
                           timeout=CLI_TIMEOUT, input=pw + "\n",
                           capture_output=True, text=True)
@@ -810,7 +836,13 @@ def _B_log(channel, event, **fields):
 
 
 def cli(args, master, extra_stdin="", check=True):
-    """Runs keepassxc-cli with the master on stdin."""
+    """Runs the backend for one call — keepassxc-cli (unchanged) or kp_backend.run() for the
+    kpcli backend. This is the single place that knows the difference between the two, the
+    same way it was already the single place that knew the difference between `DB` and the
+    working copy.
+    """
+    if KIND == "kpcli":
+        return _cli_kpcli(args, master, extra_stdin, check)
     cmd = [CLI, args[0], "-q"]
     if KEYFILE:
         cmd += ["-k", KEYFILE]
@@ -848,6 +880,36 @@ def cli(args, master, extra_stdin="", check=True):
     return p
 
 
+def _cli_kpcli(args, master, extra_stdin, check):
+    """The kpcli branch of cli(): kp_backend.run() straight against the real database — the
+    working-copy trick above the module (`DBF`, `work_copy()`) exists only for keepassxc-cli's
+    own smbfs quirk; File::KDBX has no such limitation, so there is no copy to make here.
+    Only the six subcommands kp_backend.translate() covers succeed; anything else dies with a
+    clear message naming the operation, per the plan's scope cut for this backend.
+    """
+    _t0 = time.time()
+    try:
+        p = KPB.run(KIND, CLI, args, DB, master, stdin_extra=extra_stdin, timeout=CLI_TIMEOUT,
+                   pwfile_dir=os.path.join(STATE, "kp-pwfiles"))
+    except KPB.Unsupported as exc:
+        die("kp_backend: \"%s\" is not one of the operations available with the kpcli "
+            "backend (only ls, search, show, mkdir, add, edit are). Switch to keepassxc-cli "
+            "for this, or run it by hand on a machine where KeePassXC is installed."
+            % exc, EXIT_NODB)
+    except subprocess.TimeoutExpired:
+        _B_log("kp", args[0], secs="%.0f" % CLI_TIMEOUT, rc="timeout")
+        die("kp_kdbx.pl %s did not answer in %ds." % (args[0], CLI_TIMEOUT), EXIT_NODB)
+    _B_log("kp", args[0], secs="%.2f" % (time.time() - _t0), rc=p.returncode,
+           entry=args[-2] if len(args) > 2 else "")
+    if check and p.returncode != 0:
+        err = (p.stderr or p.stdout or "").strip()
+        if re.search(r"(?i)cannot open the database", err):
+            cache_del()
+            die("wrong master password (cache discarded). Repeat the command.", EXIT_NOMASTER)
+        die("kp_kdbx.pl %s failed: %s" % (args[0], err[:400]))
+    return p
+
+
 def cli_clip(entry, attr, seconds, master):
     """Copies to the clipboard WITHOUT blocking for the `seconds` of waiting.
 
@@ -859,7 +921,15 @@ def cli_clip(entry, attr, seconds, master):
     Here it is launched detached (`start_new_session`) and waited on only long enough to
     see whether it fails outright. If it is still alive past that margin, it copied fine
     and is counting down: it is left there and the clipboard clears itself.
+
+    keepassxc-cli only: `clip` is outside the six subcommands kp_backend.translate() covers,
+    and there is no equivalent to shell out to for kpcli. Called directly (cmd_get's default),
+    this dies with a clear message. cmd_put's own internal call (after generating a NEW
+    password) checks KIND itself first and skips this instead of dying mid-write — see there.
     """
+    if KIND == "kpcli":
+        die("kp_backend: clipboard copying is not available with the kpcli backend. Use "
+            "`kp.py get <entry> --show` or `--pipe <cmd>` instead.", EXIT_NODB)
     cmd = [CLI, "clip", "-q"]
     if KEYFILE:
         cmd += ["-k", KEYFILE]
@@ -1072,6 +1142,9 @@ def ensure_group(pw, group):
 
 
 def exists(pw, entry):
+    if KIND == "kpcli":
+        return KPB.run(KIND, CLI, ["show", DB, entry], DB, pw, timeout=CLI_TIMEOUT,
+                       pwfile_dir=os.path.join(STATE, "kp-pwfiles")).returncode == 0
     return subprocess.run([CLI, "show", "-q"] + (["-k", KEYFILE] if KEYFILE else []) +
                           [DB, entry], input=pw + "\n", timeout=CLI_TIMEOUT,
                           capture_output=True, text=True).returncode == 0
@@ -1168,6 +1241,12 @@ def cmd_init(a):
     a new empty database there first: keepassxc-cli db-create asks for the master on the terminal."""
     path = os.path.abspath(os.path.expanduser(a.db))
     if a.create and not os.path.exists(path):
+        if KIND == "kpcli":
+            die("kp_backend: creating a new database (`kp.py init --create`) is not "
+                "available with the kpcli backend — db-create is outside the six operations "
+                "it covers. Create the .kdbx some other way first (KeePassXC on another "
+                "machine, or keepassxc-cli directly), then point this machine at it with "
+                "`kp.py init --db PATH` (no --create).", EXIT_NODB)
         if not (os.path.exists(CLI) or shutil.which(CLI)):
             die("keepassxc-cli not found", EXIT_NODB)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1536,8 +1615,15 @@ def cmd_put(a):
     if source:
         print("source     : %s%s" % (source, ", original deleted" if cleanup else ""))
     if generate_it:
-        cli_clip(entry, "Password", a.timeout, pw)
-        print("password on the clipboard (%ds)." % a.timeout)
+        if KIND == "kpcli":
+            # cli_clip() itself would die() here (clip is not one of the six kpcli covers),
+            # and the entry has already been written successfully by this point: dying mid-
+            # print would hide that from the caller instead of pointing at how to read it.
+            print("generated password not copied to the clipboard (clipboard copying is not "
+                  "available with the kpcli backend). Read it with:  kp.py get %s --show" % entry)
+        else:
+            cli_clip(entry, "Password", a.timeout, pw)
+            print("password on the clipboard (%ds)." % a.timeout)
     print("backup: %s" % os.path.basename(backup_path))
     print("reference for the note:  kp://%s#password" % entry)
 
@@ -1548,6 +1634,11 @@ def cmd_set(a):
 
 
 def cmd_locks(a):
+    if KIND == "kpcli":
+        die("kp_backend: lock-file checks are not available with the kpcli backend "
+            "(KeePassXC's .lock file convention is not meaningful to it — kpcli/File::KDBX "
+            "neither writes nor reads it). Coordinate writes by hand if another client "
+            "might have this database open.", EXIT_NODB)
     lk = lock_state()
     if lk["status"] == "free":
         print("lock       : free, writing is possible")
