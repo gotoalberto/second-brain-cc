@@ -60,14 +60,20 @@ def default_fallback_paths(kind):
     resort after BRAIN_KP_BACKEND and shutil.which() have both had their say — never presented
     as the only way to find the binary, the same spirit as kp.py's own CLI resolution.
 
-    kpcli's only real candidate is this repo's own kp_kdbx.pl, which ships with it: nothing to
-    install, nothing to search $PATH for beyond the (practically always missing) exact name
-    shutil.which() is asked for first.
+    kpcli has no fallback path here on purpose. kp_kdbx.pl ships inside this repo, so
+    os.path.exists() on it is always true regardless of whether Perl or File::KDBX are
+    actually installed — it is not a signal that the kpcli backend is usable, only that the
+    checkout is complete. Treating it as "found" here used to make kpcli win by default on
+    any machine without keepassxc-cli installed (including a bare CI checkout), silently
+    switching every user without keepassxc-cli to a backend that then fails outright. kpcli
+    stays reachable only through an explicit `BRAIN_KP_BACKEND=kpcli`, or through
+    shutil.which() genuinely finding kp_kdbx.pl on $PATH — both real signals that someone
+    chose it, unlike the file merely existing in the repo.
     """
     if kind == "keepassxc":
         candidates = ("/opt/homebrew/bin/keepassxc-cli", "/usr/local/bin/keepassxc-cli", "/usr/bin/keepassxc-cli")
     else:
-        candidates = (KP_KDBX_PL,)
+        candidates = ()
     return [p for p in candidates if os.path.exists(p)]
 
 

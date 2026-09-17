@@ -72,6 +72,18 @@ def test_resolve():
           K._resolve({"BRAIN_KP_BACKEND": "kpcli"}, which_none, fallback_none) == ("kpcli", "kp_kdbx.pl"))
 
 
+def test_default_fallback_paths_never_silently_picks_kpcli():
+    print("\n== default_fallback_paths: kp_kdbx.pl existing in the checkout is not a usability signal ==")
+    check("kp_kdbx.pl really is on disk in this checkout (the scenario the bug depends on)",
+          os.path.exists(K.KP_KDBX_PL), K.KP_KDBX_PL)
+    check("default_fallback_paths('kpcli') is empty even though the file exists",
+          K.default_fallback_paths("kpcli") == [], K.default_fallback_paths("kpcli"))
+    result = K._resolve({}, which_none, K.default_fallback_paths)
+    check("on a machine with no keepassxc-cli and no BRAIN_KP_BACKEND (a bare CI checkout), "
+          "_resolve with the REAL default_fallback_paths still picks keepassxc, not kpcli",
+          result[0] == "keepassxc", result)
+
+
 def test_translate_ls():
     print("\n== translate: ls ==")
     db = "/db/path.kdbx"
@@ -179,7 +191,8 @@ def test_split_confirmation():
 
 
 def main():
-    for t in (test_resolve, test_translate_ls, test_translate_search, test_translate_show, test_translate_mkdir,
+    for t in (test_resolve, test_default_fallback_paths_never_silently_picks_kpcli, test_translate_ls,
+              test_translate_search, test_translate_show, test_translate_mkdir,
               test_translate_add_edit, test_translate_unsupported, test_build, test_split_confirmation):
         try:
             t()
