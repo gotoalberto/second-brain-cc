@@ -463,9 +463,10 @@ def main():
                   else "no effective changes")
             return 2 if blocked else 0
         n = len(out.splitlines())
-        # Who committed, so the history is readable with several machines in play.
-        msg = "vault: %d file(s) — %s — %s" % (
-            n, MACHINE, time.strftime("%Y-%m-%d %H:%M"))
+        # No machine identity in a message that gets pushed: this commit is public. MACHINE
+        # itself stays as it is everywhere else in this file (the non-pushed B.log() calls).
+        msg = "vault: %d file(s) — %s" % (
+            n, time.strftime("%Y-%m-%d %H:%M"))
         code, out, err = git("commit", "-q", "-m", msg)
         if code != 0:
             print("commit failed: %s %s" % (out[:200], err[:200]))
