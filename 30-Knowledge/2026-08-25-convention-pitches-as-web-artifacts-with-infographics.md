@@ -50,6 +50,14 @@ contrast, generous whitespace, one idea per screen.
 - Design work on a web deliverable follows the `dev` skill's gates: design skills, critique rounds, one
   round only about images, and a look in a real browser after every correction.
 
+## Anti-AI-slop pass
+
+The same techniques that keep a web deliverable from reading as AI-made apply to slides: seed-string
+or ambitious-prompt variety across an infographic set instead of the same template repeated per
+slide, a blind fresh-context critic pass on the rendered slides before calling the deck done, and
+generated image or video where a CSS-only graphic would look generic.
+[[2026-09-18-convention-anti-ai-slop-design-techniques]]
+
 ## Why
 
 A presenter speaking live is competed with, not supported, by a dense slide. A drawing that explains the

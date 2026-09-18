@@ -91,6 +91,23 @@ for concrete examples:
 
 If the user says "you decide", propose one concrete, described direction and confirm it before building.
 
+**No strong reference to anchor on?** Don't fall back on the generic AI default (purple gradient
+hero, text-left/graphic-right, three feature cards). Two techniques help:
+
+- **Seed-string technique.** Generate a long random alphanumeric string first, derive the creative
+  direction from it (colour, layout, typography, looking for subpatterns, not the literal
+  characters), and don't reveal the string in the output. The randomness has to come from outside
+  the model: asking it to "be random" or "totally unique" just produces confident fake variety
+  with the same underlying defaults.
+- **Ambitious/wild prompting loop.** Anchor the brief to a concrete external inspiration (a video
+  game, an interior-design movement, an art installation) instead of an abstract adjective. To find
+  the inspiration: ask for many shallow ideas (breadth, no detail), react to favourites and note
+  what's specifically off, ask for a refinement based on that reaction, then have it write the
+  concise build prompt for the refined direction. A direction that sounds like it can't work is
+  often worth trying anyway.
+
+Full rationale: `~/Brain/30-Knowledge/2026-09-18-convention-anti-ai-slop-design-techniques.md`.
+
 ### 3b. The skill stack
 
 A web interface is not laid out by hand. This gate expects four **third-party skills**, installed
@@ -140,7 +157,28 @@ Before calling a website or page finished:
 ```
 
 **Three complete rounds, each with its corrections applied.** Reading the critique and saying it looks
-fine is not a round. Each round starts from the corrected result of the previous one.
+fine is not a round. Each round starts from the corrected result of the previous one. This is a
+mechanical pass (typography, spacing, accessibility, the checklist rules in `design-taste-frontend`).
+
+**On top of that, at least one round is blind.** Self-review is not objective: the agent that built
+the page is anchored on its own code, decisions and rationale, and can't easily zoom out and think
+differently. Spawn a fresh subagent as design critic, given only a screenshot, never the code, the
+implementation history or the builder's own rationale, and ask it to:
+
+- name the aesthetic the design is going for, imagine how a top design studio would execute that
+  specific aesthetic, and list the concrete gaps between the two;
+- watch for patterns that feel overdone, excessive or otherwise obviously AI-generated;
+- give tight, specific feedback, not vague prose, bold and opinionated, not safe;
+- return a score.
+
+Apply its fixes, then run it again in a new fresh context (no memory of the previous round) until it
+independently clears the bar. Don't put the passing threshold in the critic's own prompt: it scores
+honestly only if it doesn't know what score it needs to hit. Prefer objective, comparative framing
+over vague ones: worst is "does this look beautiful, not AI-generated"; best is "here are N
+professional references and one screenshot of ours, rank by polish" (real reference images help, as
+a moodboard, not a copy target).
+
+Full rationale: `~/Brain/30-Knowledge/2026-09-18-convention-anti-ai-slop-design-techniques.md`.
 
 ### 3e. One round only about the images
 
@@ -156,7 +194,28 @@ At least one whole round looks at each image:
 
 Fix them: crop, reframe, recompress, replace. Verify with a screenshot, not from memory.
 
-### 3f. Everything is looked at in a real browser
+### 3f. Generated media over CSS-only decoration, when it earns its place
+
+Coding agents default to gradients, shapes and CSS-only patterns instead of real images or motion
+because that's the path of least resistance, not because it looks better. Two tools to reach for
+deliberately, never as a default on every project:
+
+- **Image generation plus shader/3D effects, combined.** A generated image alone still reads as a
+  stock photo; a shader or 3D effect alone still reads as a template. Layering a generated image
+  with an effect on top (refraction, glass, lighting) is what reads as deliberate craft.
+- **Video generation** (an aggregator such as fal.ai, so the choice of model doesn't go stale) for
+  motion the CSS/animation toolkit in 3c can't produce: a looping decorative clip (generate on a
+  solid background, then chroma-key or matte it out so it drops into the UI like a layered asset)
+  or a fluid transition between two UI states (generate two keyframe stills, then use a video
+  model's interpolation mode to animate between them, scrubbed by scroll or triggered by
+  navigation).
+
+Keys for image/video generation always come from `kp`, never pasted into chat or committed to the
+repo: a low-limit key dedicated to the agent's own use.
+
+Full rationale: `~/Brain/30-Knowledge/2026-09-18-convention-anti-ai-slop-design-techniques.md`.
+
+### 3g. Everything is looked at in a real browser
 
 After building, after every critique round and after every single correction, open the page in the
 agent's browser tool and look at it. A fix nobody saw rendered is a fix nobody knows works.
@@ -181,8 +240,8 @@ On top of the `/task` closing, state:
 - **Gate 1:** the command showing the tests committed before the implementation.
 - **Gate 2:** where the boundary is and what is testable without standing anything up.
 - **Gate 3:** which design skills were used, what motion was added and with which skill, how many
-  critique rounds and what each changed, what was fixed in the images, and that it was checked in the
-  browser.
+  critique rounds (mechanical and blind) and what each changed, whether generated images or video
+  were used, what was fixed in the images, and that it was checked in the browser.
 
 If a gate could not be passed, **say so in the closing**. A gate skipped silently is worse than no gate,
 because it creates the impression it was met.
