@@ -977,8 +977,15 @@ def unlocked(interactive=True):
                 cache_put(pw, _ttl_wanted())
             return pw
         if from_cache and attempt == 1:
-            cache_del()                       # stale cache: ask again, do not fail
-            continue
+            # Only a REJECTED master means the cache is stale. Anything else — a network
+            # mount stalling, the file briefly busy, the backend erroring for its own
+            # reasons — says nothing about the password, and deleting the cache over it
+            # turns one transient I/O blip into a prompt for every session afterward.
+            # _BAD_KEY already draws this distinction; it just was not consulted here.
+            if re.search(_BAD_KEY, (p.stderr or p.stdout or "")):
+                cache_del()                   # genuinely stale master: ask again
+                continue
+            continue                          # transient failure: keep the cache, retry
         die("cannot open the database: %s" % (p.stderr or p.stdout).strip()[:300],
             EXIT_NOMASTER)
 

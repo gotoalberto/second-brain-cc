@@ -137,6 +137,55 @@ def main():
         check("keepassxc-cli gets the master on stdin", stdin.splitlines()[:1] == ["correct-horse"], stdin)
         check("and never in argv", "correct-horse" not in argv and db in argv, argv)
 
+        # ------------------------------------------------ unlocked(): a transient probe
+        # failure must not be treated as a rejected master. Only _BAD_KEY does that.
+        import types
+
+        def stub_probe(results):
+            results = list(results)
+
+            def fake(pw, path):
+                rc, err = results.pop(0)
+                return types.SimpleNamespace(returncode=rc, stdout="", stderr=err)
+            return fake
+
+        K.work_copy = lambda: None       # no local-copy fallback in play for this check
+
+        cache_del_calls = []
+        K.cache_del = lambda: cache_del_calls.append(1)
+        get_master_calls = []
+
+        def fake_get_master_cached(interactive=True):
+            get_master_calls.append(interactive)
+            return "cached-master", True
+
+        K.get_master = fake_get_master_cached
+        K._probe = stub_probe([(1, "connection reset"), (0, "")])
+        pw = K.unlocked(interactive=False)
+        check("a transient probe failure keeps the cached master and retries instead of "
+              "dropping the cache",
+              pw == "cached-master" and cache_del_calls == [] and len(get_master_calls) == 2,
+              (pw, cache_del_calls, get_master_calls))
+
+        cache_del_calls.clear()
+        get_master_calls.clear()
+
+        def fake_get_master_after_del(interactive=True):
+            get_master_calls.append(interactive)
+            if len(get_master_calls) == 1:
+                return "cached-master", True
+            return None, False           # headless, cache now empty: nobody to ask
+
+        K.get_master = fake_get_master_after_del
+        K._probe = stub_probe([(1, "Invalid credentials were provided")])
+        try:
+            K.unlocked(interactive=False)
+            rc = 0
+        except SystemExit as e:
+            rc = e.code
+        check("a genuinely rejected master (matching _BAD_KEY) still drops the cache",
+              rc == K.EXIT_NOMASTER and cache_del_calls == [1], (rc, cache_del_calls))
+
         # ------------------------------------------------ platform backends
         which_none = lambda name: None
         which_all = lambda name: "/usr/bin/" + name
