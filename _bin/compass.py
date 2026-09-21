@@ -110,6 +110,12 @@ def build_sections(con, sid=None, cwd=None):
     is ever dropped (see fit)."""
     secs = [("header", "# Brain — the user's memory (vault: ~/Brain)", 100)]
 
+    # Which machine this is and what it has, probed locally in milliseconds (machine_caps.py).
+    # Before the protocol, so no rule is read as if it applied to some other machine.
+    machine = machine_section()
+    if machine:
+        secs.append(machine)
+
     prot = PB.protocol_text()
     if prot:
         secs.append(("protocol", "\n## Protocol\n" + prot, 90))
@@ -138,6 +144,16 @@ def build_sections(con, sid=None, cwd=None):
     secs.append(("footer", "\n%d notes indexed. Search with `/recall`, run with "
                  "`/task`, save with `/save`." % total, 80))
     return secs
+
+
+def machine_section():
+    """The `## This machine` block: ("machine", text, priority), or None. Never raises."""
+    try:
+        import machine_caps
+        return machine_caps.section()
+    except Exception as e:
+        B.log_error("compass.machine_section", e)
+        return None
 
 
 def health_section(state_dir=None):
