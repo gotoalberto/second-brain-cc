@@ -644,6 +644,34 @@ def test_vault_routines(D):
               "`save` skill" in body and "subagent" in body.lower(), name)
 
 
+def test_requires(D):
+    print("\n== requires: what a routine needs on the machine it runs on ==")
+    fm = "---\nid: r\n%s---\n\nbody\nrequires: {\"programs\": [\"not-this\"]}\n"
+    check("no requires key is no requirement", D.parse_requires(fm % "") == (None, None))
+    check("nor with no frontmatter", D.parse_requires("just a prompt") == (None, None))
+    got, problem = D.parse_requires(fm % ('requires: {"repos": [".", {"path": "~/code/tool", '
+                                          '"url": "https://example.com/tool.git"}], "programs": ["git", "jq"], '
+                                          '"paths": ["~/data/input.csv"]}\n'))
+    check("a JSON object is read into repos, programs and paths", problem is None and got is not None
+          and got.repos == ((".", ""), ("~/code/tool", "https://example.com/tool.git"))
+          and got.programs == ("git", "jq") and got.paths == ("~/data/input.csv",), (got, problem))
+    got, problem = D.parse_requires(fm % 'requires: {"programs": ["git"]}\n')
+    check("a missing list is an empty one", problem is None and got.repos == () and got.paths == ()
+          and got.programs == ("git",), (got, problem))
+    check("the body is never read as frontmatter", D.parse_requires(fm % "")[0] is None)
+    for name, line in (("a list instead of an object", 'requires: ["bin:git"]\n'),
+                       ("an unknown key", 'requires: {"programs": ["git"], "logins": ["x"]}\n'),
+                       ("a program that is not a string", 'requires: {"programs": [1]}\n'),
+                       ("an empty program name", 'requires: {"programs": [" "]}\n'),
+                       ("a repo object with no path", 'requires: {"repos": [{"url": "https://example.com/x.git"}]}\n'),
+                       ("a repo object with a non-string url", 'requires: {"repos": [{"path": "x", "url": 3}]}\n'),
+                       ("an empty object", 'requires: {}\n'),
+                       ("text that is not JSON", 'requires: git, jq\n')):
+        got, problem = D.parse_requires(fm % line)
+        check("%s is a problem that names the expected shape" % name,
+              got is None and "requires is not a JSON object" in (problem or ""), (got, problem))
+
+
 def main():
     try:
         from routine_auth_core import domain as D
@@ -653,7 +681,7 @@ def main():
         for t in (test_classify, test_token_shape, test_redact, test_failover, test_pool_and_expiry,
                   test_cli_rules, test_run_rules, test_success_contract, test_permission_problem,
                   test_prompt_framing, test_run_identity_and_env, test_delivery_contract, test_scratch_rules,
-                  test_vault_routines):
+                  test_vault_routines, test_requires):
             try:
                 t(D)
             except Exception as exc:
