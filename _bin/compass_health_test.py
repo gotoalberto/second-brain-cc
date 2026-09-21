@@ -23,8 +23,8 @@ for _p in PATHS.values():
     os.makedirs(_p)
 ENV = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": PATHS["home"], "TMPDIR": ROOT,
        "BRAIN_STATE": PATHS["state"], "BRAIN_VAULT": PATHS["vault"], "BRAIN_OFFLINE": "1",
-       "PYTHONDONTWRITEBYTECODE": "1", "GIT_CEILING_DIRECTORIES": ROOT}
-os.environ.update({k: ENV[k] for k in ("HOME", "BRAIN_STATE", "BRAIN_VAULT", "BRAIN_OFFLINE")})
+       "PYTHONDONTWRITEBYTECODE": "1", "GIT_CEILING_DIRECTORIES": ROOT, "BRAIN_MACHINE_KEY": "test-box-12345678"}
+os.environ.update({k: ENV[k] for k in ("HOME", "BRAIN_STATE", "BRAIN_VAULT", "BRAIN_OFFLINE", "BRAIN_MACHINE_KEY")})
 sys.path.insert(0, HERE)
 
 ok, fail = [], []
@@ -121,12 +121,22 @@ def main():
           [s[0] for s in secs])
     check("and the startup budget measures it", "health" in [s[0] for s in PB.assess(secs)["sections"]])
     check("the budget report, which has no session, does not", "health" not in [s[0] for s in plain])
+    names = [s[0] for s in secs]
+    check("the startup block carries the This machine section right after the header",
+          names[:2] == ["header", "machine"], names)
+    machine = dict((s[0], s[1]) for s in secs).get("machine", "")
+    check("it names this machine by its key", "## This machine" in machine and "test-box-12345678" in machine, machine)
+    check("the budget measures it, and the budget report sees it too",
+          "machine" in [s[0] for s in PB.assess(secs)["sections"]] and "machine" in [s[0] for s in plain])
+    check("the section stays a small part of the startup budget", B.est_tokens(machine) <= 250, B.est_tokens(machine))
 
     write_state(active=OPEN)
     p, out, ctx = run_compass("aaaa1111-0000-4000-8000-000000000001")
     check("compass, run as the SessionStart hook, puts the health block in the context",
           p.returncode == 0 and "## Brain health" in ctx and "fired no Brain hook" in ctx,
           (p.returncode, p.stdout[:300], p.stderr[-300:]))
+    check("and the This machine block, with the forced key", "## This machine" in ctx and "test-box-12345678" in ctx,
+          ctx[:400])
     check("and tells the user in its message, with the command",
           "guardian.py status" in (out.get("systemMessage") or ""), out.get("systemMessage"))
     write_state(active={}, raised={})
