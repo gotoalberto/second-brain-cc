@@ -13,7 +13,9 @@ jobs accepted at first run (<brain state>/first-run.json) are installed or reloa
                                     Exit 0 when the run completed, whatever it found; 1 only
                                     when its own repair work errored. This is what launchd runs:
                                     findings reach you through status and alerts, never through
-                                    the job's exit status.
+                                    the job's exit status. It also refreshes this
+                                    machine's entry in the machine registry
+                                    (machines.py register --daily), once a day.
   guardian.py repair --hooks-only   agent wiring only, no launchd, no alerts (bootstrap.sh)
   guardian.py status                everything it watches (the agent routines' token pool
                                     included), changes nothing
@@ -164,6 +166,13 @@ def make_parser():
     return ap
 
 
+def register_machine() -> str:
+    """Keep this machine's entry in the machine registry fresh: once a day, cheap, never fatal."""
+    import machines
+
+    return machines.register_daily()
+
+
 def _print_findings(report):
     if not report.findings:
         print("healthy")
@@ -193,6 +202,11 @@ def main(argv=None) -> int:
 
     if args.cmd == "repair":
         res = application.run_repair(ports, agents_only=args.hooks_only)
+        if not args.hooks_only:
+            try:
+                log("machine registry: %s" % register_machine())
+            except Exception as exc:
+                log("machine registry: failed: %s" % exc.__class__.__name__)
         for c in res.changes:
             print("changed: " + c)
         for b in res.backups:

@@ -3,6 +3,8 @@
 
   machines.py              list every registered machine, newest first, this one starred
   machines.py register     write or refresh this machine's record
+  machines.py register --daily   the same, at most once a day and never failing (what the
+                           guardian's scheduled repair and first run call)
   machines.py here         print this machine's own record as JSON
 
 Presence only shows machines with a session open right now. This registry keeps one record per
@@ -135,6 +137,35 @@ def register(today=None, info=None, folder=None):
     return changed, path
 
 
+DAILY_STAMP = "machines-registered.txt"      # in <brain state>: the day this machine last registered
+
+
+def register_daily(environ=None, run=None, today=None):
+    """Register this machine at most once a day, from a periodic job. Never raises.
+
+    The guardian's scheduled repair calls it on every machine, and first run calls it once at
+    the end, so no machine has to be registered by hand. A stamp in this machine's own state
+    holds the day it last registered: every later call that day reads that one file and
+    stops, without asking `claude auth status` or touching the shared folder. Returns what
+    happened: "registered", "unchanged", "already today" or "failed: <why>".
+    """
+    environ = os.environ if environ is None else environ
+    today = today or dt.date.today().isoformat()
+    try:
+        stamp = os.path.join(brain_paths.effective_state_dir(environ), DAILY_STAMP)
+        try:
+            with open(stamp, encoding="utf-8") as fh:
+                if fh.read().strip() == today:
+                    return "already today"
+        except OSError:
+            pass
+        changed, _path = register(today, describe(environ, run), registry_dir(environ))
+        _atomic_write(stamp, today + "\n")
+        return "registered" if changed else "unchanged"
+    except Exception as exc:
+        return "failed: %s" % (exc.__class__.__name__,)
+
+
 def list_machines(folder=None):
     """One entry per machine, newest first: {"entry": record, "aliases": [older keys]}."""
     return C.dedupe(read_all(folder))
@@ -154,6 +185,9 @@ def main(argv=None, environ=None, run=None, today=None):
     today = today or dt.date.today().isoformat()
     cmd = argv[0] if argv else "list"
     folder = registry_dir(environ)
+    if cmd == "register" and "--daily" in argv[1:]:
+        print("machine registry: %s" % register_daily(environ, run, today))
+        return 0
     if cmd == "register":
         changed, path = register(today, describe(environ, run), folder)
         print(("registered: %s" if changed else "unchanged: %s") % path)

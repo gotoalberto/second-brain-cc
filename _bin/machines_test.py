@@ -164,8 +164,42 @@ def test_main():
     check("an unknown command is exit 2 with the usage", rc == 2 and "register" in buf.getvalue())
 
 
+def test_register_daily():
+    root = tmpdir()
+    env = {"BRAIN_MACHINE_KEY": "laptop-a-aaaaaaaa", "USER": "u", "BRAIN_SHARED_DIR": os.path.join(root, "shared"),
+           "BRAIN_STATE": os.path.join(root, "state")}
+    run = fake_run(LOGGED_IN)
+    got = M.register_daily(environ=env, run=run, today="2026-01-02")
+    record = os.path.join(root, "shared", "machines", "laptop-a-aaaaaaaa.json")
+    check("the daily registration writes this machine's record", got == "registered" and os.path.isfile(record),
+          got)
+    check("and leaves a stamp in this machine's state", os.path.isfile(os.path.join(root, "state", M.DAILY_STAMP)))
+    calls = len(run.calls)
+    got = M.register_daily(environ=env, run=run, today="2026-01-02")
+    check("a second run the same day asks nothing and writes nothing",
+          got == "already today" and len(run.calls) == calls, (got, run.calls))
+    got = M.register_daily(environ=env, run=run, today="2026-01-03")
+    check("the next day registers again", got in ("registered", "unchanged") and len(run.calls) > calls, got)
+    blocker = os.path.join(root, "a-file")
+    with open(blocker, "w") as fh:
+        fh.write("in the way")
+    broken = dict(env, BRAIN_SHARED_DIR=os.path.join(blocker, "shared"), BRAIN_STATE=os.path.join(blocker, "state"))
+    try:
+        got, raised = M.register_daily(environ=broken, run=run, today="2026-01-04"), None
+    except Exception as exc:
+        got, raised = None, exc
+    check("a registry that cannot be written is reported, never raised",
+          raised is None and str(got).startswith("failed"), (got, raised))
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = M.main(["register", "--daily"], environ=broken, run=run, today="2026-01-04")
+    check("`register --daily` exits 0 even when it failed, and says what happened",
+          rc == 0 and "machine registry: failed" in buf.getvalue(), buf.getvalue())
+
+
 def main():
-    for t in (test_registry_dir, test_claude_account, test_describe, test_register_and_read, test_here, test_main):
+    for t in (test_registry_dir, test_claude_account, test_describe, test_register_and_read, test_here, test_main,
+              test_register_daily):
         print("\n== %s ==" % t.__name__)
         try:
             t()

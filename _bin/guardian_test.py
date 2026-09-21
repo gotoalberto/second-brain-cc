@@ -70,10 +70,12 @@ def main():
     os.environ["BRAIN_STATE"] = state
     saved = {name: getattr(A, name) for name in ("run_check", "run_repair", "run_status")}
     saved_build = G.build_ports
+    saved_register = getattr(G, "register_machine", None)
     try:
         sentinel = object()
         built = Recorder(sentinel)
         G.build_ports = built
+        G.register_machine = Recorder("registered")
 
         report = D.Report([D.Finding("agent:claude-code:hooks:Stop:x.py", "fail", "claude-code hook Stop x.py: missing", True)])
         A.run_check = Recorder(report)
@@ -110,8 +112,25 @@ def main():
         code, _ = run_main(G, ["check"])
         check("check keeps its severity exit for people and scripts: warn-only exits 1", code == 1, code)
 
+        check("the scheduled repair registers this machine in the machine registry",
+              len(G.register_machine.calls) > 0, G.register_machine.calls)
+        logged = open(os.path.join(state, "logs", "guardian.log")).read()
+        check("and logs what the registration did", "machine registry: registered" in logged, logged[-300:])
+        G.register_machine = Recorder()
+        run_main(G, ["check"])
+        check("check does not register (it only looks)", G.register_machine.calls == [])
+
+        def exploding():
+            raise RuntimeError("registry unavailable")
+        G.register_machine = exploding
+        A.run_repair = Recorder(A.RepairResult(report=D.Report([])))
+        code, _ = run_main(G, ["repair"])
+        check("a registration that blows up never fails the repair", code == 0, code)
+
+        G.register_machine = Recorder()
         A.run_repair = Recorder(res)
         run_main(G, ["repair", "--hooks-only", "--settings", "/tmp/elsewhere/settings.json"])
+        check("--hooks-only does not register", G.register_machine.calls == [])
         check("--hooks-only repairs agent wiring only",
               A.run_repair.calls[0][1].get("agents_only") is True, A.run_repair.calls)
         check("--settings reaches the port wiring",
@@ -151,6 +170,8 @@ def main():
         for name, fn in saved.items():
             setattr(A, name, fn)
         G.build_ports = saved_build
+        if saved_register is not None:
+            G.register_machine = saved_register
 
     # the real wiring, constructed against temporary locations and never called
     vault = tmpdir()
