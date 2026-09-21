@@ -29,8 +29,8 @@ Run everything below as the harness user, except the package steps.
 
 ## 1. Install gh from GitHub's repository, and pin it
 
-Distribution packages of `gh` lag well behind. On Ubuntu with Ubuntu Pro, an old `gh` is served
-from the ESM pocket at apt priority 510, above the 500 the official repository gets, so adding
+Distribution packages of `gh` lag well behind. On some distributions an old `gh` is served
+from an extra pocket at a higher apt priority than the official repository gets, so adding
 the official repository alone changes nothing and apt says nothing. Pin it:
 
 ```sh

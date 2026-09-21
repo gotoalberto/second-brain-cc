@@ -332,7 +332,7 @@ def routine_due(routine: dict, last_run_date, now: dt.datetime, host: str, is_mi
 
     A routine fires when it is enabled, belongs to this machine (`machine_matches`), has a
     schedule, is of a type the runner executes, today is one of its days, its time has passed,
-    and it has not already run today — which is what lets a 10-minute poll run a 06:00
+    and it has not already run today. That is what lets a 10-minute poll run a 06:00
     routine once, and a machine asleep at 06:00 still run it when it wakes.
     """
     if not routine.get("enabled"):
