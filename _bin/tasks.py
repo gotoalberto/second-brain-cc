@@ -234,6 +234,18 @@ def parse_days(spec: str) -> set[int]:
     return GD.parse_days(spec)
 
 
+def clean_cell(cell: str) -> str:
+    """A table cell without the emphasis and code ticks the note uses for readability.
+
+    A bare `*` (or `*` in code ticks) is the "every machine" / "every day" value, not emphasis:
+    stripping it would leave an empty cell that no machine and no day matches.
+    """
+    text = re.sub(r"^[`*_]+|[`*_]+$", "", cell)
+    if not text and cell.strip("`") == "*":
+        return "*"
+    return text
+
+
 def read_registry() -> list[dict]:
     """Parse the markdown table out of the registry note.
 
@@ -253,8 +265,7 @@ def read_registry() -> list[dict]:
             continue
         if cells[0].lower() in ("id", "---") or set(cells[0]) <= {"-", ":"}:
             continue
-        # Strip markdown emphasis and code ticks the note uses for readability
-        cells = [re.sub(r"^[`*_]+|[`*_]+$", "", c) for c in cells]
+        cells = [clean_cell(c) for c in cells]
         # `--` marks a row with no schedule (ad-hoc, started by hand). It is kept so the
         # registry stays the complete inventory, but it is never due.
         if not re.match(r"^(\d{1,2}:\d{2}|--)$", cells[2]):

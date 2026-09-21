@@ -61,6 +61,15 @@ id: scheduled-tasks
 | elsewhere | other-box | 06:00 | * | agent | 90-Meta/routines/routine-a.md | yes | other machine |
 """
 
+# The registry's own cells as the note writes them: a bare `*`, one in code ticks, and emphasis
+# around a real value. Only the emphasis may go.
+STAR_REGISTRY = """| id | machine | time | days | type | command | enabled | notes |
+|----|---------|------|------|------|---------|---------|-------|
+| everywhere | * | 06:00 | * | agent | 90-Meta/routines/routine-a.md | yes | every machine |
+| ticked | `*` | 06:00 | `*` | agent | 90-Meta/routines/routine-a.md | yes | in code ticks |
+| **bold** | *box* | 06:00 | * | shell | echo hi | yes | emphasis |
+"""
+
 ROUTINE = "---\nid: routine-a\nneeds_bridge: none\n---\n\nSummarise the day in one line.\n"
 
 
@@ -465,6 +474,26 @@ def main():
         check("a disabled agent row is not", T.due(rows["routine-off"], state) == (False, "disabled"))
         check("claude-app rows stay inventory only",
               T.due(rows["app-row"], state) == (False, "type 'claude-app' is not run by this runner"))
+
+        print("\n== a bare `*` in the registry ==")
+        main_registry = T.REGISTRY
+        T.REGISTRY = write(os.path.join(tmpdir(), "scheduled-tasks.md"), STAR_REGISTRY)
+        try:
+            stars = {t["id"]: t for t in T.read_registry()}
+        finally:
+            T.REGISTRY = main_registry
+        check("a bare `*` machine survives the emphasis strip",
+              stars.get("everywhere", {}).get("machine") == "*", stars.get("everywhere"))
+        check("a bare `*` days survives the emphasis strip",
+              stars.get("everywhere", {}).get("days") == "*", stars.get("everywhere"))
+        check("a `*` in code ticks is `*` too",
+              stars.get("ticked", {}).get("machine") == "*" and stars["ticked"].get("days") == "*",
+              stars.get("ticked"))
+        check("emphasis around a real value is still stripped",
+              stars.get("bold", {}).get("id") == "bold" and stars["bold"].get("machine") == "box",
+              stars.get("bold"))
+        check("a `*` row is due on any machine",
+              "everywhere" in stars and T.due(stars["everywhere"], state) == (True, ""))
 
         print("\n== running an agent routine ==")
         rc, out = quiet(T.main, [])
