@@ -14,7 +14,14 @@ exposes it:
   Linux    `/etc/machine-id` (no root needed), else `/sys/class/dmi/id/product_uuid`
 
 Only that 8-hex fragment is ever written to disk; the full UUID never is, and neither leaves the
-machine it was read on. Every effect (which platform this is, how to run a command, how to open a
+machine it was read on.
+
+The key carries the hostname, so it changes when the hostname does. That is fine for a file name
+and wrong for "is this record mine?": `machine_is_mine()` answers that one, and accepts every form
+this machine has written (the current key, the raw uuid, the bare label `brainlib._machine()` still
+writes locally, a key from before a rename that ends in the same fragment, and any alias listed in
+`BRAIN_MACHINE_ALIASES`). A machine that stops recognising its own name either locks itself out of
+its own records or clears someone else's. Every effect (which platform this is, how to run a command, how to open a
 file) is a parameter, the same style as `kp.py`'s `cache_backend()` / `dialog_backend()`, so the
 decision is testable with no real hardware. See machine_identity_test.py.
 """
@@ -121,6 +128,78 @@ def current_key(hostname=None, platform=None, run=None, open_=None, environ=None
     run = run or _run
     open_ = open_ or open
     return machine_key(hostname, read_uuid(platform, run, open_))
+
+
+def machine_label(hostname=None):
+    """The human name of this machine: the sanitised short hostname. It may change; the uuid may not."""
+    return sanitize_hostname(hostname if hostname is not None else os.uname().nodename)
+
+
+def id8(value):
+    """The first 8 hex digits of an id, lowercased, or "" when it has fewer. Dashes and case ignored."""
+    hexes = re.sub(r"[^0-9a-f]", "", str(value or "").lower())
+    return hexes[:8] if len(hexes) >= 8 else ""
+
+
+_KEY_FRAGMENT = re.compile(r"-([0-9a-f]{8})$")
+
+
+def historical_keys(environ=None):
+    """Names this machine went by that nothing else can recognise, from `BRAIN_MACHINE_ALIASES`.
+
+    A comma-separated list. It is only needed for a machine with no readable uuid that was
+    renamed: a key with the same uuid fragment is already recognised on its own.
+    """
+    environ = os.environ if environ is None else environ
+    out = []
+    for item in (environ.get("BRAIN_MACHINE_ALIASES") or "").split(","):
+        item = item.strip()
+        if item and item not in out:
+            out.append(item)
+    return tuple(out)
+
+
+def machine_is_mine(value, current=None, uuid=None, label=None, historical=None,
+                    hostname=None, platform=None, run=None, open_=None, environ=None):
+    """Does `value` name THIS machine? Every form it has ever written counts, case aside.
+
+    Accepted: the current key, the raw uuid (with or without dashes), the bare label, any key
+    ending in this machine's own uuid fragment (the same machine under an older hostname) and
+    every historical key. The bare label is the loose end, on purpose: local records written by
+    `brainlib._machine()` carry it, and a machine must recognise those. Two machines that share a
+    hostname also share that bare form, which is why nothing shared across machines uses it.
+
+    `current`, `uuid`, `label` and `historical` default to what this machine reports; tests pass
+    them in. With `BRAIN_MACHINE_KEY` forced, no hardware is read: the forced key, its own
+    fragment and the listed aliases are the whole identity.
+    """
+    v = str(value or "").strip().casefold()
+    if not v:
+        return False
+    environ = os.environ if environ is None else environ
+    forced = (environ.get("BRAIN_MACHINE_KEY") or "").strip()
+    if historical is None:
+        historical = historical_keys(environ)
+    if current is None and forced:
+        current, uuid, label = forced, "", ""
+    if current is None or uuid is None:
+        hostname = hostname if hostname is not None else os.uname().nodename
+        if uuid is None:
+            uuid = read_uuid(platform if platform is not None else sys.platform, run or _run, open_ or open)
+        if current is None:
+            current = machine_key(hostname, uuid)
+    if label is None:
+        label = machine_label(hostname)
+    names = {str(n).strip().casefold() for n in (current, uuid, label) + tuple(historical) if n}
+    if v in names:
+        return True
+    if uuid and set(v) <= set("0123456789abcdef-") and v.replace("-", "") == str(uuid).replace("-", "").lower():
+        return True
+    frag = id8(uuid)
+    if not frag:
+        m = _KEY_FRAGMENT.search(str(current or "").lower())
+        frag = m.group(1) if m else ""
+    return bool(frag) and v.endswith("-" + frag)
 
 
 def main():
