@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for remote_control — how the supervised Remote Control server is started.
+"""Tests for remote_control: how the supervised Remote Control server is started.
 
 The pure half takes its environment, paths and probes as arguments. `serve` is run for real as a
 subprocess against a fake `claude` on PATH that prints what it was given. Run standalone:

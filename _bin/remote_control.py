@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""remote_control.py — the Remote Control server this machine keeps running, so the Claude app can reach it.
+"""remote_control.py: the Remote Control server this machine keeps running, so the Claude app can reach it.
 
   remote_control.py serve   start `claude remote-control --chrome --name <name>` from the dedicated
                             repository; what the launchd agent and the systemd user unit run
