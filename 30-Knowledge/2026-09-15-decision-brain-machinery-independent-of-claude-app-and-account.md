@@ -4,12 +4,12 @@ title: Brain machinery runs independently of any agent app, account or model
 type: decision
 area: [harness]
 projects: []
-tags: [independence, scheduler, hooks, guardian, credentials, routines, decision]
+tags: [independence, scheduler, hooks, guardian, credentials, routines, machines, remote-control, decision]
 status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-15
+updated: 2026-09-21
 supersedes: []
 ---
 
@@ -49,7 +49,21 @@ different agent.
 - Smoke checks of this machinery must isolate every state path they touch.
   [[2026-09-15-convention-smoke-checks-must-isolate-all-state-not-just-the-input-file]]
 
+## Machines and Claude accounts
+
+The same holds across machines. The Claude account a machine's CLI is signed into decides only
+which account's Claude app lists that machine under Remote Control. The vault reaches the machine
+over git with a per-machine deploy key, and secrets as a kdbx file on the machine; neither is a
+Claude credential. So machines signed into different Claude accounts share the same notes and
+secrets, and switching a machine's account changes where its sessions appear and nothing else.
+Setup and verification: [[2026-09-21-runbook-install-on-a-new-machine]].
+
+Remote Control is the one piece that needs the account itself: it requires the CLI's own
+claude.ai login and refuses API keys and routine tokens. That is why every machine keeps its CLI
+logged in, separately from any desktop app.
+
 ## Links
 
 - [[2026-09-15-decision-first-run-asks-before-connecting-accounts]]
 - [[2026-09-15-convention-scheduled-job-exit-code-should-reflect-crash-not-findings]]
+- [[2026-09-21-decision-supported-environments-macos-and-linux]]
