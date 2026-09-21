@@ -494,6 +494,7 @@ def run_status(ports) -> str:
 
     try:
         host = ports.routines.host()
+        is_mine = getattr(ports.routines, "is_mine", None)
         last = ports.routines.last_runs()
         lines.append("routines on %s:" % host)
         try:
@@ -502,7 +503,7 @@ def run_status(ports) -> str:
             degraded = set()
         for r in ports.routines.routines():
             entry = last.get(r["id"], {})
-            due, why = D.routine_due(r, entry.get("last_run_date"), now, host)
+            due, why = D.routine_due(r, entry.get("last_run_date"), now, host, is_mine)
             lines.append("  %-38s %-10s %-28s last exit %s%s"
                          % (r["id"], r["type"], "DUE NOW" if due else why,
                             entry.get("last_exit", "-"),

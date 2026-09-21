@@ -128,6 +128,9 @@ class RoutineSource(Protocol):
     def routines(self) -> list: ...                   # rows of 90-Meta/scheduled-tasks.md
     def last_runs(self) -> dict: ...                  # {id: {"last_run_date", "last_exit", ...}}
     def meta(self, row: dict) -> dict: ...            # {"app_task", "needs_bridge"} from the routine file
+    # Optional: does a row's `machine` cell name this machine (key, uuid, historical form)?
+    # A source without it matches `*` and host() only.
+    def is_mine(self, machine: str) -> bool: ...
 
 
 class HookLivenessSource(Protocol):

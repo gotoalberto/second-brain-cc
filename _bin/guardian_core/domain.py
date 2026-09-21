@@ -312,17 +312,32 @@ def parse_days(spec: str) -> set:
     return days
 
 
-def routine_due(routine: dict, last_run_date, now: dt.datetime, host: str):
+def machine_matches(machine, host: str, is_mine=None) -> bool:
+    """Does a registry `machine` cell name this machine?
+
+    `*` is every machine. The bare hostname is how rows were written before machine identity
+    existed, and keeps working. Anything else goes to `is_mine` (machine_identity.machine_is_mine
+    in production), which accepts this machine's key, its uuid, and every historical form.
+    """
+    machine = str(machine or "").strip()
+    if not machine:
+        return False
+    if machine in ("*", host):
+        return True
+    return bool(is_mine is not None and is_mine(machine))
+
+
+def routine_due(routine: dict, last_run_date, now: dt.datetime, host: str, is_mine=None):
     """Returns (should_run, reason_if_not). The one due-ness rule tasks.py runs by.
 
-    A routine fires when it is enabled, belongs to this host (or `*`), has a schedule,
-    is of a type the runner executes, today is one of its days, its time has passed, and
-    it has not already run today — which is what lets a 10-minute poll run a 06:00
+    A routine fires when it is enabled, belongs to this machine (`machine_matches`), has a
+    schedule, is of a type the runner executes, today is one of its days, its time has passed,
+    and it has not already run today — which is what lets a 10-minute poll run a 06:00
     routine once, and a machine asleep at 06:00 still run it when it wakes.
     """
     if not routine.get("enabled"):
         return False, "disabled"
-    if routine.get("machine") not in ("*", host):
+    if not machine_matches(routine.get("machine"), host, is_mine):
         return False, "belongs to %s" % routine.get("machine")
     if routine.get("time") == "--":
         return False, "manual only (no schedule)"

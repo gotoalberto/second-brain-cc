@@ -242,6 +242,23 @@ def test_schedule(D):
     check("claude-app rows are not run by this runner",
           D.routine_due(dict(r, type="claude-app"), None, mon_0700, "box")
           == (False, "type 'claude-app' is not run by this runner"))
+    mine = lambda m: m in ("box-1a2b3c4d", "1a2b3c4d-0000-4000-8000-000000000000")
+    check("a row naming this machine's key is due when the identity check says it is mine",
+          D.routine_due(dict(r, machine="box-1a2b3c4d"), None, mon_0700, "box", mine) == (True, ""))
+    check("a row naming its uuid is due too",
+          D.routine_due(dict(r, machine="1a2b3c4d-0000-4000-8000-000000000000"), None, mon_0700, "box",
+                        mine)[0] is True)
+    check("a row the identity check rejects still belongs elsewhere",
+          D.routine_due(dict(r, machine="other"), None, mon_0700, "box", mine) == (False, "belongs to other"))
+    check("an old bare-hostname row still matches with the identity check in place",
+          D.routine_due(dict(r, machine="box"), None, mon_0700, "box", lambda m: False)[0] is True)
+    check("`*` matches without asking the identity check",
+          D.routine_due(r, None, mon_0700, "box", lambda m: 1 / 0)[0] is True)
+    check("machine_matches: `*`, the host, or what the check accepts",
+          D.machine_matches("*", "box") and D.machine_matches("box", "box")
+          and not D.machine_matches("other", "box")
+          and D.machine_matches("box-1a2b3c4d", "box", mine)
+          and not D.machine_matches("", "box", lambda m: True))
 
 
 def F(D, key, sev="fail", summary=None):

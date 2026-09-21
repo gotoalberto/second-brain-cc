@@ -648,6 +648,16 @@ def test_status():
     check("status changes nothing",
           agents[0].repairs == 0 and p.state.saves == 0 and p.notifier.sent == []
           and p.outbox.queued == [] and p.outbox.flushes == 0)
+    keyed = [{"id": "keyed", "machine": "box-1a2b3c4d", "time": "06:00", "days": "*", "type": "shell",
+              "enabled": True, "command": "true"}]
+    src = FakeRoutines(keyed)
+    src.is_mine = lambda m: m == "box-1a2b3c4d"
+    text = A.run_status(make(routines=src))
+    check("status asks the routine source whether a row's machine is this one",
+          "DUE NOW" in text and "belongs to" not in text, text)
+    text = A.run_status(make(routines=FakeRoutines(keyed)))
+    check("a routine source without an identity check falls back to the host name",
+          "belongs to box-1a2b3c4d" in text, text)
 
 
 def token(label="routines-1", **kw):

@@ -640,6 +640,9 @@ class TasksRegistrySource:
     def host(self) -> str:
         return self._t().host()
 
+    def is_mine(self, machine: str) -> bool:
+        return self._t().machine_is_mine(machine)
+
     def routines(self) -> list:
         return self._t().read_registry()
 

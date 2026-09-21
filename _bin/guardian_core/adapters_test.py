@@ -485,6 +485,9 @@ def test_agent_runner():
     src = AD.TasksRegistrySource(fake_tasks)
     check("the routine source reads the task runner's registry and state",
           src.host() == "box" and src.routines() == [{"id": "a"}] and src.last_runs() == {"a": {"last_exit": 0}})
+    fake_tasks.machine_is_mine = lambda m: m == "box-1a2b3c4d"
+    check("the routine source answers 'is this machine mine' with the task runner's identity check",
+          src.is_mine("box-1a2b3c4d") and not src.is_mine("other"))
 
 
 # ---------------------------------------------------------------- mail

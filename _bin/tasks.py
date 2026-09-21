@@ -8,7 +8,8 @@ machines and a task pinned to one must not fire on the others.
 
 Invoked every 10 minutes by the scheduler accepted at first run (launchd com.secondbrain.tasks, a
 systemd user timer or a cron line second-brain-tasks). A task fires when:
-  - its `machine` matches this host (or is `*`),
+  - its `machine` is `*`, this host's name, or any form machine_identity.machine_is_mine()
+    accepts for this machine (its key, its uuid, a historical key),
   - today matches its `days`,
   - its scheduled time has passed today,
   - and it has not already run today.
@@ -285,13 +286,34 @@ def read_registry() -> list[dict]:
     return tasks
 
 
+_MINE_CACHE: dict = {}                # machine cell -> machine_identity's verdict, once per process
+
+
+def machine_is_mine(value: str) -> bool:
+    """Does a registry `machine` cell name this machine, by machine_identity.machine_is_mine?
+
+    It accepts this machine's key, its uuid, its label and every historical form. The verdict is
+    kept per value: on macOS each question would otherwise read the hardware uuid again. A
+    failure is "not mine", never a crash of the runner.
+    """
+    if value not in _MINE_CACHE:
+        try:
+            import machine_identity
+
+            _MINE_CACHE[value] = bool(machine_identity.machine_is_mine(value))
+        except Exception:
+            _MINE_CACHE[value] = False
+    return _MINE_CACHE[value]
+
+
 def mine(task: dict) -> bool:
-    return task["machine"] in ("*", host())
+    return GD.machine_matches(task["machine"], host(), machine_is_mine)
 
 
 def due(task: dict, state: dict) -> tuple[bool, str]:
     """Returns (should_run, reason_if_not). The rule lives in guardian_core.domain.routine_due."""
-    return GD.routine_due(task, state.get(task["id"], {}).get("last_run_date"), now(), host())
+    return GD.routine_due(task, state.get(task["id"], {}).get("last_run_date"), now(), host(),
+                          machine_is_mine)
 
 
 # ---------------------------------------------------------------- running

@@ -455,7 +455,7 @@ def main():
 
     saved = {k: getattr(T, k, None) for k in ("VAULT", "REGISTRY", "STATE_DIR", "STATE_FILE", "LOG_DIR",
                                                "RUNNER_LOG", "host", "now", "raise_alert", "clear_alert",
-                                               "token_source", "ROUTINE_AUTH_STATE", "ROUTINE_AUTH_LOG",
+                                               "machine_is_mine", "token_source", "ROUTINE_AUTH_STATE", "ROUTINE_AUTH_LOG",
                                                "ROUTINE_SCRATCH_DIR", "MAIL_SENT_LOG", "CLI_HEALTH_CACHE")}
     old_cmd = os.environ.get("BRAIN_AGENT_CMD")
     old_state = os.environ.get("BRAIN_STATE")
@@ -494,6 +494,37 @@ def main():
               stars.get("bold"))
         check("a `*` row is due on any machine",
               "everywhere" in stars and T.due(stars["everywhere"], state) == (True, ""))
+
+        print("\n== the machine column and machine identity ==")
+        saved_is_mine = T.machine_is_mine
+        T.machine_is_mine = lambda m: m == "box-1a2b3c4d"
+        try:
+            keyed = dict(rows["routine-a"], machine="box-1a2b3c4d")
+            check("a row naming this machine's key is due here", T.due(keyed, state) == (True, ""))
+            check("and is listed as this machine's", T.mine(keyed))
+            check("a row naming another machine is not",
+                  T.due(rows["elsewhere"], state) == (False, "belongs to other-box") and not T.mine(rows["elsewhere"]))
+            check("an old bare-hostname row still runs here",
+                  T.due(rows["routine-a"], state) == (True, "") and T.mine(rows["routine-a"]))
+        finally:
+            T.machine_is_mine = saved_is_mine
+        T._MINE_CACHE.clear()
+        asked = []
+
+        def counting(value):
+            asked.append(value)
+            return False
+
+        import machine_identity
+        real = machine_identity.machine_is_mine
+        machine_identity.machine_is_mine = counting
+        try:
+            T.machine_is_mine("some-key")
+            T.machine_is_mine("some-key")
+        finally:
+            machine_identity.machine_is_mine = real
+            T._MINE_CACHE.clear()
+        check("machine identity is asked once per value per run", asked == ["some-key"], asked)
 
         print("\n== running an agent routine ==")
         rc, out = quiet(T.main, [])
