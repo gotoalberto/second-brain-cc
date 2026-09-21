@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for routine_requires — the preflight that refuses a routine this machine cannot run.
+"""Tests for routine_requires: the preflight that refuses a routine this machine cannot run.
 
 Every probe is a fake (no real PATH lookup, no real disk outside a temporary folder), and `--fix`
 gets a fake `run`, so no real `git clone` ever happens. Every path and name below is invented.

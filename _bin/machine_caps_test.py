@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for machine_caps — the `## This machine` block every session starts with.
+"""Tests for machine_caps: the `## This machine` block every session starts with.
 
 `render()` is pure: a fixed dict in, exact text out. `probe()` gets every effect injected (which,
 exists, the identity, the registry, the tasks pinned here), so no real PATH, Chrome, hostname or

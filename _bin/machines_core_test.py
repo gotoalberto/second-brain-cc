@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for machines_core — the pure rules behind the machine registry.
+"""Tests for machines_core: the pure rules behind the machine registry.
 
 machines.py keeps one JSON file per machine and reads them back. What a record looks like, how
 `claude auth status` is read, how a new registration merges into the old one and how several

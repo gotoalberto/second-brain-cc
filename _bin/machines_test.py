@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for machines.py — the machine registry's thin disk and subprocess half.
+"""Tests for machines.py: the machine registry's thin disk and subprocess half.
 
 Every folder is temporary, `claude auth status` is a fake `run`, and BRAIN_MACHINE_KEY forces the
 identity, so no real hostname, uuid or Claude account is read or written. The rules themselves
