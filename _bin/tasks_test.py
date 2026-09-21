@@ -540,6 +540,38 @@ def main():
         check("--list shows agent routines with their status",
               "routine-a" in out and "type=agent" in out and "disabled" in out, out)
 
+        print("\n== the routine preflight: what this machine lacks refuses the run ==")
+        root, args_file = setup(T)
+        source = FakeTokenSource(FAKE_TOKEN)
+        T.token_source = lambda: source
+        write(os.path.join(T.VAULT, "90-Meta", "routines", "routine-a.md"),
+              '---\nid: routine-a\nneeds_bridge: none\nrequires: {"programs": ["no-such-program-for-this-test"], '
+              '"repos": ["repos/missing"]}\n---\n\nSummarise the day in one line.\n')
+        rc, _ = quiet(T.main, ["--force", "routine-a"])
+        alert = {c[0]: c[1] for c in T.raise_alert.calls}.get("routine:routine-a", "")
+        check("a routine whose requirements are missing here is refused, exit 2",
+              rc == 2 and json.load(open(T.STATE_FILE))["routine-a"]["last_exit"] == 2, rc)
+        check("the agent never starts and the token pool is never read",
+              not os.path.exists(args_file) and source.reads == 0 and not os.path.exists(T.ROUTINE_AUTH_STATE),
+              (os.path.exists(args_file), source.reads))
+        check("the alert names every gap and the preflight command",
+              "no-such-program-for-this-test" in alert and "repos/missing" in alert
+              and "routine_requires.py here" in alert, alert)
+        write(os.path.join(T.VAULT, "90-Meta", "routines", "routine-a.md"),
+              '---\nid: routine-a\nneeds_bridge: none\nrequires: {"programs": ["no quotes allowed": 1]}\n---\n\n'
+              'Summarise the day in one line.\n')
+        rc, _ = quiet(T.main, ["--force", "routine-a"])
+        alert = {c[0]: c[1] for c in T.raise_alert.calls}.get("routine:routine-a", "")
+        check("a requires line that does not parse refuses the run too",
+              rc == 2 and "requires is not a JSON object" in alert and not os.path.exists(args_file), (rc, alert))
+        os.makedirs(os.path.join(T.VAULT, "repos", "present", ".git"))
+        write(os.path.join(T.VAULT, "90-Meta", "routines", "routine-a.md"),
+              '---\nid: routine-a\nneeds_bridge: none\nrequires: {"programs": ["sh"], "repos": ["repos/present"]}'
+              '\n---\n\nSummarise the day in one line.\n')
+        rc, _ = quiet(T.main, ["--force", "routine-a"])
+        check("a routine whose requirements are all here runs as before",
+              rc == 0 and os.path.exists(args_file) and source.reads == 1, (rc, source.reads))
+
         print("\n== routine authentication ==")
         root, args_file = setup(T)
         write(os.path.join(T.VAULT, "90-Meta", "routines", "routine-a.md"),
