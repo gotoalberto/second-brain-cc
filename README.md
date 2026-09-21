@@ -63,7 +63,8 @@ python3 integrations/first-run/first_run.py status
 The first run asks, step by step, whether to connect each optional piece, and installs
 nothing without a yes: a KeePass database, Google accounts, an alert email for the guardian,
 the MCP server for your agents, scheduled jobs (launchd on macOS, systemd user units on Linux,
-cron where systemd is absent), and CLI-agent routines with a token pool. It also asks where to
+cron where systemd is absent), the Remote Control server that makes the machine reachable from
+the Claude app, and CLI-agent routines with a token pool. It also asks where to
 keep files, proposing `~/BrainFiles`. That step is required: the directory is created and
 recorded before the run can complete.
 Answers are remembered in `<brain state>/first-run.json`, so re-running resumes where it
@@ -150,6 +151,126 @@ BRAIN_KP_BACKEND=kpcli python3 _bin/kp.py ls
 - `File::KDBX` is not a Perl core module and is never required for the default backend: only
   install it if `BRAIN_KP_BACKEND=kpcli` is what you actually want.
 
+## Remote Control: every machine is reachable from the Claude app
+
+Every machine Brain is installed on is a Remote Control machine. It appears in the Claude app
+(phone, desktop or claude.ai) under **Remote Control**, and a session opened there runs *on that
+machine*, with its vault, credentials, files and browser. A cloud session is something else: it
+runs on Anthropic's infrastructure and has none of them. An install that does not end with the
+machine listed there is not finished. The first run's `remote_control` step sets it up; the
+full checklist for a new machine is
+[`30-Knowledge/2026-09-21-runbook-install-on-a-new-machine.md`](30-Knowledge/2026-09-21-runbook-install-on-a-new-machine.md).
+
+### Supported environments
+
+macOS and Linux, and nothing else. Skills, routines and scheduled tasks are written to work on
+both, and generic content never names a particular machine: a rule reads "on a Linux machine",
+not "on the server in the closet". Machines are registered in `_bin/machines.py`, every session
+is told which machine it is on and what that machine has (`_bin/machine_caps.py`, the
+`## This machine` block at session start) instead of guessing from the operating system, and a
+scheduled task is moved to a machine only after `_bin/routine_requires.py` finds its repos,
+programs and paths there.
+
+### What each machine needs
+
+- **A normal user, never root.** Claude Code refuses to bypass permissions under root, and
+  driving a machine from a phone through a permission prompt per command is not practical. Brain
+  machines set `"permissions": {"defaultMode": "bypassPermissions"}` and
+  `"skipDangerousModePermissionPrompt": true` in `~/.claude/settings.json`. If the machine is
+  administered from its sessions, give that user sudo, so escalation stays a deliberate `sudo`.
+- **The `claude` CLI logged in with a claude.ai account.** `claude auth login`, then
+  `claude auth status` must show `"loggedIn": true` and `"authMethod": "claude.ai"`. API keys and
+  `claude setup-token` tokens do not work: Remote Control refuses them, and Chrome stays off with
+  them even under `--chrome`. On a Mac the desktop app keeps its own credentials, so the CLI can
+  be logged out on a machine you use every day; a launchd agent inherits none of the app's login.
+  A machine signed into an organisation's account also inherits that organisation's managed
+  settings.
+- **A recent CLI.** An old one rejects `remote-control --chrome`; `claude update` fixes it.
+- **No telemetry switches.** `DISABLE_TELEMETRY`, `DO_NOT_TRACK`,
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` and `DISABLE_GROWTHBOOK` each turn off the feature
+  flags Remote Control depends on. `_bin/remote_control.py` starts the server without them (and
+  without `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`, which would replace the claude.ai
+  login); the first run refuses them in the `env` block of `~/.claude/settings.json`, which the
+  server would read anyway.
+- **Chrome with the Claude extension, on each machine.** Browser tools use the Chrome of the
+  machine the session runs on. On macOS that is your usual Chrome. On Linux it needs an X desktop
+  that starts at boot, not at login (for example xfce under TigerVNC, as a system service bound
+  to localhost), with Chrome started by the desktop and restarted whenever it exits; install the
+  extension and sign it in once, by hand, through VNC. Reach VNC only through an SSH tunnel
+  (`ssh -L 5901:localhost:5901 <user>@<machine>`), never through an open port. Pair and check
+  with `claude --chrome` and `/chrome`. Browsers are discovered per account, not per machine, so
+  a session may offer to drive the Chrome of another machine on the same account.
+
+### The server
+
+`_bin/remote_control.py serve` runs
+
+```bash
+claude remote-control --chrome --name <name>
+```
+
+from a small git repository dedicated to it. The first run's `remote_control` step checks the
+machine first, creates that repository, starts the server once on your terminal, records the
+directory and name in `<brain state>/remote-control.json`, and installs its supervisor.
+
+- **`--chrome` is mandatory.** The `claudeInChromeDefaultEnabled` setting does not cover server
+  mode: without the flag every session has no browser tools, and tends to describe itself as
+  running "in a cloud container".
+- **A worktree spawn mode is forbidden** (`--spawn worktree`, or answering `worktree` at the
+  prompt). Brain's `WorktreeCreate` hook (`seed_worktree.py`) seeds a worktree but does not
+  create one, and with both in play every session dies at birth while the app hangs on
+  "Connecting...". Use `same-dir`.
+- **The working directory is a dedicated repository, not the vault and not the home
+  directory.** The app lists the machine under that repository's name (its folder name, when it
+  has no remote), so the first run proposes `~/<name>`, named like the machine. Workspace trust
+  is only kept for a repository.
+- **Three prompts are answered once, interactively:** trust the workspace, `Enable Remote
+  Control? (y/n)`, and the spawn mode (`same-dir`). The first run offers to start the server on
+  your terminal for exactly that; stop it with Ctrl+C once it says Connected. Trust and spawn
+  mode are kept per absolute path in `~/.claude.json`, so moving the directory asks them again.
+  Do not edit `~/.claude.json` by hand while a `claude` session is running on the machine: one
+  write clobbers the other.
+- **Supervised, never left in tmux.** The server exits after about ten minutes without network.
+  On macOS `_bin/com.secondbrain.remote-control.plist` is a launchd agent with `RunAtLoad` and
+  `KeepAlive` and no `StartInterval`, logging to
+  `~/Library/Application Support/brain/logs/remote-control.log`. On Linux
+  `_bin/systemd/second-brain-remote-control.service` is a systemd user unit with
+  `Restart=always` and no timer, logging to the journal; a user unit only runs at boot with no
+  one logged in when lingering is on, which the first run turns on
+  (`sudo loginctl enable-linger $USER` if it is refused). The guardian keeps it installed and
+  loaded like the other jobs. Cron cannot supervise a server, so there is no cron variant.
+- **Restart it after any change** to the login, settings or Chrome pairing: the server keeps the
+  configuration it started with. `systemctl --user restart second-brain-remote-control`, or
+  `launchctl kickstart -k gui/$(id -u)/com.secondbrain.remote-control`.
+
+`python3 _bin/remote_control.py show` prints the recorded directory, the command and anything
+that would stop it. The server is not a scheduled task, so it has no row in
+`90-Meta/scheduled-tasks.md`.
+
+### Several machines, several Claude accounts, one vault
+
+The Claude account a machine is logged into decides one thing: which account's Claude app lists
+it under Remote Control. It does not decide what the machine can read. The vault travels over
+git with a credential that belongs to the repository, the `.kdbx` is a file each machine reads
+locally (its own, or a copy in a folder you sync), and cross-machine coordination goes through
+`BRAIN_SHARED_DIR`. None of that is tied to a Claude account, so a work machine on a work account
+and a personal one on a personal account read the same notes and the same credentials.
+`_bin/machines.py` records each machine's account, which answers "which machine ran this, and
+under which account".
+
+### Verifying a machine, from the phone
+
+1. `claude auth status`: the right account, so the right app.
+2. `git -C ~/Brain pull` and `python3 _bin/kp.py get <some entry> --pipe 'wc -c'`: the shared
+   context, which works whatever the answer to 1 was.
+3. The server log shows it Connected: `journalctl --user -u second-brain-remote-control` on
+   Linux, `~/Library/Application Support/brain/logs/remote-control.log` on macOS.
+4. On the phone, open the Claude app, choose **Remote Control** and the machine's name, start a
+   session with **+**, and ask it something only that machine could answer. A session that hangs
+   on "Connecting..." means the server refused it: read the server log, the app will not say
+   why. Trust the log and the environment picker (Local, Cloud, Remote Control, SSH) over a
+   session's own account of where it runs.
+
 ## How it works
 
 - **Folders.** Memory is plain Markdown with YAML frontmatter in numbered folders (see
@@ -231,9 +352,12 @@ scheduled jobs you accepted, probes that the hooks actually fire, and alerts you
 notification, email if configured, log) about what it could not fix. A repair run exits 0 when
 it completed, whatever it found. `guardian.py status` shows everything it watches.
 
-The jobs it can manage are the guardian itself, the git sync, the task runner and the file watch.
-Their templates live in `_bin/` (`com.secondbrain.*.plist`, `systemd/second-brain-*`,
-`cron/second-brain-*`); only the ones accepted in the first run are ever installed.
+The jobs it can manage are the guardian itself, the git sync, the task runner, the file watch and
+the Remote Control server. Their templates live in `_bin/` (`com.secondbrain.*.plist`,
+`systemd/second-brain-*`, `cron/second-brain-*`); only the ones accepted in the first run are ever
+installed. A systemd job is a `.service` with its `.timer`, or a `.service` alone when it is a
+long-lived server kept up by `Restart=always` (the Remote Control server, which has no cron
+template).
 
 ## Routines and the two schedulers
 
@@ -349,6 +473,7 @@ The deepest experience today is Claude Code with the plugin; nothing in the vaul
 | `guardian.py` | Keeps hooks, git hooks and scheduled jobs wired, and alerts. |
 | `brain_watch.py` | The file watch and the generated hooks. |
 | `tasks.py` | The periodic task and routine runner. |
+| `remote_control.py` | Starts the supervised Remote Control server from its dedicated repository. |
 | `gen_instructions.py` | Generates `AGENTS.md`, `CLAUDE.md` and `90-Meta/HOOKS-WITHOUT-CLAUDE.md`. |
 | `install_plugin.py`, `claude_settings.py` | Skills and agents sync; recommended Claude Code settings. |
 | `brain_paths.py`, `migrate_state.py`, `pywrap.sh` | Where state lives; moving it out of `~/.claude`; the interpreter picker jobs start through. |

@@ -94,6 +94,12 @@ hand, is in `90-Meta/HOOKS-WITHOUT-CLAUDE.md`. Runbooks:
 `30-Knowledge/2026-09-15-runbook-brain-events.md`, `30-Knowledge/2026-09-15-runbook-brain-guardian.md`
 and `30-Knowledge/2026-09-15-runbook-brain-routine-auth.md`.
 
+The Remote Control server (`_bin/remote_control.py`, kept up by `com.secondbrain.remote-control.plist`
+or `systemd/second-brain-remote-control.service`) is part of the same machinery but is not a
+scheduled task: it is a long-lived server under a supervisor, so it has no row in
+`90-Meta/scheduled-tasks.md` and no cron variant. It is specific to Claude Code: another agent
+reaches the machine its own way.
+
 ---
 
 ## Installing from scratch, on any agent
