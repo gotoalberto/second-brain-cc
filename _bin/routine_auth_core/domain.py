@@ -696,6 +696,68 @@ def parse_agent_args(text: str):
     return (), None
 
 
+# ---------------------------------------------------------------- what a routine requires
+
+_REQUIRES_KEYS = ("repos", "programs", "paths")
+_REQUIRES_PROBLEM = ('requires is not a JSON object with repos (paths, or {"path", "url"} objects), programs and '
+                     "paths (lists of non-empty strings): the run is refused until it is fixed")
+
+
+@dataclass(frozen=True)
+class Requires:
+    """What a routine needs on the machine that runs it, beyond what its agent_args already name.
+
+    `repos` are (path, clone url) pairs, the url "" when none is given; a path is a git checkout
+    when it holds `.git`. `programs` must be on PATH. `paths` must exist. A relative path is
+    relative to the vault, a leading ~ is the home directory: routine_requires.py resolves both."""
+    repos: tuple = ()
+    programs: tuple = ()
+    paths: tuple = ()
+
+
+def _repo(item):
+    if isinstance(item, str) and item.strip():
+        return item.strip(), ""
+    if isinstance(item, dict) and set(item) <= {"path", "url"}:
+        path, url = item.get("path"), item.get("url", "")
+        if isinstance(path, str) and path.strip() and isinstance(url, str):
+            return path.strip(), url.strip()
+    return None
+
+
+def parse_requires(text: str):
+    """(requires, problem) from a routine file's `requires:` frontmatter line.
+
+    A JSON object, e.g. `requires: {"repos": ["~/code/tool"], "programs": ["git"], "paths": []}`;
+    a repo may also be `{"path": "~/code/tool", "url": "<clone url>"}` so `routine_requires.py
+    --fix` can clone it. No key is no requirement (today's behaviour). A key that does not parse is
+    a problem, and the runner refuses the run on it: a typo must never turn into a silent pass.
+    """
+    fm = frontmatter(text)
+    if fm is None:
+        return None, None
+    for line in fm.splitlines():
+        if not line.startswith("requires:"):
+            continue
+        try:
+            value = json.loads(line[len("requires:"):].strip())
+        except ValueError:
+            return None, _REQUIRES_PROBLEM
+        if not isinstance(value, dict) or not value or any(k not in _REQUIRES_KEYS for k in value):
+            return None, _REQUIRES_PROBLEM
+        if any(not isinstance(value.get(k, []), list) for k in _REQUIRES_KEYS):
+            return None, _REQUIRES_PROBLEM
+        repos = [_repo(r) for r in value.get("repos", [])]
+        if any(r is None for r in repos):
+            return None, _REQUIRES_PROBLEM
+        for key in ("programs", "paths"):
+            if value.get(key) and not _strings(value[key]):
+                return None, _REQUIRES_PROBLEM
+        return Requires(tuple(repos), tuple(p.strip() for p in value.get("programs", [])),
+                        tuple(p.strip() for p in value.get("paths", []))), None
+    return None, None
+
+
 # ---------------------------------------------------------------- the success contract
 
 _CONTRACT_KEYS = ("final_line", "required", "forbidden", "required_sends", "sends_to")
