@@ -366,8 +366,10 @@ def test_remote_control():
     open(log, "w").close()
     good, detail = remote(home, state, vault, claude, environ={"DISABLE_TELEMETRY": "1"}).first_start(path, "workstation")
     line = open(log).read().strip()
+    cwd, _, rest = line.partition("|")
     check("the first start runs claude remote-control --chrome --name from the repository, without the telemetry switch",
-          good and line == "%s|remote-control --chrome --name workstation|unset|unset" % path, (line, detail))
+          good and os.path.realpath(cwd) == os.path.realpath(path)
+          and rest == "remote-control --chrome --name workstation|unset|unset", (line, detail))
 
     lc_log = os.path.join(d, "loginctl.log")
     loginctl = write(os.path.join(d, "bin", "loginctl"),

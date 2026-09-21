@@ -26,6 +26,14 @@ def check(name, cond, detail=""):
     print("  %s %s%s" % ("✓" if cond else "✗", name, ("\n      → " + str(detail)) if detail else ""))
 
 
+def _cwd(out):
+    """The directory the fake claude printed, resolved: macOS temp dirs sit behind a symlink."""
+    for line in out.splitlines():
+        if line.startswith("cwd="):
+            return os.path.realpath(line[len("cwd="):])
+    return None
+
+
 def tmpdir():
     d = tempfile.mkdtemp(prefix="remote-control-test-")
     TMP.append(d)
@@ -145,7 +153,7 @@ def test_serve():
     p = subprocess.run([sys.executable, script, "serve"], capture_output=True, text=True, env=env, timeout=30)
     out = p.stdout
     check("serve runs claude from the dedicated repository",
-          p.returncode == 0 and "cwd=%s" % os.path.realpath(repo) in out.replace(repo, os.path.realpath(repo)),
+          p.returncode == 0 and _cwd(out) == os.path.realpath(repo),
           (p.returncode, out, p.stderr))
     check("with --chrome and the recorded name", "args=remote-control --chrome --name workstation" in out, out)
     check("and without the variables that break it", "telemetry=unset traffic=unset" in out, out)
