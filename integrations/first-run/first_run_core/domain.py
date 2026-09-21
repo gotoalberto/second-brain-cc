@@ -7,6 +7,9 @@ so running it again resumes where it stopped and never asks an answered question
   steps       {step: {"status": "done" | "declined", "at": ISO time, ...details}}
   scheduler   {"kind": "launchd" | "systemd" | "cron" | "none", "jobs": [accepted job names]}
 
+The remote_control step's own entry ({"kind", "dir", "name"}) is what tells the guardian to keep the
+Remote Control server installed too; it is not one of the scheduler's periodic jobs.
+
 A step that failed, or that waits on a step not done yet, is not recorded: the next run asks it
 again. Declining a step also declines the steps that cannot work without it. The guardian reads
 `scheduler` and installs or reloads only those jobs.
@@ -19,7 +22,7 @@ import json
 import os
 import re
 
-STEPS = ("kdbx", "google", "files", "multi_machine", "alert_email", "mcp", "scheduler", "routines")
+STEPS = ("kdbx", "google", "files", "multi_machine", "alert_email", "mcp", "scheduler", "remote_control", "routines")
 # Steps that cannot be declined: Brain does not work without them. They are asked until they are done.
 REQUIRED = ("files",)
 ANSWERS = ("done", "declined")
@@ -33,8 +36,13 @@ JOBS = (
     ("watch", "every minute: fire file events (reindex, link repair, sync debounce)"),
 )
 SCHEDULERS = ("launchd", "systemd", "cron")
+# The Remote Control server is a long-lived process, not a periodic job: only a supervisor that restarts it
+# can keep it (launchd KeepAlive, systemd Restart=always). It has its own step, not a row in JOBS.
+SUPERVISORS = ("launchd", "systemd")
+REMOTE_CONTROL_JOB = "remote-control"
 
 _EMAIL = re.compile(r"[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+")
+_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,62}")
 
 
 def new_state() -> dict:
@@ -166,3 +174,66 @@ def token_ref(n: int) -> str:
 
 def token_label(n: int) -> str:
     return "routines-%d" % n
+
+
+# ---------------------------------------------------------------- Remote Control
+
+
+def valid_label(name) -> bool:
+    """The name the machine shows under Remote Control, and its dedicated repository's folder name."""
+    return bool(_LABEL.fullmatch(name or "")) and ".." not in name
+
+
+def default_remote_dir(home: str, label: str, vault: str) -> str:
+    """~/<label>: the app lists the machine under its working directory's repository name, so the folder is
+    named like the machine. Never the vault (compared case-insensitively, as macOS disks are)."""
+    path = os.path.join(home, label)
+    if os.path.normpath(path).casefold() in (os.path.normpath(vault).casefold(), os.path.normpath(home).casefold()):
+        path = os.path.join(home, label + "-remote")
+    return path
+
+
+def auth_problems(text: str) -> list:
+    """What in `claude auth status` stops Remote Control. It takes only a CLI logged in with a claude.ai account:
+    API keys and `claude setup-token` tokens are refused, and Chrome stays off with them even under --chrome."""
+    try:
+        data = json.loads(text or "")
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        return ["`claude auth status` gave no answer that could be read; update the CLI (claude update) "
+                "and log in with `claude auth login`"]
+    if data.get("loggedIn") is not True:
+        return ["the claude CLI is not logged in: run `claude auth login` with a claude.ai account"]
+    method = data.get("authMethod")
+    if method and method != "claude.ai":
+        return ["the claude CLI is logged in through %s: Remote Control needs a claude.ai account "
+                "(`claude auth login`); API keys and setup-token tokens do not work" % method]
+    return []
+
+
+def first_start_text(path: str, label: str) -> str:
+    """The prompts the server asks once, interactively, before a supervisor can run it unattended."""
+    return "\n".join([
+        "  The first start asks three things, once; the answers are kept for this directory:",
+        "    1. whether to trust the workspace %s: yes" % path,
+        "    2. Enable Remote Control? (y/n): y",
+        "    3. the spawn mode, [1] same-dir or [2] worktree: choose same-dir. A worktree spawn mode",
+        "       conflicts with Brain's WorktreeCreate hook, and every session would hang on Connecting.",
+        "  When it says Connected, stop it with Ctrl+C: the supervisor takes over from there.",
+        "  By hand, any time: cd %s && claude remote-control --chrome --name %s" % (path, label),
+    ])
+
+
+def verify_text(label: str, kind: str) -> str:
+    """How to see the server is up, and how to prove it from the phone."""
+    if kind == "systemd":
+        log = "systemctl --user status %s; journalctl --user -u %s" % ((job_label(kind, REMOTE_CONTROL_JOB),) * 2)
+    else:
+        log = ("launchctl list %s; the log, ~/Library/Application Support/brain/logs/remote-control.log,"
+               % job_label(kind, REMOTE_CONTROL_JOB))
+    return "\n".join([
+        "  Check it: %s should show it Connected." % log,
+        "  Then from the phone: open the Claude app, choose Remote Control and %s, start a session with +," % label,
+        "  and ask it something only this machine could answer.",
+    ])

@@ -264,6 +264,130 @@ def test_routines():
     check("and references only, in a private file", "kp://" in text and stat.S_IMODE(os.stat(path).st_mode) == 0o600)
 
 
+FAKE_CLAUDE = r"""#!/bin/sh
+echo "$(pwd)|$*|${DISABLE_TELEMETRY:-unset}|${ANTHROPIC_API_KEY:-unset}" >> "%(log)s"
+case "$*" in
+  "auth status") printf '%%s\n' '%(auth)s'; exit 0 ;;
+  "remote-control --help") printf '%%s\n' '%(help)s'; exit 0 ;;
+esac
+exit 0
+"""
+GOOD_AUTH = '{"loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty"}'
+CHROME_HELP = "  --[no-]chrome   Claude in Chrome for spawned sessions"
+
+
+def remote_world(auth=GOOD_AUTH, help_text=CHROME_HELP, settings=None):
+    d = tmpdir()
+    home, state, vault = os.path.join(d, "home"), os.path.join(d, "state"), os.path.join(d, "home", "Brain")
+    os.makedirs(vault)
+    log = os.path.join(d, "claude.log")
+    claude = write(os.path.join(d, "bin", "claude"), FAKE_CLAUDE % {"log": log, "auth": auth, "help": help_text},
+                   mode=0o755)
+    if settings is not None:
+        write(os.path.join(home, ".claude", "settings.json"), json.dumps(settings))
+    return d, home, state, vault, claude, log
+
+
+def remote(home, state, vault, claude, environ=None, euid=1000, **kw):
+    env = {"PATH": os.path.dirname(claude) + ":/usr/bin:/bin"}
+    env.update(environ or {})
+    kw.setdefault("which", lambda name, path=None: claude if name == "claude" else "/usr/bin/" + name)
+    return AD.RemoteControlSetup(vault, home, state, environ=env, euid=euid, hostname=lambda: "Workstation.local",
+                                 config_path=os.path.join(state, "remote-control.json"), **kw)
+
+
+def test_remote_control():
+    print("\n== Remote Control setup, against a fake claude ==")
+    d, home, state, vault, claude, log = remote_world()
+    r = remote(home, state, vault, claude)
+    check("the default name is this machine's short host name, lower case", r.default_label() == "workstation",
+          r.default_label())
+    check("the vault is the one first run works on", r.vault() == vault)
+    blocking, warnings = r.preflight()
+    check("a normal user, a CLI logged in with claude.ai that knows --chrome: nothing in the way",
+          blocking == [], (blocking, warnings))
+    calls = open(log).read()
+    check("the login is read with claude auth status", "|auth status|" in calls, calls)
+
+    blocking, _ = remote(home, state, vault, claude, euid=0).preflight()
+    check("root is refused: Claude Code will not bypass permissions there", any("root" in b for b in blocking), blocking)
+    blocking, _ = remote(home, state, vault, claude, which=lambda name, path=None: None).preflight()
+    check("no claude CLI is refused", any("claude" in b and "install" in b for b in blocking), blocking)
+
+    d2, home2, state2, vault2, claude2, _ = remote_world(auth='{"loggedIn": true, "authMethod": "api_key"}')
+    blocking, _ = remote(home2, state2, vault2, claude2).preflight()
+    check("an API key login is refused", any("claude.ai" in b for b in blocking), blocking)
+    d2, home2, state2, vault2, claude2, _ = remote_world(help_text="  --name <name>")
+    blocking, _ = remote(home2, state2, vault2, claude2).preflight()
+    check("a CLI too old for remote-control --chrome is refused, with claude update",
+          any("claude update" in b for b in blocking), blocking)
+    d2, home2, state2, vault2, claude2, _ = remote_world(settings={"env": {"DISABLE_TELEMETRY": "1"}})
+    blocking, _ = remote(home2, state2, vault2, claude2).preflight()
+    check("a telemetry switch in ~/.claude/settings.json is refused: the server would read it too",
+          any("DISABLE_TELEMETRY" in b and "settings.json" in b for b in blocking), blocking)
+    blocking, warnings = remote(home, state, vault, claude,
+                                environ={"DO_NOT_TRACK": "1", "ANTHROPIC_API_KEY": "k"}).preflight()
+    check("the same switch, or an API key, only in this shell is a warning: the supervised server runs without it",
+          blocking == [] and any("DO_NOT_TRACK" in w for w in warnings)
+          and any("ANTHROPIC_API_KEY" in w for w in warnings), (blocking, warnings))
+    check("and claude auth status is asked without them", "unset|unset" in open(log).read().splitlines()[-1],
+          open(log).read())
+    _, warnings = remote(home, state, vault, claude, which=lambda name, path=None: claude if name == "claude" else None,
+                         platform="linux").preflight()
+    check("no Chrome here is a warning: sessions would have no browser tools", any("Chrome" in w for w in warnings),
+          warnings)
+
+    good, path = r.prepare(os.path.join(home, "workstation"))
+    check("prepare creates the dedicated folder as a git repository",
+          good and path == os.path.join(home, "workstation") and os.path.isdir(os.path.join(path, ".git")), path)
+    good, again = r.prepare("~/workstation")
+    check("a ~ path is this HOME's, and an existing repository is kept as it is", good and again == path, again)
+    good, why = r.prepare(vault)
+    check("the vault itself is refused", not good and "vault" in why, why)
+    good, why = r.prepare(home)
+    check("so is the home directory, where trust is never kept", not good and "home" in why, why)
+
+    good, where = r.configure(path, "workstation")
+    import remote_control as RC
+    check("configure records the directory and name where remote_control.py serve reads them",
+          good and RC.load(where) == {"dir": path, "name": "workstation"}, where)
+
+    open(log, "w").close()
+    good, detail = remote(home, state, vault, claude, environ={"DISABLE_TELEMETRY": "1"}).first_start(path, "workstation")
+    line = open(log).read().strip()
+    check("the first start runs claude remote-control --chrome --name from the repository, without the telemetry switch",
+          good and line == "%s|remote-control --chrome --name workstation|unset|unset" % path, (line, detail))
+
+    lc_log = os.path.join(d, "loginctl.log")
+    loginctl = write(os.path.join(d, "bin", "loginctl"),
+                     '#!/bin/sh\necho "$*" >> "%s"\n[ "$1" = show-user ] && echo Linger=no\nexit 0\n' % lc_log, mode=0o755)
+    good, detail = remote(home, state, vault, claude, loginctl=loginctl, user="someone").linger()
+    calls = open(lc_log).read()
+    check("lingering is turned on for this user when it is off",
+          good and "show-user someone --property=Linger" in calls and "enable-linger someone" in calls, (calls, detail))
+    on = write(os.path.join(d, "bin", "loginctl-on"), "#!/bin/sh\necho Linger=yes\n", mode=0o755)
+    good, detail = remote(home, state, vault, claude, loginctl=on, user="someone").linger()
+    check("and left alone when it is already on", good and "already" in detail, detail)
+    denied = write(os.path.join(d, "bin", "loginctl-denied"),
+                   '#!/bin/sh\n[ "$1" = show-user ] && echo Linger=no && exit 0\necho "Access denied" >&2; exit 1\n',
+                   mode=0o755)
+    good, detail = remote(home, state, vault, claude, loginctl=denied, user="someone").linger()
+    check("a refusal is reported, not raised", not good and "Access denied" in detail, detail)
+    fake = remote(home, state, vault, claude, environ={"BRAIN_FAKE_SCHEDULER": "1"}, user="someone")
+    check("with BRAIN_FAKE_SCHEDULER no real loginctl is used", fake.loginctl == "true" and fake.linger()[0])
+
+    s = AD.SchedulerSetup(VAULT, home, state, platform="linux", environ={"BRAIN_FAKE_SCHEDULER": "1"})
+    preview = s.preview("systemd", ["remote-control"])
+    check("the scheduler preview shows the server's unit alone, with no timer",
+          "second-brain-remote-control.service" in preview and "[Timer]" not in preview
+          and "Restart=always" in preview, preview)
+    results = s.install("systemd", ["remote-control"])
+    units = os.path.join(home, ".config", "systemd", "user")
+    check("and installs it as the one remote-control job",
+          results == [("second-brain-remote-control", True, results[0][2])]
+          and "second-brain-remote-control.service" in os.listdir(units), (results, os.listdir(units)))
+
+
 def main():
     global AD, D
     try:
@@ -273,7 +397,7 @@ def main():
         check("first_run_core.adapters and domain import", False, "%s: %s" % (type(exc).__name__, exc))
     else:
         for t in (test_files, test_kdbx_google, test_local_files_storage, test_local_shared_storage, test_mcp,
-                 test_scheduler, test_routines):
+                 test_scheduler, test_routines, test_remote_control):
             try:
                 t()
             except Exception as exc:

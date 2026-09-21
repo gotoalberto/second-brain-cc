@@ -24,7 +24,8 @@ Three things are not arbitrary:
   --spawn  is never passed. A worktree spawn mode conflicts with Brain's WorktreeCreate hook
            (seed_worktree.py) and every session dies at birth, hanging on "Connecting...".
   env      DISABLE_TELEMETRY, DO_NOT_TRACK, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC and DISABLE_GROWTHBOOK
-           switch off the feature flags Remote Control depends on; serve drops them before starting.
+           switch off the feature flags Remote Control depends on, and ANTHROPIC_API_KEY or
+           CLAUDE_CODE_OAUTH_TOKEN would replace the claude.ai login it needs; serve drops all of them.
 """
 import json
 import os
@@ -37,6 +38,8 @@ import brain_paths  # noqa: E402
 
 CONFIG_NAME = "remote-control.json"
 BLOCKING_ENV = ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_GROWTHBOOK", "DISABLE_TELEMETRY", "DO_NOT_TRACK")
+# Remote Control takes only the CLI's claude.ai login; either of these in the environment takes precedence over it.
+CREDENTIAL_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 EX_CONFIG = 78
 
 
@@ -84,8 +87,13 @@ def blocking_env(environ):
     return sorted(k for k in BLOCKING_ENV if (environ.get(k) or "").strip())
 
 
+def credential_env(environ):
+    """An API key or setup-token set here, which would stand in for the claude.ai login."""
+    return sorted(k for k in CREDENTIAL_ENV if (environ.get(k) or "").strip())
+
+
 def server_env(environ):
-    return {k: v for k, v in environ.items() if k not in BLOCKING_ENV}
+    return {k: v for k, v in environ.items() if k not in BLOCKING_ENV and k not in CREDENTIAL_ENV}
 
 
 def find_claude(environ, home, which=shutil.which):

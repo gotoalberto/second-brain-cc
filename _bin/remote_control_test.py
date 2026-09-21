@@ -60,6 +60,11 @@ def test_env(RC):
     clean = RC.server_env(env)
     check("the server starts without them, and with everything else",
           clean == {"PATH": "/usr/bin", "HOME": "/home/u"}, clean)
+    creds = {"ANTHROPIC_API_KEY": "k", "CLAUDE_CODE_OAUTH_TOKEN": "t", "PATH": "/usr/bin"}
+    check("an API key or setup-token in the environment would take precedence over the claude.ai login, so it goes too",
+          RC.server_env(creds) == {"PATH": "/usr/bin"} and RC.credential_env(creds) == ["ANTHROPIC_API_KEY",
+                                                                                       "CLAUDE_CODE_OAUTH_TOKEN"],
+          RC.server_env(creds))
     check("the caller's mapping is left as it was", "DISABLE_TELEMETRY" in env)
 
 

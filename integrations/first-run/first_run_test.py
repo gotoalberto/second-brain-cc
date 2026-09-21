@@ -44,7 +44,7 @@ def main():
 
         rc, out, err = run("status")
         check("status on a machine with no first run exits 3 and lists every step as not asked",
-              rc == 3 and out.count("not asked yet") == 8, (rc, out, err))
+              rc == 3 and out.count("not asked yet") == 9 and "remote_control" in out, (rc, out, err))
         rc, out, err = run("run")
         check("run without a terminal changes nothing and says how to run it",
               rc == 0 and not os.path.exists(path) and "setup.sh" in (out + err), (rc, out, err))
@@ -62,12 +62,17 @@ def main():
               and os.path.isdir(files_dir) and os.path.exists(config)
               and json.load(open(config)) == {"dir": files_dir}, (rc, out, err, data))
         check("and records every other step as declined, for CI and unattended machines",
-              len(steps) == 8 and all(v["status"] == "declined" for k, v in steps.items() if k != "files"), steps)
+              len(steps) == 9 and all(v["status"] == "declined" for k, v in steps.items() if k != "files"), steps)
         rc, out, err = run("status")
         check("after that status exits 0", rc == 0, (rc, out))
         rc, out, err = run("reset", "scheduler")
         rc2, out2, _ = run("status")
         check("reset makes one step ask again", rc == 0 and rc2 == 3 and "scheduler    not asked yet" in out2, (rc, out2))
+        rc, out, err = run("reset", "remote_control")
+        rc2, out2, _ = run("status")
+        check("the Remote Control step can be asked again on its own",
+              rc == 0 and rc2 == 3 and "remote_control not asked yet" in out2 and "scheduler    not asked yet" in out2,
+              (rc, out2))
         rc, out, err = run("reset", "nonsense")
         check("reset of an unknown step is a usage error", rc == 2, (rc, err))
     finally:

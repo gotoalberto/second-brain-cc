@@ -1,7 +1,8 @@
 """What the first run needs from the world, and nothing about how it is done.
 
 application.py talks only to these. adapters.py implements them with the terminal, kp.py,
-google.py, the files directory (brain_files.py), the agents' own CLIs and the guardian's scheduler adapters; the tests implement
+google.py, the files directory (brain_files.py), the agents' own CLIs, the guardian's scheduler adapters
+and remote_control.py; the tests implement
 them in memory. Every method that changes the machine returns (ok, detail) and never raises.
 """
 
@@ -66,6 +67,16 @@ class Scheduler(Protocol):
     def detect(self) -> str: ...                           # launchd | systemd | cron | none
     def preview(self, kind: str, jobs: list) -> str: ...
     def install(self, kind: str, jobs: list) -> list: ...  # [(label, ok, detail)]
+
+
+class RemoteControl(Protocol):
+    def vault(self) -> str: ...
+    def default_label(self) -> str: ...                    # this machine's short host name
+    def preflight(self) -> tuple: ...                      # ([what stops the server], [warnings])
+    def prepare(self, path: str) -> tuple: ...             # creates it as a git repository: (ok, absolute path | why)
+    def first_start(self, path: str, label: str) -> tuple: ...  # on the terminal, for the one-time prompts
+    def configure(self, path: str, label: str) -> tuple: ...    # records them where remote_control.py reads them
+    def linger(self) -> tuple: ...                         # systemd: user units run with no one logged in
 
 
 class Routines(Protocol):

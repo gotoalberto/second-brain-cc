@@ -1,5 +1,5 @@
 """The first run's adapters: the terminal, kp.py, google.py, the files directory, agent CLIs, the shell profile,
-the guardian's scheduler adapters and the routine token pool.
+the guardian's scheduler adapters, the Remote Control server and the routine token pool.
 
 Each class implements one port from ports.py. Every method that changes the machine returns
 (ok, detail) and never raises, so one failed step never ends the run.
@@ -351,6 +351,164 @@ class SchedulerSetup:
         return results
 
 
+# ---------------------------------------------------------------- Remote Control
+
+
+CHROME_BINARIES = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
+MAC_CHROME = "/Applications/Google Chrome.app"
+
+
+class RemoteControlSetup:
+    """What the remote_control step does to the machine: check it can serve, create the dedicated repository,
+    start the server once on the terminal for its one-time prompts, record the directory and name where
+    remote_control.py reads them, and keep a systemd user unit running with no one logged in (lingering).
+    The supervisor itself is installed by SchedulerSetup, like every other job."""
+
+    def __init__(self, vault, home, state_dir, environ=None, which=shutil.which, run=subprocess.run, euid=None,
+                 hostname=None, user=None, platform=None, config_path=None, loginctl=None):
+        self._vault, self.home, self.state_dir = vault, home, state_dir
+        self.environ = os.environ if environ is None else environ
+        self.which, self.run = which, run
+        self.euid = os.geteuid() if euid is None and hasattr(os, "geteuid") else euid
+        self.hostname = hostname or (lambda: __import__("socket").gethostname())
+        self.user = user
+        self.platform = platform or sys.platform
+        self.config_path = config_path
+        fake = self.environ.get("BRAIN_FAKE_SCHEDULER") == "1"
+        self.loginctl = "true" if fake else (loginctl or "loginctl")
+
+    def vault(self):
+        return self._vault
+
+    def default_label(self):
+        import re
+        import machine_identity
+
+        name = re.sub(r"[^a-z0-9._-]+", "-", machine_identity.sanitize_hostname(self.hostname()).lower()).strip("-.")
+        return name if D.valid_label(name) else "machine"
+
+    def _claude(self):
+        import remote_control as RC
+
+        return RC.find_claude(self.environ, self.home, which=self.which)
+
+    def _call(self, cmd, timeout=30):
+        import remote_control as RC
+
+        try:
+            p = self.run(cmd, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
+                         env=RC.server_env(dict(self.environ)))
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return None, "%s: %s" % (type(exc).__name__, exc)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+
+    def _settings_env(self):
+        try:
+            with open(os.path.join(self.home, ".claude", "settings.json"), encoding="utf-8") as fh:
+                env = json.load(fh).get("env")
+        except (OSError, ValueError, AttributeError):
+            return {}
+        return env if isinstance(env, dict) else {}
+
+    def _chrome(self):
+        if self.platform == "darwin":
+            return os.path.isdir(MAC_CHROME)
+        return any(self.which(name) for name in CHROME_BINARIES)
+
+    def preflight(self):
+        import remote_control as RC
+
+        blocking, warnings = [], []
+        if self.euid == 0:
+            blocking.append("running as root: Claude Code refuses to bypass permissions there; run the first run "
+                            "as a normal user (with sudo rights if it administers the machine)")
+        claude = self._claude()
+        if not claude:
+            blocking.append("no claude CLI on PATH or in ~/.local/bin: install Claude Code first")
+        else:
+            rc, out = self._call([claude, "auth", "status"])
+            blocking += D.auth_problems(out if rc is not None else "")
+            rc, out = self._call([claude, "remote-control", "--help"])
+            if rc is None:
+                warnings.append("could not ask the claude CLI about remote-control (%s)" % out)
+            elif "chrome" not in out:
+                blocking.append("this claude CLI does not know remote-control --chrome: run `claude update`")
+        found = RC.blocking_env(self._settings_env())
+        if found:
+            blocking.append("%s set in the env block of ~/.claude/settings.json: the server reads it too, and it "
+                            "switches off what Remote Control needs; remove it" % ", ".join(found))
+        for name in RC.blocking_env(self.environ) + RC.credential_env(self.environ):
+            warnings.append("%s is set in this shell: the supervised server runs without it, but a claude started "
+                            "by hand here would not reach Remote Control" % name)
+        if not self._chrome():
+            warnings.append("no Chrome found here: sessions will have no browser tools until Chrome with the Claude "
+                            "extension runs on this machine")
+        return blocking, warnings
+
+    def _full(self, path):
+        full = path.strip()
+        if full == "~" or full.startswith("~/"):
+            full = self.home + full[1:]
+        return os.path.abspath(full)
+
+    def prepare(self, path):
+        full = self._full(path)
+        norm = os.path.normpath(full).casefold()
+        if norm == os.path.normpath(self._vault).casefold():
+            return False, "%s is the vault: Remote Control serves from a small repository of its own" % full
+        if norm == os.path.normpath(self.home).casefold():
+            return False, "%s is the home directory, where workspace trust is never kept" % full
+        try:
+            os.makedirs(full, exist_ok=True)
+        except OSError as exc:
+            return False, "%s: %s" % (type(exc).__name__, exc)
+        if os.path.exists(os.path.join(full, ".git")):
+            return True, full
+        git = self.which("git") or "git"
+        rc, out = self._call([git, "init", "-q", full])
+        if rc != 0:
+            return False, "git init failed: %s" % _last_line(out)
+        return True, full
+
+    def first_start(self, path, label):
+        """On the terminal, so its prompts can be answered; Ctrl+C ends it and not the first run."""
+        import signal
+        import remote_control as RC
+
+        claude = self._claude()
+        if not claude:
+            return False, "no claude CLI"
+        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            p = self.run(RC.command(label, claude), cwd=path, env=RC.server_env(dict(self.environ)),
+                         preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_DFL))
+        except OSError as exc:
+            return False, "%s: %s" % (type(exc).__name__, exc)
+        finally:
+            signal.signal(signal.SIGINT, previous)
+        return True, "claude exit %d" % p.returncode
+
+    def configure(self, path, label):
+        import remote_control as RC
+
+        try:
+            return True, RC.save(path, label, config_path=self.config_path or RC.config_file(self.environ, self.home))
+        except OSError as exc:
+            return False, "%s: %s" % (type(exc).__name__, exc)
+
+    def linger(self):
+        import getpass
+
+        user = self.user or getpass.getuser()
+        rc, out = self._call([self.loginctl, "show-user", user, "--property=Linger"])
+        if rc == 0 and "Linger=yes" in out:
+            return True, "lingering was already on for %s" % user
+        rc, out = self._call([self.loginctl, "enable-linger", user])
+        if rc != 0:
+            return False, _last_line(out) or "loginctl exit %s" % rc
+        return True, "lingering turned on for %s" % user
+
+
 # ---------------------------------------------------------------- routines
 
 
@@ -415,6 +573,7 @@ def build_ports(vault=VAULT, environ=None, stdin=None, stdout=None):
         mcp=McpSetup(vault, home, environ),
         scheduler=SchedulerSetup(vault, home, state, environ=environ),
         routines=RoutinePool(vault, environ),
+        remote=RemoteControlSetup(vault, home, state, environ),
         clock=SystemClock(),
         home=home,
         platform=sys.platform,
