@@ -26,6 +26,7 @@ class Ports:
     mcp: object
     scheduler: object
     routines: object
+    remote: object
     clock: object
     home: str
     platform: str
@@ -243,6 +244,65 @@ def _scheduler(c):
     c.done("scheduler", kind=kind, jobs=installed)
 
 
+def _remote_control(c):
+    p = c.p
+    kind = p.scheduler.detect()
+    if kind not in D.SUPERVISORS:
+        p.prompt.say("Remote Control needs launchd or systemd user units to keep its server running; %s cannot, so it "
+                     "is not set up here." % ("cron" if kind == "cron" else "this machine has neither"))
+        return c.declined("remote_control", kind=kind,
+                          reason="needs launchd or systemd user units to supervise a long-lived server, not %s" % kind)
+    p.prompt.say("Remote Control makes this machine appear in the Claude app (phone, desktop, claude.ai), so a session "
+                 "opened there runs here, with this machine's files, credentials and Chrome. It needs the claude CLI "
+                 "logged in with a claude.ai account (API keys and setup-token tokens do not work), and Chrome with "
+                 "the Claude extension on this machine for browser tools.")
+    if not p.prompt.yes_no("Make this machine reachable with Remote Control (claude remote-control, kept running by "
+                           "%s)?" % kind, False):
+        return c.declined("remote_control", kind=kind)
+    blocking, warnings = p.remote.preflight()
+    for line in warnings:
+        p.prompt.say("  Note: %s" % line)
+    if blocking:
+        return c.failed("remote_control", "; ".join(blocking))
+    label = c.ask_until("  Name this machine shows under Remote Control", D.valid_label, p.remote.default_label(),
+                        "letters, digits, dots, dashes and underscores")
+    path = c.ask_until("  Dedicated git repository to serve from (not the vault; created if missing)", lambda v: bool(v),
+                       D.default_remote_dir(p.home, label, p.remote.vault()), "a directory is required")
+    p.prompt.say("  This is what would be installed:\n%s" % p.scheduler.preview(kind, [D.REMOTE_CONTROL_JOB]))
+    if c.dry_run:
+        p.prompt.say("  Dry run: %s would be created as a git repository and recorded, and the server installed."
+                     % path)
+        return
+    if not p.prompt.yes_no("  Set it up now: the repository, one start in this terminal, then the supervisor?", False):
+        return c.declined("remote_control", kind=kind)
+    good, detail = p.remote.prepare(path)
+    if not good:
+        return c.failed("remote_control", detail)
+    path = detail
+    p.prompt.say(D.first_start_text(path, label))
+    if p.prompt.yes_no("  Start it once now in this terminal to answer them?", True):
+        started, why = p.remote.first_start(path, label)
+        if not started:
+            p.prompt.say("  It did not start (%s). Answer the prompts by hand before relying on it." % why)
+    else:
+        p.prompt.say("  Answer them by hand before relying on it: cd %s && claude remote-control --chrome --name %s"
+                     % (path, label))
+    saved, where = p.remote.configure(path, label)
+    if not saved:
+        return c.failed("remote_control", where)
+    if kind == "systemd":
+        lingering, why = p.remote.linger()
+        if not lingering:
+            p.prompt.say("  Lingering is off (%s): the server stops when you log out and does not start at boot. "
+                         "Turn it on with: sudo loginctl enable-linger $USER" % why)
+    results = {lab: (ok, d) for lab, ok, d in p.scheduler.install(kind, [D.REMOTE_CONTROL_JOB])}
+    good, detail = results.get(D.job_label(kind, D.REMOTE_CONTROL_JOB), (False, "not attempted"))
+    if not good:
+        return c.failed("remote_control", "not installed: %s" % detail)
+    p.prompt.say(D.verify_text(label, kind))
+    c.done("remote_control", kind=kind, dir=path, name=label)
+
+
 def _routines(c):
     p = c.p
     if not p.prompt.yes_no("Run routines (90-Meta/routines) through a CLI agent, with a token pool in KeePass?", False):
@@ -265,7 +325,8 @@ def _routines(c):
 
 
 STEP_FUNCS = {"kdbx": _kdbx, "google": _google, "files": _files, "multi_machine": _multi_machine,
-              "alert_email": _alert_email, "mcp": _mcp, "scheduler": _scheduler, "routines": _routines}
+              "alert_email": _alert_email, "mcp": _mcp, "scheduler": _scheduler, "remote_control": _remote_control,
+              "routines": _routines}
 
 
 # ---------------------------------------------------------------- use cases

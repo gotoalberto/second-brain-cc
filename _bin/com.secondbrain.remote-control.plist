@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.secondbrain.remote-control</string>
+  <!-- Remote Control: this machine registers itself so it can be reached from the Claude app.
+       remote_control.py serve runs `claude remote-control` with the Chrome flag and the machine's
+       name, from the dedicated repository recorded at first run: never the vault, never with a
+       worktree spawn mode. Its docstring says why each of those matters. (XML comments cannot
+       hold a double dash, so the flags are not spelled out here.) -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/home/brain-origin/Brain/_bin/pywrap.sh</string>
+    <string>/home/brain-origin/Brain/_bin/remote_control.py</string>
+    <string>serve</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd starts with a minimal PATH; the claude installer puts the CLI in ~/.local/bin -->
+    <key>PATH</key><string>/home/brain-origin/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key><string>/home/brain-origin</string>
+  </dict>
+  <key>WorkingDirectory</key><string>/home/brain-origin</string>
+  <!-- A long-lived server, not a poll: RunAtLoad plus KeepAlive, never StartInterval. The server
+       exits after about ten minutes without network, and KeepAlive is what brings it back. -->
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>/home/brain-origin/Library/Application Support/brain/logs/remote-control.log</string>
+  <key>StandardErrorPath</key><string>/home/brain-origin/Library/Application Support/brain/logs/remote-control.log</string>
+  <key>ProcessType</key><string>Background</string>
+</dict>
+</plist>

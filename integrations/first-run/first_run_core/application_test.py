@@ -94,7 +94,7 @@ class Clock:
 
 
 SIDE_EFFECTS = ("init", "unlock", "add", "authorize", "check", "persist", "save", "register_claude", "append_profile",
-                "install", "add_token")
+                "install", "add_token", "prepare", "first_start", "configure", "linger")
 
 
 def ports(answers=(), state=None, interactive=True, **over):
@@ -112,6 +112,9 @@ def ports(answers=(), state=None, interactive=True, **over):
         scheduler=Recorder(detect="systemd", preview="[Unit] preview",
                            install=lambda kind, jobs: [(D.job_label(kind, j), True, "installed") for j in jobs]),
         routines=Recorder(agent_available=(True, "~/.local/bin/claude")),
+        remote=Recorder(default_label="workstation", vault="/home/u/Brain", preflight=([], []),
+                        prepare=lambda path: (True, path), first_start=(True, "claude exit 0"),
+                        configure=(True, "/state/remote-control.json"), linger=(True, "lingering is on")),
         clock=Clock(),
         home="/home/u",
         platform="linux",
@@ -122,12 +125,13 @@ def ports(answers=(), state=None, interactive=True, **over):
 
 def side_effects(p):
     out = []
-    for name in ("kdbx", "google", "files", "multi_machine", "mail", "mcp", "scheduler", "routines"):
+    for name in ("kdbx", "google", "files", "multi_machine", "mail", "mcp", "scheduler", "routines", "remote"):
         out += ["%s.%s" % (name, c[0]) for c in getattr(p, name).calls if c[0] in SIDE_EFFECTS]
     return out
 
 
-NO_TO_ALL = [False, "", False, False, False, False]  # kdbx, files (default dir), multi_machine, alert email, MCP, scheduler
+NO_TO_ALL = [False, "", False, False, False, False, False]  # kdbx, files (default dir), multi_machine, alert email, MCP,
+                                                           # scheduler, remote_control
 
 
 def test_decline_everything():
@@ -161,7 +165,8 @@ def test_kdbx_and_google():
     print("\n== KeePass, then Google ==")
     answers = [True, "", True, True,            # kdbx: yes, default path, create it, arm the cache
                True, "1", "personal", "me@example.com", "cid-1", "sec-1", True,   # google: one account, authorise
-               "", False, False, False, False, False]   # files, multi_machine, alert email, MCP, scheduler, routines
+               "", False, False, False, False, False, False]   # files, multi_machine, alert email, MCP, scheduler,
+                                                               # remote_control, routines
     p = ports(answers, kdbx=Recorder(configured="", exists=False))
     A.run(p)
     db = "/home/u/.local/share/brain/brain.kdbx"
@@ -176,18 +181,18 @@ def test_kdbx_and_google():
           and "sec-1" not in repr(p.state.data), p.state.data["steps"]["google"])
 
     answers = [True, "", True, True, True, "1", "Bad Name", "personal", "", "cid", "sec", False,
-              "", False, False, False, False, False]
+              "", False, False, False, False, False, False]
     p = ports(answers)
     A.run(p)
     check("an invalid account name is asked again", ("add", "personal", "cid", "sec", "") in p.google.calls,
           (p.google.calls, p.prompt.said))
 
-    p = ports([False, "", False, False, False, False])
+    p = ports([False, "", False, False, False, False, False])
     A.run(p)
     check("declining the database declines what needs it: Google is not asked and is recorded with the reason",
           p.state.data["steps"]["google"]["status"] == "declined" and "KeePass" in p.state.data["steps"]["google"]["reason"]
           and not any("Google" in q for q in p.prompt.asked) and A.run_status(p)[0], (p.prompt.asked, p.state.data["steps"]))
-    p = ports([True, "", True, "", False, False, False, False],
+    p = ports([True, "", True, "", False, False, False, False, False],
              kdbx=Recorder(configured="", exists=False, init=(False, "no cli")))
     A.run(p)
     check("a database step that failed leaves Google unasked and unrecorded, so a later run asks it",
@@ -196,7 +201,7 @@ def test_kdbx_and_google():
 
 def test_failure_resumes():
     print("\n== a step that fails is asked again next time ==")
-    p = ports([True, "", True, "", False, False, False, False],
+    p = ports([True, "", True, "", False, False, False, False, False],
              kdbx=Recorder(configured="", exists=False, init=(False, "keepassxc-cli not found")))
     res = A.run(p)
     check("a failed step is reported and not recorded",
@@ -208,7 +213,7 @@ def test_failure_resumes():
 
 def test_scheduler_step():
     print("\n== scheduled jobs ==")
-    answers = [False, "", False, False, False] + [True, True, True, False, False, True]   # yes; guardian, sync; install
+    answers = [False, "", False, False, False] + [True, True, True, False, False, True, False]   # yes; guardian, sync; install; no server
     p = ports(answers)
     A.run(p)
     check("only the accepted jobs are installed, with the detected scheduler",
@@ -219,13 +224,13 @@ def test_scheduler_step():
     check("the accepted jobs are recorded where the guardian reads them",
           p.state.data["scheduler"] == {"kind": "systemd", "jobs": ["guardian", "sync"]}, p.state.data.get("scheduler"))
 
-    answers = [False, "", False, False, False] + [True, True, False, False, False, False]  # accepted guardian, refused install
+    answers = [False, "", False, False, False] + [True, True, False, False, False, False, False]  # accepted guardian, refused install
     p = ports(answers)
     A.run(p)
     check("refusing the final install installs nothing and accepts no job",
           "install" not in p.scheduler.names() and p.state.data["scheduler"]["jobs"] == [], p.state.data.get("scheduler"))
 
-    answers = [False, "", False, False, False] + [True, True, True, True, True]
+    answers = [False, "", False, False, False] + [True, True, True, True, True, False]
     p = ports(answers)
     res = A.run(p, dry_run=True)
     check("a dry run shows the units and installs nothing", "install" not in p.scheduler.names()
@@ -241,7 +246,7 @@ def test_scheduler_step():
     def partly(kind, jobs):
         return [(D.job_label(kind, "guardian"), True, "ok"), (D.job_label(kind, "sync"), False, "systemctl failed")]
 
-    p = ports([False, "", False, False, False] + [True, True, True, False, False, True],
+    p = ports([False, "", False, False, False] + [True, True, True, False, False, True, False],
              scheduler=Recorder(detect="systemd", preview="x", install=partly))
     res = A.run(p)
     check("a job that failed to install is not recorded as accepted and the step is asked again",
@@ -258,7 +263,7 @@ def test_multi_machine_step():
           and [c for c in p.multi_machine.calls if c[0] in ("check", "persist")] == [],
           (p.state.data["steps"].get("multi_machine"), p.multi_machine.calls))
 
-    answers = [False, "", True, "/srv/shared", False, False, False]   # kdbx, files, multi_machine: yes + a path
+    answers = [False, "", True, "/srv/shared", False, False, False, False]   # kdbx, files, multi_machine: yes + a path
     p = ports(answers)
     A.run(p)
     check("a yes asks for a path and persists it",
@@ -271,20 +276,20 @@ def test_multi_machine_step():
 
     shared = Recorder(check=lambda path: (False, "no such device") if path == "/gone" else (True, path),
                       persist=(True, "/state/shared-dir.json"))
-    p = ports([False, "", True, "/gone", "/srv/shared", False, False, False], multi_machine=shared)
+    p = ports([False, "", True, "/gone", "/srv/shared", False, False, False, False], multi_machine=shared)
     A.run(p)
     check("a path that cannot be used is refused and asked again",
           [c for c in shared.calls if c[0] == "check"] == [("check", "/gone"), ("check", "/srv/shared")],
           shared.calls)
 
-    p = ports([False, "", True, "/srv/shared", False, False, False])
+    p = ports([False, "", True, "/srv/shared", False, False, False, False])
     A.run(p, dry_run=True)
     check("a dry run creates nothing and records nothing",
           [c for c in p.multi_machine.calls if c[0] in ("check", "persist")] == [] and p.state.saves == 0,
           p.multi_machine.calls)
 
     failing = Recorder(check=lambda path: (True, path), persist=(False, "PermissionError: state"))
-    p = ports([False, "", True, "/srv/shared", False, False, False], multi_machine=failing)
+    p = ports([False, "", True, "/srv/shared", False, False, False, False], multi_machine=failing)
     res = A.run(p)
     check("when the choice cannot be saved the step is not recorded, and the next run asks it again",
           "multi_machine" not in p.state.data["steps"] and ("multi_machine", "PermissionError: state") in res.failed
@@ -296,11 +301,138 @@ def test_multi_machine_step():
           state["steps"]["multi_machine"]["status"] == "declined", state["steps"].get("multi_machine"))
 
 
+BEFORE_RC = [False, "", False, False, False, False]   # kdbx, files, multi_machine, alert email, MCP, scheduler: no
+
+
+def test_remote_control_step():
+    print("\n== Remote Control, so the Claude app can reach this machine ==")
+    p = ports(NO_TO_ALL)
+    A.run(p)
+    check("declining it records it as declined and touches nothing",
+          p.state.data["steps"]["remote_control"]["status"] == "declined"
+          and [c for c in p.remote.calls if c[0] in SIDE_EFFECTS] == [] and "install" not in p.scheduler.names(),
+          (p.state.data["steps"].get("remote_control"), p.remote.calls))
+    check("the question says what it is for", any("Remote Control" in q for q in p.prompt.yes_nos), p.prompt.yes_nos)
+
+    order = []
+
+    def logged(name, value):
+        def call(*args):
+            order.append(name)
+            return value(*args) if callable(value) else value
+        return call
+
+    remote = Recorder(default_label="workstation", vault="/home/u/Brain", preflight=([], []),
+                      prepare=logged("prepare", lambda path: (True, path)), first_start=logged("first_start", (True, "0")),
+                      configure=logged("configure", (True, "/state/remote-control.json")),
+                      linger=logged("linger", (True, "on")))
+    sched = Recorder(detect="systemd", preview="[Service] Restart=always",
+                     install=logged("install", lambda kind, jobs: [(D.job_label(kind, j), True, "installed") for j in jobs]))
+    p = ports(BEFORE_RC + [True, "", "", True, True], remote=remote, scheduler=sched)
+    A.run(p)
+    check("a yes checks the machine first", ("preflight",) in remote.calls, remote.calls)
+    check("the name defaults to this machine's, the repository to a folder of that name in the home directory",
+          ("prepare", "/home/u/workstation") in remote.calls
+          and ("configure", "/home/u/workstation", "workstation") in remote.calls, remote.calls)
+    check("the supervisor is shown before anything is set up", any("Restart=always" in t for t in p.prompt.said),
+          p.prompt.said)
+    check("the one-time prompts are explained: trust, enable, same-dir spawn mode",
+          any("same-dir" in t and "Enable Remote Control" in t for t in p.prompt.said), p.prompt.said)
+    check("it is started once in the terminal to answer them, before the supervisor exists",
+          order.index("first_start") < order.index("install") and ("first_start", "/home/u/workstation", "workstation")
+          in remote.calls, order)
+    check("the directory and name are recorded before the supervisor starts the server",
+          order.index("configure") < order.index("install"), order)
+    check("on systemd lingering is turned on, so the server runs with no one logged in", "linger" in order, order)
+    check("the server is installed through the scheduler adapters, as the one remote-control job",
+          ("install", "systemd", ["remote-control"]) in sched.calls, sched.calls)
+    check("the step records where the guardian will look",
+          p.state.data["steps"]["remote_control"] == {"status": "done", "at": "2026-09-15T18:00:00+00:00",
+                                                      "kind": "systemd", "dir": "/home/u/workstation",
+                                                      "name": "workstation"}, p.state.data["steps"].get("remote_control"))
+    check("the periodic jobs are left as the scheduler step recorded them",
+          p.state.data["scheduler"]["jobs"] == [], p.state.data["scheduler"])
+    check("and it closes with how to check it from the phone",
+          any("Claude app" in t and "+" in t for t in p.prompt.said), p.prompt.said)
+
+    p = ports(BEFORE_RC + [True, "build-box", "/srv/rc", True, False])
+    A.run(p)
+    check("a name and a directory can be chosen", ("configure", "/srv/rc", "build-box") in p.remote.calls,
+          p.remote.calls)
+    check("declining the first start in the terminal says how to do it by hand",
+          not any(c[0] == "first_start" for c in p.remote.calls)
+          and any("claude remote-control --chrome --name build-box" in t for t in p.prompt.said), p.prompt.said)
+
+    p = ports(BEFORE_RC + [True, "two words", "workstation", "", True, True])
+    A.run(p)
+    check("a name that cannot be a folder is asked again", ("configure", "/home/u/workstation", "workstation")
+          in p.remote.calls, (p.prompt.said, p.remote.calls))
+
+    p = ports(BEFORE_RC + [True, "", "", True, True],
+              scheduler=Recorder(detect="launchd", preview="plist",
+                                 install=lambda kind, jobs: [(D.job_label(kind, j), True, "ok") for j in jobs]))
+    A.run(p)
+    check("on launchd there is no lingering to turn on", "linger" not in p.remote.names()
+          and ("install", "launchd", ["remote-control"]) in p.scheduler.calls, (p.remote.calls, p.scheduler.calls))
+
+    p = ports(BEFORE_RC + [True, "", "", True, True], remote=Recorder(
+        default_label="workstation", vault="/home/u/Brain", preflight=([], []), prepare=lambda path: (True, path),
+        first_start=(True, "0"), configure=(True, "/s"), linger=(False, "Access denied")))
+    A.run(p)
+    check("lingering that cannot be turned on is a warning with the command to run, not a failure",
+          p.state.data["steps"]["remote_control"]["status"] == "done"
+          and any("sudo loginctl enable-linger" in t for t in p.prompt.said), p.prompt.said)
+
+    p = ports(BEFORE_RC, scheduler=Recorder(detect="cron"))
+    A.run(p)
+    check("with cron alone it is not asked and is recorded as declined, saying why",
+          p.state.data["steps"]["remote_control"]["status"] == "declined"
+          and "cron" in p.state.data["steps"]["remote_control"]["reason"]
+          and not any("Remote Control" in q for q in p.prompt.yes_nos), (p.prompt.yes_nos, p.state.data["steps"]))
+
+    blocked = Recorder(default_label="workstation", vault="/home/u/Brain",
+                       preflight=(["the claude CLI is not logged in: run `claude auth login`"], ["DO_NOT_TRACK is set"]))
+    p = ports(BEFORE_RC + [True], remote=blocked)
+    res = A.run(p)
+    check("what stops the server fails the step, says why, and the next run asks it again",
+          "remote_control" not in p.state.data["steps"] and any(s == "remote_control" for s, _ in res.failed)
+          and any("claude auth login" in r for _, r in res.failed), (res.failed, p.state.data["steps"]))
+    check("warnings are shown too", any("DO_NOT_TRACK" in t for t in p.prompt.said), p.prompt.said)
+    check("and nothing was set up", [c for c in blocked.calls if c[0] in SIDE_EFFECTS] == [], blocked.calls)
+
+    p = ports(BEFORE_RC + [True, "", "", False])
+    A.run(p)
+    check("refusing the set-up after seeing it declines the step and sets nothing up",
+          p.state.data["steps"]["remote_control"]["status"] == "declined"
+          and [c for c in p.remote.calls if c[0] in SIDE_EFFECTS] == [] and "install" not in p.scheduler.names(),
+          (p.remote.calls, p.state.data["steps"]))
+
+    p = ports(BEFORE_RC + [True, "", ""])
+    res = A.run(p, dry_run=True)
+    check("a dry run shows the supervisor and sets nothing up",
+          [c for c in p.remote.calls if c[0] in SIDE_EFFECTS] == [] and "install" not in p.scheduler.names()
+          and any("[Unit] preview" in t for t in p.prompt.said) and p.state.saves == 0, (p.remote.calls, p.prompt.said))
+
+    p = ports(BEFORE_RC + [True, "", "", True, True],
+              scheduler=Recorder(detect="systemd", preview="x",
+                                 install=lambda kind, jobs: [(D.job_label(kind, j), False, "daemon-reload failed")
+                                                             for j in jobs]))
+    res = A.run(p)
+    check("a supervisor that did not install fails the step, so it is asked again",
+          "remote_control" not in p.state.data["steps"]
+          and any(s == "remote_control" and "daemon-reload failed" in r for s, r in res.failed), res.failed)
+
+    p = ports([], interactive=False)
+    state, _ = A.skip_all(p)
+    check("skip-all declines it like every other optional step",
+          state["steps"]["remote_control"]["status"] == "declined", state["steps"].get("remote_control"))
+
+
 def test_mail_mcp_files_routines():
     print("\n== alert email, MCP, the files directory, routines ==")
     answers = [False, "", False,                                # kdbx, files, multi_machine (google not asked without kdbx)
                True, "smtp.example.com", "587", "me@example.com", "mail/smtp", "me@example.com", "me@example.com",
-               False, False]
+               False, False, False]
     p = ports(answers)
     A.run(p)
     saves = [c for c in p.mail.calls if c[0] == "save"]
@@ -311,7 +443,7 @@ def test_mail_mcp_files_routines():
                                                                                "kp_ref": "kp://mail/smtp#Password"}},
           saves)
 
-    answers = ["", False, True, "me@example.com", "", False, False, False]
+    answers = ["", False, True, "me@example.com", "", False, False, False, False]
     p = ports(answers, google=Recorder(accounts=["personal"]), kdbx=Recorder(configured="/k.kdbx", exists=True),
               state=D.record(D.record(D.new_state(), "kdbx", "done", {"db": "/k.kdbx"}, Clock().now()),
                              "google", "done", {"accounts": ["personal"]}, Clock().now()))
@@ -321,7 +453,7 @@ def test_mail_mcp_files_routines():
           saves and saves[0][1]["adapter"] == "gmail-api" and saves[0][1]["account"] == "personal"
           and saves[0][1]["to"] == "me@example.com", saves)
 
-    answers = [False, "", False, False, True, True, True, False, False]
+    answers = [False, "", False, False, True, True, True, False, False]   # ..., MCP yes x3, scheduler, remote_control
     p = ports(answers)
     A.run(p)
     check("the MCP step shows the snippets, registers with Claude Code and exports BRAIN_VAULT only after a yes each",
@@ -330,7 +462,7 @@ def test_mail_mcp_files_routines():
 
     files = Recorder(propose_default="/home/u/BrainFiles", persist=(True, "/state/files-dir.json"),
                      check=lambda path: (False, "read-only file system") if path == "/ro" else (True, path))
-    p = ports([False, "/ro", "/data/files", False, False, False, False], files=files)
+    p = ports([False, "/ro", "/data/files", False, False, False, False, False], files=files)
     A.run(p)
     check("a directory that cannot be used is refused and the question is asked again",
           [c for c in files.calls if c[0] == "check"] == [("check", "/ro"), ("check", "/data/files")]
@@ -344,7 +476,7 @@ def test_mail_mcp_files_routines():
           # file claims, and this check is about `_files` never gaining a yes/no of its own.
           not any("directory" in q.lower() for q in p.prompt.yes_nos), p.prompt.yes_nos)
 
-    p = ports([False, "", False, False, False, False], files=Recorder(propose_default="/home/u/BrainFiles",
+    p = ports([False, "", False, False, False, False, False], files=Recorder(propose_default="/home/u/BrainFiles",
                                                                        check=lambda path: (True, path),
                                                                        persist=(False, "PermissionError: state")))
     res = A.run(p)
@@ -352,7 +484,7 @@ def test_mail_mcp_files_routines():
           "files" not in p.state.data["steps"] and ("files", "PermissionError: state") in res.failed
           and not res.complete, (res, p.state.data["steps"]))
 
-    p = ports([False, "", False, False, False, False])
+    p = ports([False, "", False, False, False, False, False])
     A.run(p, dry_run=True)
     check("a dry run creates no directory and records nothing",
           [c for c in p.files.calls if c[0] in ("check", "persist")] == [] and p.state.saves == 0, p.files.calls)
@@ -370,7 +502,7 @@ def test_mail_mcp_files_routines():
           "files" not in state["steps"] and failed == [("files", "read-only file system")]
           and not D.is_complete(state), (state, failed))
 
-    answers = [False, "", False, False, False, False, True, "2"]
+    answers = [False, "", False, False, False, False, False, True, "2"]
     p = ports(answers, state=D.record(D.new_state(), "kdbx", "done", {"db": "/k.kdbx"}, Clock().now()))
     A.run(p)
     tokens = [c for c in p.routines.calls if c[0] == "add_token"]
@@ -391,7 +523,8 @@ def main():
         check("first_run_core.application and domain import", False, "%s: %s" % (type(exc).__name__, exc))
     else:
         for t in (test_decline_everything, test_not_a_terminal, test_kdbx_and_google, test_failure_resumes,
-                  test_scheduler_step, test_multi_machine_step, test_mail_mcp_files_routines):
+                  test_scheduler_step, test_multi_machine_step, test_remote_control_step,
+                  test_mail_mcp_files_routines):
             try:
                 t()
             except Exception as exc:

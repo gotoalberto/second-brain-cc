@@ -27,7 +27,8 @@ NOW = dt.datetime(2026, 9, 15, 18, 0, tzinfo=dt.timezone.utc)
 def test_steps(D):
     print("\n== steps and state ==")
     check("the steps are asked in this order",
-          D.STEPS == ("kdbx", "google", "files", "multi_machine", "alert_email", "mcp", "scheduler", "routines"),
+          D.STEPS == ("kdbx", "google", "files", "multi_machine", "alert_email", "mcp", "scheduler", "remote_control",
+                      "routines"),
           D.STEPS)
     state = D.new_state()
     check("a new state has no answers and is not complete",
@@ -111,13 +112,55 @@ def test_answers_and_text(D):
           D.token_ref(2) == "kp://apis/agent-routines-token-2" and D.token_label(2) == "routines-2")
 
 
+def test_remote_control_rules(D):
+    print("\n== Remote Control ==")
+    check("only a supervisor that restarts a long-lived process can keep the server: launchd and systemd, not cron",
+          D.SUPERVISORS == ("launchd", "systemd"), D.SUPERVISORS)
+    check("its job labels match the supervisor templates in _bin",
+          D.job_label("launchd", D.REMOTE_CONTROL_JOB) == "com.secondbrain.remote-control"
+          and D.job_label("systemd", D.REMOTE_CONTROL_JOB) == "second-brain-remote-control")
+    check("the dedicated repository defaults to a folder named like the machine, in the home directory",
+          D.default_remote_dir("/home/u", "workstation", "/home/u/Brain") == "/home/u/workstation",
+          D.default_remote_dir("/home/u", "workstation", "/home/u/Brain"))
+    check("never the vault itself, even on a case-insensitive disk",
+          D.default_remote_dir("/Users/u", "brain", "/Users/u/Brain") == "/Users/u/brain-remote",
+          D.default_remote_dir("/Users/u", "brain", "/Users/u/Brain"))
+    check("a name is letters, digits, dots, dashes and underscores",
+          D.valid_label("workstation") and D.valid_label("build-box_2.lan") and not D.valid_label("")
+          and not D.valid_label("two words") and not D.valid_label("../up") and not D.valid_label("x" * 64))
+    ok_status = json.dumps({"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty"})
+    check("a CLI logged in with a claude.ai account is fine", D.auth_problems(ok_status) == [])
+    out = D.auth_problems(json.dumps({"loggedIn": False}))
+    check("a CLI with no login is not, and says how to log in", len(out) == 1 and "claude auth login" in out[0], out)
+    out = D.auth_problems(json.dumps({"loggedIn": True, "authMethod": "api_key"}))
+    check("an API key or a setup-token login is refused: Remote Control only takes a claude.ai account",
+          len(out) == 1 and "api_key" in out[0] and "claude.ai" in out[0], out)
+    out = D.auth_problems("Unknown command: auth")
+    check("an answer that cannot be read is a problem too", len(out) == 1 and "claude auth status" in out[0], out)
+    text = D.first_start_text("/home/u/workstation", "workstation")
+    for needle in ("trust", "Enable Remote Control", "same-dir", "worktree",
+                   "claude remote-control --chrome --name workstation", "/home/u/workstation"):
+        check("the one-time prompts explain %r" % needle, needle in text, text)
+    text = D.verify_text("workstation", "systemd")
+    check("the closing lines say how to check the server and reach it from the phone",
+          "workstation" in text and "Remote Control" in text and "journalctl --user -u second-brain-remote-control" in text,
+          text)
+    check("on macOS they point at the launchd log",
+          "remote-control.log" in D.verify_text("workstation", "launchd"), D.verify_text("workstation", "launchd"))
+    state = D.record(D.new_state(), "scheduler", "done", {}, NOW)
+    state = D.record(state, "remote_control", "done", {"kind": "systemd", "dir": "/home/u/w", "name": "w"}, NOW)
+    check("its answer round-trips like any other step", D.parse_state(json.dumps(state)) == state)
+    check("forgetting the scheduler does not forget the server, which has its own step",
+          "remote_control" in D.forget(state, "scheduler")["steps"])
+
+
 def main():
     try:
         from first_run_core import domain as D
     except Exception as exc:
         check("first_run_core.domain imports", False, "%s: %s" % (type(exc).__name__, exc))
     else:
-        for t in (test_steps, test_scheduler_rules, test_answers_and_text):
+        for t in (test_steps, test_scheduler_rules, test_answers_and_text, test_remote_control_rules):
             try:
                 t(D)
             except Exception as exc:
