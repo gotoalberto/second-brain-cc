@@ -838,10 +838,12 @@ class HookProbe:
 class SystemdUserControl:
     """The scheduled jobs the vault defines, as systemd user units (Linux).
 
-    Every `_bin/systemd/<label>.timer` with its `<label>.service` is one job. Same port as
-    LaunchctlControl: install writes both units into ~/.config/systemd/user and reloads the
-    user manager, bootstrap enables and starts the timer, reinstall backs drifted units up
-    first. `allowed` narrows the jobs to the ones accepted at first run.
+    Every `_bin/systemd/<label>.timer` with its `<label>.service` is one job, and so is a
+    `<label>.service` with no timer: a long-lived server kept up by `Restart=always` (the
+    Remote Control server). Same port as LaunchctlControl: install writes the units into
+    ~/.config/systemd/user and reloads the user manager, bootstrap enables and starts the
+    timer (or the service, when there is no timer), reinstall backs drifted units up first.
+    `allowed` narrows the jobs to the ones accepted at first run.
     """
 
     def __init__(self, vault, home=HOME, units_dir=None, systemctl="systemctl", run=subprocess.run, timeout=15,
@@ -865,13 +867,20 @@ class SystemdUserControl:
     def _folder(self):
         return os.path.join(self.vault, "_bin", "systemd")
 
-    @staticmethod
-    def _units(label):
-        return (label + ".service", label + ".timer")
+    def _timed(self, label) -> bool:
+        return os.path.exists(os.path.join(self._folder(), label + ".timer"))
+
+    def _units(self, label):
+        return (label + ".service", label + ".timer") if self._timed(label) else (label + ".service",)
+
+    def _main(self, label) -> str:
+        """The unit that is enabled, started and checked: the timer, or the service when it runs alone."""
+        return label + (".timer" if self._timed(label) else ".service")
 
     def labels(self) -> list:
         try:
-            names = sorted(f[:-len(".timer")] for f in os.listdir(self._folder()) if f.endswith(".timer"))
+            names = sorted({os.path.splitext(f)[0] for f in os.listdir(self._folder())
+                            if f.endswith(".timer") or f.endswith(".service")})
         except OSError:
             return []
         return [n for n in names if self.allowed is None or n in self.allowed]
@@ -887,7 +896,7 @@ class SystemdUserControl:
         return all(os.path.exists(os.path.join(self.units_dir, u)) for u in self._units(label))
 
     def is_loaded(self, label) -> bool:
-        return self._call("is-active", "--quiet", label + ".timer")[0] == 0
+        return self._call("is-active", "--quiet", self._main(label))[0] == 0
 
     def last_exit_ok(self, label):
         rc, out, _ = self._call("show", label + ".service", "--property=Result", "--property=ExecMainStatus")
@@ -907,10 +916,10 @@ class SystemdUserControl:
         rc, out, err = self._call("daemon-reload")
         if rc != 0:
             return False, "daemon-reload failed: %s" % (err or out).strip()
-        return True, os.path.join(self.units_dir, label + ".timer")
+        return True, os.path.join(self.units_dir, self._main(label))
 
     def bootstrap(self, label):
-        rc, out, err = self._call("enable", "--now", label + ".timer")
+        rc, out, err = self._call("enable", "--now", self._main(label))
         return rc == 0, (err or out).strip()
 
     def drifted(self, label) -> bool:
@@ -945,7 +954,7 @@ class SystemdUserControl:
         if not done:
             return False, "%s; %s" % (detail, note)
         if was_loaded:
-            rc, out, err = self._call("restart", label + ".timer")
+            rc, out, err = self._call("restart", self._main(label))
             return rc == 0, "; ".join(x for x in (note, (err or out).strip()) if x)
         return True, "rewritten (not loaded); " + note
 
@@ -1071,6 +1080,11 @@ def default_notifier(platform=None, which=shutil.which):
 
 JOBS = ("guardian", "sync", "tasks", "watch")
 SCHEDULERS = ("launchd", "systemd", "cron")
+# The Remote Control server is not a periodic job: it is accepted in its own first-run step and
+# only a supervisor that restarts a long-lived process can keep it (launchd KeepAlive, systemd
+# Restart=always). Cron cannot.
+REMOTE_CONTROL = "remote-control"
+SUPERVISORS = ("launchd", "systemd")
 
 
 def first_run_state_path(state_dir=None) -> str:
@@ -1081,13 +1095,22 @@ def first_run_state_path(state_dir=None) -> str:
 def consented_jobs(path):
     """(scheduler kind, [job names]) the user accepted at first run; ("", []) when nothing was.
 
+    The periodic jobs come from the scheduler step; the Remote Control server, from its own step.
+
     Brain installs no scheduled job the user did not accept there: the guardian repairs and
     reloads only these."""
     data = read_json(path, {})
-    sched = data.get("scheduler") if isinstance(data, dict) else None
-    if not isinstance(sched, dict) or sched.get("kind") not in SCHEDULERS:
+    if not isinstance(data, dict):
         return "", []
-    return sched["kind"], [j for j in (sched.get("jobs") or []) if j in JOBS]
+    sched = data.get("scheduler") if isinstance(data.get("scheduler"), dict) else {}
+    kind = sched.get("kind") if sched.get("kind") in SCHEDULERS else ""
+    jobs = [j for j in (sched.get("jobs") or []) if j in JOBS] if kind else []
+    steps = data.get("steps") if isinstance(data.get("steps"), dict) else {}
+    rc = steps.get("remote_control") if isinstance(steps.get("remote_control"), dict) else {}
+    if rc.get("status") == "done" and rc.get("kind") in SUPERVISORS and rc.get("kind") == (kind or rc["kind"]):
+        kind = rc["kind"]
+        jobs.append(REMOTE_CONTROL)
+    return (kind, jobs) if kind else ("", [])
 
 
 def job_label(kind: str, job: str) -> str:

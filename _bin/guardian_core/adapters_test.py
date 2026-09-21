@@ -902,6 +902,7 @@ FAKE_SYSTEMCTL = r"""#!/bin/sh
 echo "$*" >> "%(log)s"
 case "$*" in
   "--user is-active --quiet second-brain-loaded.timer") exit 0 ;;
+  "--user is-active --quiet second-brain-server.service") exit 0 ;;
   "--user show second-brain-loaded.service --property=Result --property=ExecMainStatus") printf 'Result=success\nExecMainStatus=0\n'; exit 0 ;;
   "--user show second-brain-failed.service --property=Result --property=ExecMainStatus") printf 'Result=exit-code\nExecMainStatus=1\n'; exit 0 ;;
   "--user daemon-reload") exit 0 ;;
@@ -958,6 +959,54 @@ def test_systemd():
     check("self_label comes from the unit's BRAIN_JOB_LABEL",
           AD.SystemdUserControl(vault=vault, environ={"BRAIN_JOB_LABEL": "second-brain-guardian"}).self_label()
           == "second-brain-guardian")
+
+
+SERVER_TEMPLATE = ("[Service]\nType=simple\nEnvironment=BRAIN_JOB_LABEL=%(label)s\nRestart=always\n"
+                   "ExecStart=/bin/sh /home/brain-origin/Brain/_bin/pywrap.sh /home/brain-origin/Brain/_bin/server.py\n"
+                   "[Install]\nWantedBy=default.target\n")
+
+
+def test_systemd_long_lived():
+    print("\n== SystemdUserControl: a long-lived service with no timer ==")
+    d = tmpdir()
+    vault, home = os.path.join(d, "Vault"), os.path.join(d, "Home")
+    units = os.path.join(home, ".config", "systemd", "user")
+    log = os.path.join(d, "systemctl.log")
+    fake = write(os.path.join(d, "systemctl"), FAKE_SYSTEMCTL % {"log": log}, mode=0o755)
+    write(os.path.join(vault, "_bin", "systemd", "second-brain-loaded.service"),
+          SERVICE_TEMPLATE % {"label": "second-brain-loaded"})
+    write(os.path.join(vault, "_bin", "systemd", "second-brain-loaded.timer"), TIMER_TEMPLATE)
+    write(os.path.join(vault, "_bin", "systemd", "second-brain-server.service"),
+          SERVER_TEMPLATE % {"label": "second-brain-server"})
+    sc = AD.SystemdUserControl(vault=vault, home=home, systemctl=fake, backup_dir=os.path.join(d, "backups"),
+                               environ={}, clock=StepClock())
+    check("a service with no timer is still a job, next to the timed ones",
+          sc.labels() == ["second-brain-loaded", "second-brain-server"], sc.labels())
+    check("its units are the service alone", list(sc.render("second-brain-server")) == ["second-brain-server.service"],
+          list(sc.render("second-brain-server")))
+    done, detail = sc.install("second-brain-server")
+    check("install writes the service, and no timer",
+          done and os.path.exists(os.path.join(units, "second-brain-server.service"))
+          and not os.path.exists(os.path.join(units, "second-brain-server.timer")), detail)
+    check("install names the service it wrote", detail.endswith("second-brain-server.service"), detail)
+    check("an installed service with no timer counts as installed", sc.installed("second-brain-server"))
+    done, detail = sc.bootstrap("second-brain-server")
+    calls = open(log).read() if os.path.exists(log) else ""
+    check("bootstrap enables and starts the service itself, not a timer",
+          done and "--user enable --now second-brain-server.service" in calls
+          and "second-brain-server.timer" not in calls, calls)
+    check("a running service is loaded", sc.is_loaded("second-brain-server"))
+    svc = os.path.join(units, "second-brain-server.service")
+    write(svc, open(svc).read().replace("Restart=always", "Restart=no"))
+    check("a service that differs from its template has drifted", sc.drifted("second-brain-server"))
+    open(log, "w").close()
+    done, detail = sc.reinstall("second-brain-server")
+    calls = open(log).read()
+    check("reinstall rewrites it and restarts the service, since it was running",
+          done and not sc.drifted("second-brain-server") and "--user restart second-brain-server.service" in calls
+          and ".timer" not in calls, (detail, calls))
+    check("a timed job still bootstraps through its timer",
+          sc.bootstrap("second-brain-loaded")[0] and "--user enable --now second-brain-loaded.timer" in open(log).read())
 
 
 FAKE_CRONTAB = r"""#!/bin/sh
@@ -1036,6 +1085,29 @@ def test_job_consent():
           isinstance(AD.build_job_control(vault, state), AD.CronControl))
     write(path, json.dumps({"scheduler": {"kind": "none", "jobs": ["guardian"]}}))
     check("a declined scheduler accepts no job", AD.consented_jobs(path) == ("", []), AD.consented_jobs(path))
+    rc = {"status": "done", "kind": "systemd", "dir": "/home/u/workstation", "name": "workstation"}
+    write(path, json.dumps({"scheduler": {"kind": "systemd", "jobs": ["sync"]}, "steps": {"remote_control": rc}}))
+    check("a Remote Control server accepted at first run is one more job the guardian keeps",
+          AD.consented_jobs(path) == ("systemd", ["sync", "remote-control"]), AD.consented_jobs(path))
+    write(path, json.dumps({"scheduler": {"kind": "systemd", "jobs": []}, "steps": {"remote_control": rc}}))
+    check("even when every periodic job was declined",
+          AD.consented_jobs(path) == ("systemd", ["remote-control"]), AD.consented_jobs(path))
+    write(path, json.dumps({"scheduler": {"kind": "none", "jobs": []}, "steps": {"remote_control": rc}}))
+    check("and when the scheduler step was skipped, the server's own supervisor kind is used",
+          AD.consented_jobs(path) == ("systemd", ["remote-control"]), AD.consented_jobs(path))
+    write(path, json.dumps({"scheduler": {"kind": "launchd", "jobs": ["sync"]},
+                            "steps": {"remote_control": dict(rc, kind="launchd")}}))
+    jc = AD.build_job_control(vault, state, home=os.path.join(d, "Home"))
+    check("on launchd its label is com.secondbrain.remote-control",
+          jc.allowed == {"com.secondbrain.sync", "com.secondbrain.remote-control"}, jc.allowed)
+    write(path, json.dumps({"scheduler": {"kind": "systemd", "jobs": ["sync", "remote-control"]},
+                            "steps": {"remote_control": {"status": "declined"}}}))
+    check("a declined Remote Control step installs no server, whatever the job list says",
+          AD.consented_jobs(path) == ("systemd", ["sync"]), AD.consented_jobs(path))
+    write(path, json.dumps({"scheduler": {"kind": "cron", "jobs": ["sync"]},
+                            "steps": {"remote_control": dict(rc, kind="cron")}}))
+    check("cron cannot supervise a server, so it never counts there",
+          AD.consented_jobs(path) == ("cron", ["sync"]), AD.consented_jobs(path))
 
 
 def test_linux_notifier():
@@ -1154,7 +1226,7 @@ def main():
                   test_raised_alerts, test_vault_probe, test_git_hooks, test_interpreter_probe, test_agent_runner,
                   test_mail_queue, test_gmail_mailer, test_token_pool_probe, test_desktop_tasks_probe,
                   test_routine_meta_source, test_hook_liveness_source, test_hook_probe,
-                  test_systemd, test_cron, test_job_consent, test_linux_notifier, test_smtp_mailer):
+                  test_systemd, test_systemd_long_lived, test_cron, test_job_consent, test_linux_notifier, test_smtp_mailer):
             try:
                 t()
             except Exception as exc:
