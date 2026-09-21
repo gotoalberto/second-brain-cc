@@ -1,0 +1,20 @@
+# Generated template: integrations/first-run installs it into ~/.config/systemd/user when
+# the user accepts it; guardian.py keeps it in step. /home/brain-origin/Brain and /home/brain-origin are rendered.
+# A long-lived server, so there is no .timer next to it: Restart=always brings it back after the
+# roughly ten minutes without network that make it exit. A user unit only runs with no one logged
+# in when lingering is on for the user (loginctl enable-linger), which the first run checks.
+[Unit]
+Description=Second Brain: Remote Control server, so the Claude app can reach this machine
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/home/brain-origin
+Environment=BRAIN_JOB_LABEL=second-brain-remote-control
+Environment=PATH=/home/brain-origin/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/sh /home/brain-origin/Brain/_bin/pywrap.sh /home/brain-origin/Brain/_bin/remote_control.py serve
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=default.target
