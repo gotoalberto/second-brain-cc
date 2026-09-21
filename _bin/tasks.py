@@ -27,7 +27,10 @@ Task types:
   shell       the runner executes `command` with the vault as working directory
   agent       `command` is a routine file (90-Meta/routines/<id>.md); its body is handed
               to the CLI agent named in 90-Meta/agent-command.txt (or BRAIN_AGENT_CMD),
-              followed by the routine's own `agent_args`. The run goes through
+              followed by the routine's own `agent_args`. First, routine_requires.py checks
+              that this machine has the repos, programs and paths the routine needs (its
+              agent_args and its `requires:` line); a gap refuses the run, exit 2, before any
+              token is read. The run goes through
               routine_auth_core: a token from the pool in 90-Meta/routine-tokens.json, read
               from KeePass, is the only credential in an environment built from scratch;
               a refused or limited token fails over to the next. Each attempt gets a run id,
@@ -357,6 +360,15 @@ def run_agent(task: dict) -> tuple[int, str, str, str]:
         text = Path(path).read_text(encoding="utf-8")
     except OSError as exc:
         msg = f"routine file unreadable: {path}: {exc}"
+        return 2, "", msg, msg
+    # Preflight: a repo, program or path this machine lacks refuses the run before any token is
+    # read, instead of letting the agent run half-blind and report the gap in its own output.
+    import routine_requires as RQ
+
+    gaps = RQ.problems(text, RQ.RealProbe(), str(VAULT), str(HOME))
+    if gaps:
+        msg = ("this machine lacks what the routine needs: " + "; ".join(gaps)
+               + " (check: python3 ~/Brain/_bin/routine_requires.py here --fix)")
         return 2, "", msg, msg
     args, problem = RD.parse_agent_args(text)
     contract, contract_problem = RD.parse_success_contract(text)
