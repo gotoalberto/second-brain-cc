@@ -370,7 +370,7 @@ class RemoteControlSetup:
         self.environ = os.environ if environ is None else environ
         self.which, self.run = which, run
         self.euid = os.geteuid() if euid is None and hasattr(os, "geteuid") else euid
-        self.hostname = hostname or (lambda: __import__("socket").gethostname())
+        self.hostname = hostname                  # None: the machine's own, through machine_identity
         self.user = user
         self.platform = platform or sys.platform
         self.config_path = config_path
@@ -381,10 +381,12 @@ class RemoteControlSetup:
         return self._vault
 
     def default_label(self):
+        """machine_identity.machine_label(), the name the machine registry records, made a valid label."""
         import re
         import machine_identity
 
-        name = re.sub(r"[^a-z0-9._-]+", "-", machine_identity.sanitize_hostname(self.hostname()).lower()).strip("-.")
+        label = machine_identity.machine_label(self.hostname() if self.hostname else None)
+        name = re.sub(r"[^a-z0-9._-]+", "-", label.lower()).strip("-.")
         return name if D.valid_label(name) else "machine"
 
     def _claude(self):

@@ -302,6 +302,17 @@ def test_remote_control():
     r = remote(home, state, vault, claude)
     check("the default name is this machine's short host name, lower case", r.default_label() == "workstation",
           r.default_label())
+    import machine_identity
+    real_label = machine_identity.machine_label
+    asked = []
+    machine_identity.machine_label = lambda hostname=None: asked.append(hostname) or "Some_Box"
+    try:
+        plain = AD.RemoteControlSetup(vault, home, state, environ={})
+        got = plain.default_label()
+    finally:
+        machine_identity.machine_label = real_label
+    check("with no host name given, the default name is machine_identity.machine_label(), lower case",
+          got == "some_box" and asked == [None], (got, asked))
     check("the vault is the one first run works on", r.vault() == vault)
     blocking, warnings = r.preflight()
     check("a normal user, a CLI logged in with claude.ai that knows --chrome: nothing in the way",
