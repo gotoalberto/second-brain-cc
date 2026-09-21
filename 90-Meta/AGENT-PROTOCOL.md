@@ -302,6 +302,18 @@ Detail and reasoning: `30-Knowledge/2026-08-21-convention-worktree-isolation-per
   a log the code writes, never from the model's last words.
   `30-Knowledge/2026-09-15-convention-headless-agent-prompt-must-be-framed-as-an-order.md`
   `30-Knowledge/2026-09-15-convention-success-contracts-must-check-the-log-not-the-models-final-words.md`
+- **Every session is told which machine it is on.** The `## This machine` block at startup
+  (`_bin/machine_caps.py`) names the machine key, its scheduler, the tools on its PATH, whether its
+  own Chrome is paired with Claude Code and which agent tasks run there. Decide what a machine can
+  do from that block or a probe, never from its OS alone. Skills and scheduled tasks are written to
+  work on both macOS and Linux, and generic content never names a specific machine.
+  `_bin/machines.py` keeps one record per machine (on the shared path when one is configured, never
+  in the vault), and `_bin/machine_identity.py` recognises every name a machine has gone by.
+- **A scheduled task moves to a machine only after its resources check out there.** Run
+  `python3 ~/Brain/_bin/routine_requires.py here --fix` on that machine until the task is ✓: it
+  checks the repos, programs and paths the routine's `agent_args` and `requires:` line name, clones
+  a missing repo that has a url and never installs a program. The runner repeats the check before
+  every agent run and refuses a run with a gap (exit 2, with an alert).
 - Runbooks: `30-Knowledge/2026-09-15-runbook-brain-events.md`,
   `30-Knowledge/2026-09-15-runbook-brain-guardian.md`,
   `30-Knowledge/2026-09-15-runbook-brain-routine-auth.md`.

@@ -26,6 +26,7 @@ The one-screen version. Full protocol: `~/Brain/90-Meta/AGENT-PROTOCOL.md`.
 - Code: tests committed red before the implementation, hexagonal, verified in the real system. Check the effect, not the exit code. Protocol §9.
 - Never edit a gate to get past it: stop and ask. Smoke checks redirect every state path, not just the input.
 - Headless runs: the prompt is an order to execute now; success is judged from a log the code writes, never the model's last words.
+- Your machine and its tools: the `## This machine` block or a probe, never the OS. A scheduled task moves to a machine only once `routine_requires.py here --fix` is ✓ there. Protocol §10.
 - Every search also repairs broken `[[links]]` (`linkfix.py`). Links it cannot fix are shown to you: fix them in that session.
 - Before creating a new project: check whether the task belongs to an existing one and say so; if it doesn't fit, ASK.
 - Adapt these to your own setup. Project conventions (your repos, your APIs, your house style) live as notes in `30-Knowledge/`, not here.
