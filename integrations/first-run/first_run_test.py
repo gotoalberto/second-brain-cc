@@ -72,12 +72,15 @@ def main():
         check("after that status exits 0", rc == 0, (rc, out))
         rc, out, err = run("reset", "scheduler")
         rc2, out2, _ = run("status")
-        check("reset makes one step ask again", rc == 0 and rc2 == 3 and "scheduler    not asked yet" in out2, (rc, out2))
+        check("reset makes one step ask again", rc == 0 and rc2 == 3 and "scheduler      not asked yet" in out2, (rc, out2))
         rc, out, err = run("reset", "remote_control")
         rc2, out2, _ = run("status")
         check("the Remote Control step can be asked again on its own",
-              rc == 0 and rc2 == 3 and "remote_control not asked yet" in out2 and "scheduler    not asked yet" in out2,
+              rc == 0 and rc2 == 3 and "remote_control not asked yet" in out2 and "scheduler      not asked yet" in out2,
               (rc, out2))
+        starts = {line.index(line.split()[1]) for line in out2.splitlines() if len(line.split()) > 1}
+        check("every status line's answer starts in the same column, remote_control's included",
+              len(starts) == 1, out2)
         rc, out, err = run("reset", "nonsense")
         check("reset of an unknown step is a usage error", rc == 2, (rc, err))
     finally:

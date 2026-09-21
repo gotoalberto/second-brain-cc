@@ -407,12 +407,14 @@ def skip_all(ports):
 def run_status(ports):
     """(complete, lines): every step and its answer, for `first_run.py status`."""
     state = ports.state.load()
+    width = max(len(step) for step in D.STEPS)          # remote_control, the longest name, sets the column
     lines = []
     for step in D.STEPS:
         entry = state["steps"].get(step)
-        lines.append("%-12s %s" % (step, entry["status"] if entry else "not asked yet"))
+        lines.append("%-*s %s" % (width, step, entry["status"] if entry else "not asked yet"))
     sched = state.get("scheduler") or {}
-    lines.append("%-12s %s %s" % ("jobs", sched.get("kind", "none"), ",".join(sched.get("jobs") or []) or "-"))
+    lines.append("%-*s %s %s" % (width, "jobs", sched.get("kind", "none"),
+                                 ",".join(sched.get("jobs") or []) or "-"))
     return D.is_complete(state), lines
 
 
