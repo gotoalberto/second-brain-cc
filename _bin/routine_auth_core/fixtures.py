@@ -2,8 +2,8 @@
 
 Each fixture is one (exit code, stdout, stderr) triple and the kind the classifier must
 give it. `verified` says whether the triple was seen from the real standalone CLI or is a
-guess. Only the 401 invalid-token shapes are verified (2026-09-15, `~/.local/bin/claude`
-2.1.272 with a deliberately invalid CLAUDE_CODE_OAUTH_TOKEN). Every other one carries
+guess. Only the 401 invalid-token shapes are verified (the standalone CLI at
+`~/.local/bin/claude`, run with a deliberately invalid CLAUDE_CODE_OAUTH_TOKEN). Every other one carries
 UNVERIFIED in its note: when a real failure of that kind happens, compare the redacted raw
 output in <brain state>/logs/routine-auth.log with the fixture and correct the fixture and
 the pattern together.

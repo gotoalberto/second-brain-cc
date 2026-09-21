@@ -80,7 +80,7 @@ class FakeClock:
 
 class FakeCli:
     def __init__(self, status=None):
-        self.status = status or D.CliStatus(True, "/h/.local/bin/claude", "2.1.272")
+        self.status = status or D.CliStatus(True, "/h/.local/bin/claude", "2.1.0")
         self.checks = 0
 
     def check(self):

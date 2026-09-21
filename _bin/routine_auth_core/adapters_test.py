@@ -179,7 +179,7 @@ exit 0
 '''
 
 
-def fake_cli(root, name="claude", version='echo "2.1.272 (Claude Code)"'):
+def fake_cli(root, name="claude", version='echo "2.1.0 (Claude Code)"'):
     calls, envs = os.path.join(root, name + ".calls"), os.path.join(root, name + ".envs")
     path = write(os.path.join(root, "bin", name), FAKE_CLI % {"calls": calls, "envs": envs, "version": version},
                  mode=0o755)
@@ -197,7 +197,7 @@ def test_cli_resolver(A, D):
     finally:
         os.environ.pop("ANTHROPIC_API_KEY", None)
     check("a standalone CLI that answers --version is healthy",
-          st.ok and st.path == cli and "2.1.272" in st.version, st)
+          st.ok and st.path == cli and "2.1.0" in st.version, st)
     check("the version check runs with no Anthropic credentials from the parent",
           os.path.exists(envs) and "ANTHROPIC_API_KEY" not in open(envs).read().split()
           and "CLAUDE_CODE_OAUTH_TOKEN" not in open(envs).read().split(), open(envs).read() if os.path.exists(envs) else "")

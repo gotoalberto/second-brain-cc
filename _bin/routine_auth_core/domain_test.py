@@ -274,7 +274,7 @@ def test_cli_rules(D):
 
     home = "/home/someone"
     check("the standalone install is fine",
-          D.cli_path_problem(home + "/.local/bin/claude", home + "/.local/share/claude/versions/2.1.272", home) is None)
+          D.cli_path_problem(home + "/.local/bin/claude", home + "/.local/share/claude/versions/2.1.0", home) is None)
     for resolved, real in (
             ("/Applications/Claude.app/Contents/Resources/claude", "/Applications/Claude.app/Contents/Resources/claude"),
             (home + "/bin/claude", "/Applications/Claude.app/Contents/Helpers/claude"),
