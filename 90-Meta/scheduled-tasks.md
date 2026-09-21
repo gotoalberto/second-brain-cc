@@ -8,7 +8,7 @@ status: active
 confidence: high
 source: agent
 provenance: shipped with the harness as a template; edit the table for your own tasks
-updated: 2026-09-15
+updated: 2026-09-21
 supersedes: []
 ---
 
@@ -62,6 +62,22 @@ app open and no chat session. Each run:
 - succeeds only if its `success_contract` is met: a required send is proved by the send log
   `google.py send` writes, not by what the model says at the end
 
+Before any of that, the runner checks that this machine has what the routine needs
+(`_bin/routine_requires.py`). What its `agent_args` already name is checked on its own: every
+`--add-dir` directory, the program of every allowed `Bash(...)` command, and any script path or
+`--cwd` directory inside one. Anything else goes in an optional `requires:` frontmatter line, a JSON
+object next to `agent_args:`:
+
+```yaml
+requires: {"repos": [{"path": "~/code/tool", "url": "<clone url>"}], "programs": ["jq"], "paths": ["~/data"]}
+```
+
+A repo is a git checkout (a plain path, or `{"path", "url"}` so it can be cloned for you), a program
+must be on PATH, a path must exist. A relative path is relative to the vault. No `requires:` line
+means nothing beyond `agent_args` (the behaviour before this existed). A gap, or a `requires:` line
+that does not parse, refuses the run with exit 2 before any token is read, and the alert names each
+gap and its fix.
+
 A failed run raises an alert through the guardian (desktop notification, email if a mailer was
 configured at first run, log); the next successful run clears it. A routine whose `needs_bridge`
 names a tool the agent does not have fails and alerts rather than running half blind. If the same
@@ -97,7 +113,9 @@ resolves.
 
 Nothing to configure in the vault: the registry is already shared. On the new machine run the first
 run, accept the tasks job for its scheduler, use its `hostname -s` in the `machine` column of the rows
-it should own, and check with `tasks.py --list`.
+it should own, and check with `tasks.py --list`. Pin an agent task to it only once
+`python3 ~/Brain/_bin/routine_requires.py here --fix` shows that task ✓ there: `--fix` clones a
+missing repo that has a url, and a missing program is yours to install.
 
 ## Design notes
 
