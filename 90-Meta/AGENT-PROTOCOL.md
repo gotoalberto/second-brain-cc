@@ -308,7 +308,9 @@ Detail and reasoning: `30-Knowledge/2026-08-21-convention-worktree-isolation-per
   do from that block or a probe, never from its OS alone. Skills and scheduled tasks are written to
   work on both macOS and Linux, and generic content never names a specific machine.
   `_bin/machines.py` keeps one record per machine (on the shared path when one is configured, never
-  in the vault), and `_bin/machine_identity.py` recognises every name a machine has gone by.
+  in the vault); every machine registers itself, at the end of its first run and once a day from the
+  guardian's scheduled repair. `_bin/machine_identity.py` recognises every name a machine has gone
+  by, and a scheduled task's `machine` cell is matched through it (`*`, a label, a key).
 - **A scheduled task moves to a machine only after its resources check out there.** Run
   `python3 ~/Brain/_bin/routine_requires.py here --fix` on that machine until the task is ✓: it
   checks the repos, programs and paths the routine's `agent_args` and `requires:` line name, clones

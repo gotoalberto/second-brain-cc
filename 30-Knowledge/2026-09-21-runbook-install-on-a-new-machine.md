@@ -123,25 +123,52 @@ them in step with the templates ([[2026-09-15-runbook-brain-guardian]]).
 
 - **Start each job by hand once and check it succeeded.** Enabled is not the same as working.
 - On a Linux server nobody logs into, systemd user units stop with the last login session
-  unless lingering is on: `loginctl enable-linger <user>`.
+  unless lingering is on. The first run's `remote_control` step turns it on (step 8); by hand,
+  `sudo loginctl enable-linger $USER`.
 - **A machine runs no scheduled task until a row names it.** The registry in
-  `90-Meta/scheduled-tasks.md` is shared and every row is pinned to a machine (its label or
-  `*`), so a new machine runs nothing, silently, until you add or move rows to it. Check with
-  `tasks.py --list`. Before moving a row, see step 10.
+  `90-Meta/scheduled-tasks.md` is shared and every row is pinned to a machine: `*` for every
+  machine, or one machine's label (its short hostname), its key or a key it had before a rename.
+  `python3 ~/Brain/_bin/machine_identity.py` prints this machine's key. A new machine runs
+  nothing, silently, until you add or move rows to it. Check with `tasks.py --list`. Before
+  moving a row, see step 10.
+- **The machine registers itself.** The first run ends by adding this machine to the machine
+  registry, and the guardian's scheduled repair refreshes the entry once a day
+  (`machines.py register --daily`). `python3 ~/Brain/_bin/machines.py` lists every machine with
+  this one starred.
 
 ## 8. Remote Control server
 
-A long-lived server, supervised: `_bin/com.secondbrain.remote-control.plist` on macOS
-(`RunAtLoad` and `KeepAlive`, no `StartInterval`), `_bin/systemd/second-brain-remote-control.service`
-on Linux (`Restart=always`, and no timer). The first run offers it like the other jobs. **Not
-tmux or a shell left open**: the server gives up and exits after roughly ten minutes without
-network, and only a supervisor brings it back.
+The first run's `remote_control` step sets it up. It needs launchd or systemd user units: on a
+machine with only cron the step is declined, because cron cannot supervise a long-lived server.
+Once you say yes, the step:
+
+1. Checks the machine: not root; the `claude` CLI found and logged in with a claude.ai account;
+   a CLI that knows `remote-control --chrome`; none of the four switches from step 1 in the
+   `env` block of `~/.claude/settings.json`. No Chrome is only a warning.
+2. Asks the name the machine shows, proposing its label (the short hostname, from
+   `machine_identity.machine_label()`) in lower case.
+3. Asks for the dedicated repository, proposing `~/<name>` (`~/<name>-remote` when that would be
+   the vault or the home directory), and creates it with `git init` if it is missing.
+4. Offers to start the server once on your terminal, for the one-time prompts below.
+5. Records the directory and the name in `<brain state>/remote-control.json`.
+6. On Linux, turns lingering on (`loginctl enable-linger`) so the unit runs with nobody logged
+   in, and says so if that is refused.
+7. Installs the supervisor from its template: `_bin/com.secondbrain.remote-control.plist` on
+   macOS (`RunAtLoad` and `KeepAlive`, no `StartInterval`) or
+   `_bin/systemd/second-brain-remote-control.service` on Linux (`Restart=always`, and no timer).
+   The guardian keeps it installed like every other job.
+
+Both templates run `_bin/remote_control.py serve`, which starts, from the recorded directory:
 
 ```sh
-claude remote-control --chrome --name <machine label>
+claude remote-control --chrome --name <name>
 ```
 
-Two flags decide whether it works at all:
+`python3 ~/Brain/_bin/remote_control.py show` prints the recorded directory and name, the
+command and anything in the way. **Not tmux or a shell left open**: the server gives up and
+exits after roughly ten minutes without network, and only a supervisor brings it back.
+
+Two flags decide whether it works at all, and `serve` gets both right:
 
 - **`--chrome` is required.** The `claudeInChromeDefaultEnabled` setting does not cover server
   mode. Without the flag every session the server hands out has no browser tools and says,
@@ -153,16 +180,20 @@ Two flags decide whether it works at all:
   "Connecting…".
 
 The working directory is a **small dedicated git repository** (see the label section below),
-never the home directory, whose workspace trust has been accepted once, interactively. Trust is
-never saved for the home directory, and without it the server exits with
-`Workspace not trusted`.
+never the vault and never the home directory, whose workspace trust has been accepted once,
+interactively. Trust is never saved for the home directory, and without it the server exits
+with `Workspace not trusted`.
 
-Run the server once by hand in that directory before handing it to the supervisor. The first
-start asks two questions a supervised job cannot answer: `Enable Remote Control? (y/n)`, then a
-spawn mode, `same-dir` or `worktree`. **Choose same-dir**; worktree is the mode that breaks
-against the hook above. Both answers persist, so they are given once.
+The first start asks three things a supervised job cannot answer: whether to trust the
+workspace, `Enable Remote Control? (y/n)`, then a spawn mode, `same-dir` or `worktree`.
+**Choose same-dir**; worktree is the mode that breaks against the hook above. The answers
+persist, so they are given once. That is what step 4 of the first run is for; when it says
+Connected, stop it with Ctrl+C and the supervisor takes over. By hand, any time:
+`cd <dir> && claude remote-control --chrome --name <name>`.
 
-Restart the service after any configuration change.
+Restart the service after any configuration change: `systemctl --user restart
+second-brain-remote-control` on Linux, `launchctl kickstart -k
+gui/$(id -u)/com.secondbrain.remote-control` on macOS.
 
 ## 9. Browser
 
@@ -238,8 +269,11 @@ paths must exist on this machine. Run the preflight on the machine, let `--fix` 
 that declare a URL, install what is left, and repeat until every line passes:
 
 ```sh
-python3 ~/Brain/_bin/routine_requires.py --fix
+python3 ~/Brain/_bin/routine_requires.py here --fix                      # every enabled agent task this machine runs
+python3 ~/Brain/_bin/routine_requires.py check 90-Meta/routines/<id>.md  # one routine, before its row names this machine
 ```
+
+Either exits 2 while anything is missing.
 
 Logins (sites in this machine's Chrome, OAuth for MCP servers) cannot be checked by a script;
 check them by hand. [[2026-09-21-convention-scheduled-task-resources-checked-per-machine]]
@@ -247,8 +281,10 @@ check them by hand. [[2026-09-21-convention-scheduled-task-resources-checked-per
 ## 11. Verify, then verify from the phone
 
 On the machine: `claude auth status`; `kp.py status` plus one real read; `tasks.py --list`;
-`systemctl --user list-timers` (or `launchctl list | grep secondbrain`) for every periodic job;
-and the Remote Control log showing `Connected · <name>`.
+`machines.py` listing this machine; `systemctl --user list-timers` (or
+`launchctl list | grep secondbrain`) for every periodic job; and the Remote Control log showing
+`Connected · <name>` (`journalctl --user -u second-brain-remote-control` on Linux,
+`~/Library/Application Support/brain/logs/remote-control.log` on macOS).
 
 Then open the Claude app on the phone, choose **Remote Control** and the machine, start a
 session with **+**, and ask something only that machine can answer (a file in its home, its
@@ -272,8 +308,9 @@ not from `--name`.** With a remote, it is the repository's name; with no remote,
 directory's name. A server pointed at the vault shows the vault repository's name, the same on
 every machine. `--name` still titles the sessions inside the group.
 
-So give each machine a small dedicated repository named the way the machine should appear
-(`~/laptop`, `~/server`), created with `git init` and nothing else in it, and serve from there.
+So each machine serves from a small dedicated repository named the way the machine should
+appear (`~/laptop`, `~/server`), created with `git init` and nothing else in it. The first run
+proposes exactly that, `~/<name>`.
 The machine's identity in the harness is a separate thing
 ([[2026-09-21-decision-machine-identity-is-a-stable-id-plus-a-human-label]]).
 
@@ -312,7 +349,9 @@ sessions appear and nothing else. This is the same independence the machinery is
   to anything, and without losing the shared vault. It will carry the work organization's
   managed settings and policy, so check `orgName` when something behaves oddly.
 - `_bin/machines.py` records each machine and the Claude account it is signed into, so the
-  inventory answers "how many machines, and under which account each".
+  inventory answers "how many machines, and under which account each". Every machine registers
+  itself (step 7); the registry lives on the shared path when one is configured, else in this
+  machine's state, never in the vault.
 
 Prove the three properties separately on a new machine rather than assuming they came
 together:

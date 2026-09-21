@@ -165,11 +165,13 @@ full checklist for a new machine is
 
 macOS and Linux, and nothing else. Skills, routines and scheduled tasks are written to work on
 both, and generic content never names a particular machine: a rule reads "on a Linux machine",
-not "on the server in the closet". Machines are registered in `_bin/machines.py`, every session
+not "on the server in the closet". Every machine registers itself in `_bin/machines.py` (at the
+end of its first run, then once a day from the guardian's scheduled repair), every session
 is told which machine it is on and what that machine has (`_bin/machine_caps.py`, the
 `## This machine` block at session start) instead of guessing from the operating system, and a
-scheduled task is moved to a machine only after `_bin/routine_requires.py` finds its repos,
-programs and paths there.
+scheduled task is moved to a machine only after `_bin/routine_requires.py here --fix` finds its
+repos, programs and paths there. A task's `machine` cell is `*`, the machine's label or its key
+(`_bin/machine_identity.py`).
 
 ### What each machine needs
 
@@ -473,6 +475,8 @@ The deepest experience today is Claude Code with the plugin; nothing in the vaul
 | `guardian.py` | Keeps hooks, git hooks and scheduled jobs wired, and alerts. |
 | `brain_watch.py` | The file watch and the generated hooks. |
 | `tasks.py` | The periodic task and routine runner. |
+| `machine_identity.py`, `machines.py`, `machine_caps.py` | Which machine this is; the registry of machines and their Claude accounts; the `## This machine` block. |
+| `routine_requires.py` | Preflight: the repos, programs and paths a routine needs on this machine. |
 | `remote_control.py` | Starts the supervised Remote Control server from its dedicated repository. |
 | `gen_instructions.py` | Generates `AGENTS.md`, `CLAUDE.md` and `90-Meta/HOOKS-WITHOUT-CLAUDE.md`. |
 | `install_plugin.py`, `claude_settings.py` | Skills and agents sync; recommended Claude Code settings. |

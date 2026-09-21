@@ -31,13 +31,15 @@ up buried inside the report it sends, days later.
 1. **Before every agent run.** The task runner calls it; if anything is missing the run is
    refused with exit 2 and an alert that lists each gap and its fix (the clone command, the
    program to install).
-2. **By hand, whenever a task is moved or installed.** On the target machine, run it with
-   `--fix`, which clones missing repos that declare a URL and never installs programs. Fix what
-   is left, run it again until every line passes, and only then change the row's `machine` or
-   `enabled`.
+2. **By hand, whenever a task is moved or installed.** On the target machine, run
+   `python3 ~/Brain/_bin/routine_requires.py check 90-Meta/routines/<id>.md` for a routine whose
+   row does not name this machine yet, or `routine_requires.py here --fix` for every enabled
+   agent task this machine already runs. `--fix` clones missing repos that declare a URL and
+   never installs programs. Fix what is left, run it again until every line passes (exit 0; a
+   gap is exit 2), and only then change the row's `machine` or `enabled`.
 
-It can also run as a daily row on each machine, ahead of the day's tasks, so a gap alerts the
-night before instead of at run time.
+It can also run as a daily `shell` row on each machine (`python3 _bin/routine_requires.py here`),
+ahead of the day's tasks, so a gap alerts the night before instead of at run time.
 
 ## What it checks
 

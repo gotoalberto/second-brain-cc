@@ -18,7 +18,7 @@ The single inventory of everything that runs on a schedule across every machine 
 harness. The registry lives in the vault so every machine sees the same list, but each task
 declares which machine owns it: a task pinned to one host never fires on the others.
 
-`_bin/tasks.py` reads this table every 10 minutes, keeps only the rows matching this host, and
+`_bin/tasks.py` reads this table every 10 minutes, keeps only the rows matching this machine, and
 runs whatever is due. It is started by the scheduler you accepted at first run
 (`integrations/first-run/setup.sh`): launchd on macOS (`com.secondbrain.tasks`), a systemd user
 timer on Linux (`second-brain-tasks`), or a cron line where systemd is absent. Nothing is scheduled
@@ -38,7 +38,9 @@ once.
 ### Columns
 
 - **id**: unique, kebab-case. Names the log file: `<brain state>/logs/tasks/<id>.log`
-- **machine**: `hostname -s` of the host that owns it, or `*` for every machine
+- **machine**: `*` for every machine, or the machine that owns it: its label (`hostname -s`), its
+  key (`python3 _bin/machine_identity.py` prints it) or a key it had before a rename. A row written
+  with a bare hostname keeps working
 - **time**: `HH:MM`, 24h, local time of that machine
 - **days**: ISO weekdays, `1`=Mon … `7`=Sun. Accepts `*`, `1-5`, `1,3,5`
 - **type**: `shell` (the runner executes `command`), `agent` (the runner hands the routine file
@@ -79,8 +81,10 @@ that does not parse, refuses the run with exit 2 before any token is read, and t
 gap and its fix.
 
 A failed run raises an alert through the guardian (desktop notification, email if a mailer was
-configured at first run, log); the next successful run clears it. A routine whose `needs_bridge`
-names a tool the agent does not have fails and alerts rather than running half blind. If the same
+configured at first run, log); the next successful run clears it. The runner does not refuse a
+routine for its `needs_bridge`: a routine that needs a tool the agent does not have must say so in
+its body and fail, and its `success_contract` turns a run that did not deliver into a failed run,
+which alerts. If the same
 routine also exists as a Claude app scheduled task, never leave both enabled: it would run twice.
 Runbooks: `30-Knowledge/2026-09-15-runbook-brain-routine-auth.md`,
 `30-Knowledge/2026-09-15-runbook-brain-guardian.md`.

@@ -56,8 +56,15 @@ Never skip a browser source silently: the output says which source was skipped a
 A routine token from the pool (`claude setup-token`) cannot drive Chrome: Claude Code keeps the
 browser off for such tokens even with `--chrome`. Only the CLI's own claude.ai login can. In this
 repo's runner a routine has no browser bridge
-([[2026-09-15-runbook-brain-routine-auth]]), so a routine that needs one fails and alerts rather
-than running without it.
+([[2026-09-15-runbook-brain-routine-auth]]).
+
+The runner does not refuse a routine because its `needs_bridge` names the browser: the run starts
+and simply has no browser tools. What turns that into a failure and an alert is the routine
+itself. Its body says what it does without the browser and tells it to fail when it cannot do its
+job, and a `success_contract` makes a run that did not deliver count as failed, which raises an
+alert through the guardian. Separately, while the Claude in Chrome bridge is stale the guardian
+warns about every enabled routine whose `needs_bridge` names the browser; it detects and alerts,
+it never blocks the run.
 
 ## Links
 
