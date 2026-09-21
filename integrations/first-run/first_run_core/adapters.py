@@ -549,6 +549,21 @@ class RoutinePool:
         return True, path
 
 
+# ---------------------------------------------------------------- machine registry
+
+
+class MachineRegistry:
+    """machines.py's daily registration: the same one the guardian's scheduled repair runs."""
+
+    def __init__(self, environ=None):
+        self.environ = os.environ if environ is None else environ
+
+    def register(self):
+        import machines
+
+        return machines.register_daily(self.environ)
+
+
 # ---------------------------------------------------------------- wiring
 
 
@@ -576,6 +591,7 @@ def build_ports(vault=VAULT, environ=None, stdin=None, stdout=None):
         scheduler=SchedulerSetup(vault, home, state, environ=environ),
         routines=RoutinePool(vault, environ),
         remote=RemoteControlSetup(vault, home, state, environ),
+        machines=MachineRegistry(environ),
         clock=SystemClock(),
         home=home,
         platform=sys.platform,

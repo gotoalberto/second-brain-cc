@@ -115,6 +115,7 @@ def ports(answers=(), state=None, interactive=True, **over):
         remote=Recorder(default_label="workstation", vault="/home/u/Brain", preflight=([], []),
                         prepare=lambda path: (True, path), first_start=(True, "claude exit 0"),
                         configure=(True, "/state/remote-control.json"), linger=(True, "lingering is on")),
+        machines=Recorder(register="registered"),
         clock=Clock(),
         home="/home/u",
         platform="linux",
@@ -514,6 +515,36 @@ def test_mail_mcp_files_routines():
           any("kp.py put apis/agent-routines-token-1 --stdin" in s for s in p.prompt.said), p.prompt.said)
 
 
+def test_machine_registry():
+    print("\n== the machine registers itself at the end of first run ==")
+    p = ports(NO_TO_ALL)
+    A.run(p)
+    check("a completed run registers this machine once, after every step",
+          p.machines.names() == ["register"], p.machines.calls)
+    check("and says so", any("machine registry" in s.lower() for s in p.prompt.said), p.prompt.said)
+    p = ports(NO_TO_ALL)
+    A.run(p, dry_run=True)
+    check("a dry run registers nothing", p.machines.calls == [], p.machines.calls)
+    p = ports(interactive=False)
+    A.run(p)
+    check("a run with no terminal registers nothing (it does nothing)", p.machines.calls == [])
+    p = ports()
+    A.skip_all(p)
+    check("skip-all registers the machine too", p.machines.names() == ["register"], p.machines.calls)
+
+    class Exploding:
+        def register(self):
+            raise RuntimeError("registry unavailable")
+    p = ports(NO_TO_ALL, machines=Exploding())
+    try:
+        res, raised = A.run(p), None
+    except Exception as exc:
+        res, raised = None, exc
+    check("a registration that blows up never breaks first run", raised is None and res.complete, raised)
+    p = ports(NO_TO_ALL, machines=None)
+    check("no machine registry port is no registration", A.run(p).complete)
+
+
 def main():
     global A, D
     try:
@@ -524,7 +555,7 @@ def main():
     else:
         for t in (test_decline_everything, test_not_a_terminal, test_kdbx_and_google, test_failure_resumes,
                   test_scheduler_step, test_multi_machine_step, test_remote_control_step,
-                  test_mail_mcp_files_routines):
+                  test_mail_mcp_files_routines, test_machine_registry):
             try:
                 t()
             except Exception as exc:

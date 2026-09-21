@@ -34,7 +34,9 @@ def main():
             return 1
         state = os.path.join(root, "state")
         env = {k: v for k, v in os.environ.items() if not k.startswith("BRAIN_")}
-        env.update(HOME=os.path.join(root, "home"), BRAIN_STATE=state, BRAIN_FAKE_SCHEDULER="1")
+        # A forced machine key: the registration at the end of skip-all reads no real hardware.
+        env.update(HOME=os.path.join(root, "home"), BRAIN_STATE=state, BRAIN_FAKE_SCHEDULER="1",
+                   BRAIN_MACHINE_KEY="test-box-0000abcd")
         path = os.path.join(state, "first-run.json")
 
         def run(*args):
@@ -63,6 +65,9 @@ def main():
               and json.load(open(config)) == {"dir": files_dir}, (rc, out, err, data))
         check("and records every other step as declined, for CI and unattended machines",
               len(steps) == 9 and all(v["status"] == "declined" for k, v in steps.items() if k != "files"), steps)
+        check("and registers this machine in the machine registry, under this machine's state",
+              os.path.isfile(os.path.join(state, "machines", "test-box-0000abcd.json")),
+              os.listdir(state))
         rc, out, err = run("status")
         check("after that status exits 0", rc == 0, (rc, out))
         rc, out, err = run("reset", "scheduler")

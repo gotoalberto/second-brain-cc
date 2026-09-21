@@ -71,7 +71,7 @@ class Scheduler(Protocol):
 
 class RemoteControl(Protocol):
     def vault(self) -> str: ...
-    def default_label(self) -> str: ...                    # this machine's short host name
+    def default_label(self) -> str: ...                    # machine_identity.machine_label(), lower case
     def preflight(self) -> tuple: ...                      # ([what stops the server], [warnings])
     def prepare(self, path: str) -> tuple: ...             # creates it as a git repository: (ok, absolute path | why)
     def first_start(self, path: str, label: str) -> tuple: ...  # on the terminal, for the one-time prompts
@@ -82,6 +82,10 @@ class RemoteControl(Protocol):
 class Routines(Protocol):
     def agent_available(self) -> tuple: ...                # (ok, the agent command or why not)
     def add_token(self, label: str, kp_ref: str, issued: str, account: str) -> tuple: ...
+
+
+class MachineRegistry(Protocol):
+    def register(self) -> str: ...                         # machines.py register --daily: what happened, never raises
 
 
 class Clock(Protocol):

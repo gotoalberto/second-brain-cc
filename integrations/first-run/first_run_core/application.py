@@ -30,6 +30,7 @@ class Ports:
     clock: object
     home: str
     platform: str
+    machines: object = None      # the machine registry; None registers nothing
 
 
 @dataclass
@@ -354,8 +355,20 @@ def run(ports, dry_run=False) -> RunResult:
             ports.state.save(c.state)
     if not dry_run:
         ports.state.save(c.state)
+        ports.prompt.say("This machine's entry in the machine registry: %s (python3 _bin/machines.py lists them)."
+                         % _register_machine(ports))
     c.result.complete = D.is_complete(c.state) and not dry_run
     return c.result
+
+
+def _register_machine(ports):
+    """Register this machine in the machine registry (machines.py). Never fails the first run."""
+    if ports.machines is None:
+        return "not configured"
+    try:
+        return ports.machines.register()
+    except Exception as exc:
+        return "failed: %s" % type(exc).__name__
 
 
 def _files_unattended(ports):
@@ -387,6 +400,7 @@ def skip_all(ports):
             continue
         state = D.record(state, step, "declined", {"reason": "skipped with first_run.py skip-all"}, ports.clock.now())
     ports.state.save(state)
+    _register_machine(ports)
     return state, failed
 
 

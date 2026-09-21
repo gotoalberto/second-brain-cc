@@ -16,7 +16,8 @@ remote_control makes the machine reachable from the Claude app: a dedicated git 
 ~/<host name>), one start on the terminal for the server's one-time prompts, then a launchd agent or a
 systemd user unit that keeps `claude remote-control --chrome` running (remote_control.py).
 Answers live in <brain state>/first-run.json; the guardian installs and repairs only the scheduled
-jobs accepted here.
+jobs accepted here. A run and skip-all both end by registering this machine in the machine registry
+(machines.py register --daily), which the guardian's scheduled repair then keeps fresh.
 BRAIN_FAKE_SCHEDULER=1 writes job files under HOME without telling launchctl, systemctl or cron.
 Usually started through setup.sh.
 """
