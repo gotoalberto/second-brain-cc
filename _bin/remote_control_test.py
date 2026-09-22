@@ -109,12 +109,16 @@ def test_problems(RC):
     missing = RC.problems({"dir": "/home/u/gone", "name": "x"}, exists, False, "/c")
     check("a working directory that is not there", any("/home/u/gone" in p for p in missing), missing)
     plain = RC.problems(cfg, lambda p: p == "/home/u/workstation", False, "/c")
-    check("a working directory that is not a git repository (trust is never kept for a plain folder)",
-          any("git" in p for p in plain), plain)
+    check("a working directory that is not a git repository is fine: same-dir spawn mode needs none",
+          plain == [], plain)
+    home = RC.problems({"dir": "/home/u", "name": "workstation"}, lambda p: p == "/home/u", False, "/c")
+    check("the home directory is fine: trust is kept for it like for any directory", home == [], home)
     root = RC.problems(cfg, exists, True, "/c")
     check("root: Claude Code refuses to bypass permissions there", any("root" in p for p in root), root)
     nocli = RC.problems(cfg, exists, False, None)
-    check("no claude CLI", any("claude" in p and "PATH" in p for p in nocli), nocli)
+    check("no claude CLI, naming every place looked in",
+          any("claude" in p and "PATH" in p and "/opt/homebrew/bin" in p and "/usr/local/bin" in p for p in nocli),
+          nocli)
 
 
 def test_find_claude(RC):
@@ -130,6 +134,26 @@ def test_find_claude(RC):
     check("then ~/.local/bin, where the installer puts it",
           RC.find_claude({"PATH": "/p"}, d, which=lambda n, path=None: None) == exe)
     check("or nothing", RC.find_claude({"PATH": "/p"}, "/nowhere", which=lambda n, path=None: None) is None)
+    check("after ~/.local/bin come the Homebrew locations",
+          RC.CANDIDATES == ("~/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"),
+          RC.CANDIDATES)
+
+    heads = {"/p/claude": b"#!/bin/sh\nexec claude --flag \"$@\"\n", exe: b"\x7fELF\x02\x01"}
+    read = lambda p: heads.get(p, b"")
+    check("a shell wrapper on PATH gives way to the real CLI in ~/.local/bin",
+          RC.find_claude({"PATH": "/p"}, d, which=lambda n, path=None: "/p/claude", read=read) == exe)
+    only = {"/p/claude": b"#!/usr/bin/env bash\nexec x \"$@\"\n"}
+    got = RC.find_claude({"PATH": "/p"}, "/nowhere", which=lambda n, path=None: "/p/claude",
+                         read=lambda p: only.get(p, b""))
+    check("a wrapper is still used when it is all there is", got == "/p/claude", got)
+    warn = RC.warnings("/p/claude", read=lambda p: only.get(p, b""))
+    check("and then a warning names it and the \"$@\" it must keep",
+          len(warn) == 1 and "/p/claude" in warn[0] and '"$@"' in warn[0], warn)
+    check("a native binary is no wrapper", not RC.is_wrapper(exe, read) and RC.warnings(exe, read) == [])
+    check("nor is the node script an npm install links",
+          not RC.is_wrapper("/n", lambda p: b"#!/usr/bin/env node\nrequire('x')\n"))
+    check("a zsh wrapper is one", RC.is_wrapper("/z", lambda p: b"#!/bin/zsh\nexec y\n"))
+    check("no CLI gives no warning", RC.warnings(None) == [])
 
 
 def test_serve():
@@ -152,15 +176,21 @@ def test_serve():
     RC.save(repo, "workstation", config_path=os.path.join(state, "remote-control.json"))
     p = subprocess.run([sys.executable, script, "serve"], capture_output=True, text=True, env=env, timeout=30)
     out = p.stdout
-    check("serve runs claude from the dedicated repository",
+    check("serve runs claude from a dedicated repository, when that is what is recorded",
           p.returncode == 0 and _cwd(out) == os.path.realpath(repo),
           (p.returncode, out, p.stderr))
     check("with --chrome and the recorded name", "args=remote-control --chrome --name workstation" in out, out)
     check("and without the variables that break it", "telemetry=unset traffic=unset" in out, out)
     check("keeping the rest of the environment", "keep=yes" in out, out)
+    check("and warns that the claude it found is a shell wrapper", "wrapper" in p.stderr, p.stderr)
     p = subprocess.run([sys.executable, script, "show"], capture_output=True, text=True, env=env, timeout=30)
     check("show prints the directory and the command it would run",
           p.returncode == 0 and repo in p.stdout and "remote-control --chrome --name workstation" in p.stdout,
+          (p.returncode, p.stdout, p.stderr))
+    RC.save(d, "workstation", config_path=os.path.join(state, "remote-control.json"))
+    p = subprocess.run([sys.executable, script, "serve"], capture_output=True, text=True, env=env, timeout=30)
+    check("serve runs claude from the home directory, which is no git repository",
+          p.returncode == 0 and _cwd(p.stdout) == os.path.realpath(d) and not os.path.exists(os.path.join(d, ".git")),
           (p.returncode, p.stdout, p.stderr))
 
 

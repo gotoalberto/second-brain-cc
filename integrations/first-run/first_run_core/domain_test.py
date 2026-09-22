@@ -119,12 +119,12 @@ def test_remote_control_rules(D):
     check("its job labels match the supervisor templates in _bin",
           D.job_label("launchd", D.REMOTE_CONTROL_JOB) == "com.secondbrain.remote-control"
           and D.job_label("systemd", D.REMOTE_CONTROL_JOB) == "second-brain-remote-control")
-    check("the dedicated repository defaults to a folder named like the machine, in the home directory",
-          D.default_remote_dir("/home/u", "workstation", "/home/u/Brain") == "/home/u/workstation",
+    check("the working directory defaults to the home directory",
+          D.default_remote_dir("/home/u", "workstation", "/home/u/Brain") == "/home/u",
           D.default_remote_dir("/home/u", "workstation", "/home/u/Brain"))
     check("never the vault itself, even on a case-insensitive disk",
-          D.default_remote_dir("/Users/u", "brain", "/Users/u/Brain") == "/Users/u/brain-remote",
-          D.default_remote_dir("/Users/u", "brain", "/Users/u/Brain"))
+          D.default_remote_dir("/Users/U", "brain", "/users/u") == "/Users/U/brain",
+          D.default_remote_dir("/Users/U", "brain", "/users/u"))
     check("a name is letters, digits, dots, dashes and underscores",
           D.valid_label("workstation") and D.valid_label("build-box_2.lan") and not D.valid_label("")
           and not D.valid_label("two words") and not D.valid_label("../up") and not D.valid_label("x" * 64))

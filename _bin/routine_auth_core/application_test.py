@@ -507,6 +507,52 @@ def test_delivery():
           res.rc == 65 and res.kind == D.CONTRACT_BREACH and "did not run the routine" in res.summary, res.summary)
 
 
+BROWSER_ARGS = ["--permission-mode", "acceptEdits", "--allowedTools", "Read,mcp__claude-in-chrome"]
+
+
+def test_browser():
+    print("\n== a routine that allows Claude in Chrome ==")
+    p = ports(outcomes=["ok_json"], base_env={"HOME": "/h", "CLAUDE_CODE_OAUTH_TOKEN": "parent"})
+    res = A.run_routine(p, routine(BROWSER_ARGS), budget_s=1800)
+    call = p.runner.calls[0]
+    check("it runs once, on the CLI's own login, and succeeds", res.rc == 0 and len(p.runner.calls) == 1
+          and res.label == D.CLI_LOGIN_LABEL, res)
+    check("no token variable at all, not even the parent's", "CLAUDE_CODE_OAUTH_TOKEN" not in call["env"],
+          sorted(call["env"]))
+    check("no pool token is read", p.tokens.reads == [], p.tokens.reads)
+    check("--chrome is passed after the routine's args", call["args"][:4] == BROWSER_ARGS
+          and call["args"][4] == "--chrome", call["args"])
+    check("the prompt says the machine's Chrome holds the user's logged-in sessions",
+          "the user's logged-in sessions" in call["prompt"] and "Never sign in" in call["prompt"], call["prompt"][:400])
+    check("a success clears the CLI-login warning", "routine-auth:cli-login" in p.alerts.cleared, p.alerts.cleared)
+
+    p = ports(outcomes=["auth_not_logged_in", "ok_json"])
+    res = A.run_routine(p, routine(BROWSER_ARGS), budget_s=1800)
+    second = p.runner.calls[1] if len(p.runner.calls) > 1 else {"env": {}, "args": [], "prompt": ""}
+    check("a logged-out CLI falls back to the pool token and the run succeeds", res.rc == 0
+          and len(p.runner.calls) == 2 and second["env"].get("CLAUDE_CODE_OAUTH_TOKEN") == TOK["a"], res)
+    check("the fallback does not pass --chrome", "--chrome" not in second["args"], second["args"])
+    check("the fallback prompt says there is no browser", "browser: none" in second["prompt"])
+    check("a warning names the fix", "routine-auth:cli-login" in p.alerts.raised
+          and p.alerts.raised["routine-auth:cli-login"][0] == "warn"
+          and "claude auth login" in p.alerts.raised["routine-auth:cli-login"][1], p.alerts.raised)
+    check("both attempts are listed", [(x.label, x.kind) for x in res.attempts]
+          == [(D.CLI_LOGIN_LABEL, D.AUTH_INVALID), ("a", D.OK)], res.attempts)
+    check("the pool's failover budget is not spent by the CLI-login attempt",
+          len(res.attempts) - 1 <= A.MAX_ATTEMPTS, res.attempts)
+
+    p = ports(outcomes=["unknown"])
+    res = A.run_routine(p, routine(BROWSER_ARGS), budget_s=1800)
+    check("any other failure on the CLI login is reported, no token is spent on it", res.rc == 1
+          and len(p.runner.calls) == 1 and p.tokens.reads == [] and res.summary, res)
+
+    p = ports(outcomes=["ok_json"])
+    A.run_routine(p, routine(["--allowedTools", "Read"]), budget_s=1800)
+    check("a routine without the browser tool still runs on the pool token only",
+          p.runner.calls[0]["env"].get("CLAUDE_CODE_OAUTH_TOKEN") == TOK["a"]
+          and "--chrome" not in p.runner.calls[0]["args"] and "browser:" not in p.runner.calls[0]["prompt"])
+
+
 def main():
     global A, D, FIXTURES
     try:
@@ -517,7 +563,7 @@ def main():
         check("routine_auth_core.application imports", False, "%s: %s" % (type(exc).__name__, exc))
     else:
         for t in (test_success, test_failover, test_malformed, test_stops, test_budget_and_args, test_contract,
-                  test_permissions, test_framing_and_scratch, test_delivery):
+                  test_permissions, test_framing_and_scratch, test_delivery, test_browser):
             try:
                 t()
             except Exception as exc:

@@ -188,7 +188,7 @@ def report_blocked(hits):
         if key in seen:
             continue
         seen.add(key)
-        lines.append("- `%s` — %s (`%s`)" % (rel, kind, frag))
+        lines.append("- `%s`: %s (`%s`)" % (rel, kind, frag))
     lines += ["", "What to do:",
               "1. If it is real: take it out of the file and rotate the credential.",
               "2. If it is a synthetic example (tests, docs): add the comment",
@@ -222,6 +222,9 @@ def has_remote():
     return code == 0 and bool(out.strip())
 
 
+PLUGIN_DIR = "integrations/claude-code/plugin/"
+
+
 def refresh_plugin():
     """Dumps the live harness from ~/.claude into the vault plugin, before committing.
 
@@ -240,6 +243,35 @@ def refresh_plugin():
         B.log_error("vault_sync.refresh_plugin", e)
         print("warning: could not refresh the plugin (%s)" % e)
         return False
+
+
+SYNC_JITTER_S = float(os.environ.get("BRAIN_SYNC_JITTER_S") or 30)
+
+
+def scheduled_run(environ=None, ppid=os.getppid):
+    """Was this pass started by a scheduler rather than by hand or by a hook?
+
+    launchd starts its jobs with parent pid 1; the systemd units and the cron lines Brain
+    installs set BRAIN_JOB_LABEL. Either one counts.
+    """
+    environ = os.environ if environ is None else environ
+    return bool(environ.get("BRAIN_JOB_LABEL")) or ppid() == 1
+
+
+def scheduled_jitter(sleep=time.sleep, ppid=os.getppid, environ=None):
+    """A random wait of up to SYNC_JITTER_S before a scheduled pass. Returns the seconds.
+
+    Every machine runs the sync on the same 10 minute interval, so passes that start aligned
+    stay aligned: both pull, both commit, both push, one is rejected and has to rebase.
+    Spreading the start breaks that. Only for a scheduled pass (`scheduled_run`): a pass
+    started by hand or by a test runs at once. BRAIN_SYNC_JITTER_S=0 turns it off.
+    """
+    if SYNC_JITTER_S <= 0 or not scheduled_run(environ, ppid):
+        return 0.0
+    import random
+    wait = random.uniform(0, SYNC_JITTER_S)
+    sleep(wait)
+    return wait
 
 
 DAEMON_LOG = os.path.join(B.LOGS, "daemon.log")
@@ -268,9 +300,126 @@ def purge_dead_sessions():
     con.close()
 
 
-def rebase_en_curso():
+def rebase_in_progress():
     return os.path.isdir(os.path.join(B.VAULT, ".git", "rebase-merge")) or\
            os.path.isdir(os.path.join(B.VAULT, ".git", "rebase-apply"))
+
+
+STALE_INDEX_LOCK_S = 120
+
+
+def git_running(run=None, which=shutil.which):
+    """True when any git process is alive on this machine. When in doubt, True."""
+    try:
+        import subprocess
+        pgrep = which("pgrep")
+        if not pgrep:
+            return True
+        p = (run or subprocess.run)([pgrep, "-x", "git"], capture_output=True, timeout=5)
+        return p.returncode == 0
+    except Exception:
+        return True
+
+
+def clear_stale_index_lock(vault=None, now_=None, running=None):
+    """Removes `.git/index.lock` when no git process exists and it is old. True if removed.
+
+    A git killed mid-write (a sleeping lid, a timeout) leaves the lock behind, and every
+    later pass fails on it, which used to end in a "Sync conflict with the remote" note for
+    what was only a leftover file on this machine. It is removed only with two proofs
+    together: no git process alive at all, and untouched for STALE_INDEX_LOCK_S seconds.
+    Anything less and it is left alone.
+    """
+    path = os.path.join(vault or B.VAULT, ".git", "index.lock")
+    try:
+        age = (now_ or time.time()) - os.path.getmtime(path)
+    except OSError:
+        return False
+    if age < STALE_INDEX_LOCK_S or (running or git_running)():
+        return False
+    try:
+        os.remove(path)
+    except OSError:
+        return False
+    B.log("sync", "stale-index-lock-removed", machine=MACHINE, age="%.0f" % age)
+    print("removed a stale .git/index.lock (%.0f s old, no git running)" % age)
+    return True
+
+
+def is_lock_failure(text):
+    """A git failure caused by a leftover lock file, not by the content of two histories."""
+    return "index.lock" in (text or "") and "File exists" in (text or "")
+
+
+# Paths the machinery rewrites on its own every few minutes. A conflict on one of them holds
+# nothing a person wrote, so the sync settles it itself instead of stopping. Empty here:
+# nothing in this vault is committed periodically by a machine (presence, leases and the
+# machine registry live outside git). Add a prefix only for a file of that kind.
+EPHEMERAL_PREFIXES = ()
+
+
+def is_ephemeral(rel):
+    return bool(EPHEMERAL_PREFIXES) and rel.startswith(tuple(EPHEMERAL_PREFIXES))
+
+
+def unmerged_paths(run_git=None):
+    run_git = run_git or git
+    code, out, _ = run_git("diff", "--name-only", "--diff-filter=U")
+    return [l.strip() for l in (out or "").splitlines() if l.strip()] if code == 0 else []
+
+
+def settle_unmerged(run_git=None):
+    """Clears unmerged machine files left by `pull --autostash`; returns the ones a person must see.
+
+    `pull --rebase --autostash` exits 0 even when re-applying the stash conflicts: it leaves
+    the file unmerged and the stash in the list. Every later pull then fails with "you have
+    unmerged files", logged as a plain pull failure, and the machine stops receiving the
+    vault without anyone noticing.
+
+    A file under EPHEMERAL_PREFIXES is regenerated by the machinery, so the remote's version
+    wins: the HEAD copy if there is one, else it goes. When every conflict was of that kind,
+    the autostash entry is dropped too (its other files were already applied). Anything
+    else is left exactly as it is and returned.
+    """
+    run_git = run_git or git
+    paths = unmerged_paths(run_git)
+    if not paths:
+        return []
+    ephemeral = [p for p in paths if is_ephemeral(p)]
+    for rel in ephemeral:
+        in_head = run_git("cat-file", "-e", "HEAD:" + rel)[0] == 0
+        if in_head:
+            run_git("checkout", "HEAD", "--", rel)
+        else:
+            run_git("rm", "-q", "-f", "--ignore-unmatch", "--", rel)
+    left = unmerged_paths(run_git)
+    if ephemeral and not left:
+        code, top, _ = run_git("stash", "list", "-n", "1", "--format=%gs")
+        if code == 0 and "autostash" in (top or ""):
+            run_git("stash", "drop", "-q")
+    if ephemeral:
+        B.log("sync", "settled-unmerged", machine=MACHINE, files_=",".join(ephemeral[:5]))
+        print("unmerged machine files settled from the remote: %s" % ", ".join(ephemeral[:5]))
+    return left
+
+
+def report_unmerged(left):
+    """Stops loudly on unmerged files: a CONFLICT note in 00-Inbox and a line on stdout."""
+    B.log("sync", "stopped-unmerged", machine=MACHINE, files_=",".join(left[:5]))
+    warn_rel = "00-Inbox/CONFLICT-sync-%s.md" % time.strftime("%Y%m%d-%H%M%S")
+    B.mark_git_touched([warn_rel])
+    try:
+        with open(os.path.join(B.VAULT, warn_rel), "w") as fh:
+            fh.write("---\ntitle: Sync stopped on unmerged files\n"
+                     "type: reference\nstatus: active\n---\n\n"
+                     "The vault on **%s** has unmerged files, so it can neither pull nor "
+                     "commit until they are resolved by hand:\n\n%s\n\n"
+                     "```bash\ncd %s && git status\n```\n"
+                     % (MACHINE, "\n".join("- `%s`" % r for r in left), B.VAULT))
+    except OSError:
+        pass
+    print("UNMERGED FILES in %s, sync stopped until they are resolved: %s"
+          % (B.VAULT, ", ".join(left[:5])))
 
 
 def fetch_from_remote():
@@ -280,6 +429,7 @@ def fetch_from_remote():
     following pass failed and **the system stopped syncing in silence**.
     A vault that believes it syncs and does not is worse than one that never tries.
     """
+    clear_stale_index_lock()
     _, head_before, _ = git("rev-parse", "HEAD")
     code, out, err = git("pull", "--rebase", "--autostash")
     if code == 0:
@@ -295,10 +445,19 @@ def fetch_from_remote():
     # simply wrong for those cases ("resolve it by hand"), and one more on every pass for
     # as long as the outage lasted. An outage is not a conflict, and a fail-open system
     # must not answer repetition with unbounded growth.
-    was_conflict = rebase_en_curso()
+    was_conflict = rebase_in_progress()
     if was_conflict:
         git("rebase", "--abort")
-    else:
+    # A lock failure is only harmless when it left no rebase behind: if the abort itself
+    # failed, the repo is mid-rebase and that has to reach the conflict note below.
+    if is_lock_failure((out or "") + (err or "")) and not rebase_in_progress():
+        # A lock left on this machine is not a conflict with the remote: no note, the lock
+        # is cleared when it is provably stale, and the next pass pulls normally.
+        B.log("sync", "pull-blocked-by-lock", machine=MACHINE, err=(err or "")[:200])
+        print("pull blocked by .git/index.lock (not a conflict)%s"
+              % (": stale lock removed" if clear_stale_index_lock() else ""))
+        return False
+    if not was_conflict:
         B.log("sync", "pull-failed", machine=MACHINE, err=(err or "")[:200])
         print("pull failed (no rebase conflict): %s" % (err or "").strip()[:160])
         return False
@@ -354,6 +513,8 @@ def main():
     # alone) each time. If another sync is under way, it exits and the daemon picks it up
     # on its next pass, 10 minutes later. The rule: the turn ends, whatever happens.
     hook = "--hook" in sys.argv
+    if not hook:
+        scheduled_jitter()
     with B.flock(os.path.join(B.VAULT, "_index", ".gitlock"),
                  timeout=1.5 if hook else 30) as lk:
         if not lk.held:
@@ -386,7 +547,7 @@ def main():
         #
         # So it neither aborts nor commits: it stops and says so loudly. A vault that
         # cannot sync has to shout about it, not paper over it.
-        if rebase_en_curso():
+        if rebase_in_progress():
             B.log("sync", "stopped-rebase-in-progress", machine=MACHINE)
             print("REBASE IN PROGRESS in %s: nothing is committed (the commits would go\n"
                   "  to a detached HEAD). Finish or abort it by hand:\n"
@@ -397,10 +558,30 @@ def main():
         # puts the work out of harm's way; pushing it means having a cloud copy, and that
         # can wait for the daemon's next pass (10 min). It used to be ~2 s of pull+push on
         # EVERY turn, and if the network stalled, the turn never finished.
+        # Unmerged files block every pull and every commit after them, so they stop the
+        # pass loudly instead of failing it quietly on every run.
+        left = settle_unmerged()
+        if left:
+            report_unmerged(left)
+            return 1
+
         if has_remote() and not hook:
             unsettled = snapshot_unsettled(files_to_commit())
+            _, before, _ = git("rev-parse", "HEAD")
             fetch_from_remote()
             restore_mtimes(unsettled)
+            left = settle_unmerged()
+            if left:
+                report_unmerged(left)
+                return 1
+            # Skills and agents pulled from another machine are installed in this same
+            # pass, not 10 minutes later on the next refresh_plugin().
+            _, after, _ = git("rev-parse", "HEAD")
+            if before.strip() and before.strip() != after.strip():
+                rc, changed, _ = git("diff", "--name-only", before.strip(), after.strip(),
+                                     "--", PLUGIN_DIR)
+                if rc == 0 and changed.strip():
+                    refresh_plugin()
 
         paths = files_to_commit()
 

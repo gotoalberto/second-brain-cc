@@ -129,6 +129,13 @@ def _duplicates(ports):
     return D.duplicate_task_findings(ports.desktop_tasks.enabled(), _agent_rows(ports))
 
 
+def _app_tasks(ports):
+    if ports.desktop_tasks is None:
+        return []
+    return D.app_task_registry_findings(ports.desktop_tasks.enabled(), ports.routines.routines(),
+                                        ports.routines.host(), getattr(ports.routines, "is_mine", None))
+
+
 def _permissions(ports):
     return D.routine_permission_findings(_agent_rows(ports))
 
@@ -182,7 +189,7 @@ def _hook_probe(ports):
 
 SECTIONS = (("agents", _agents), ("launchd", _launchd), ("interpreter", _interpreter),
             ("vault", _vault), ("githooks", _git_hooks), ("token_pool", _token_pool),
-            ("duplicates", _duplicates), ("permissions", _permissions), ("degraded", _degraded),
+            ("duplicates", _duplicates), ("app_tasks", _app_tasks), ("permissions", _permissions), ("degraded", _degraded),
             ("hook_liveness", _hook_liveness), ("hook_probe", _hook_probe), ("raised", _raised), ("mail", _mail))
 
 
@@ -214,15 +221,25 @@ def _safe(fn, *args):
 def _alert(ports, report, repaired=(), backups=()):
     """Tell the user what changed, once. Never raises. Returns the actions taken.
 
-    What changed is both the findings (`decide`) and what this run repaired
-    (`repair_alert`); when a run has both they go out as one message. The desktop
-    notification says only that something changed and how many: it can appear on a
-    shared or recorded screen, and a finding may name a private routine. The detail goes
-    to the email, which goes to the user's own inbox, and to `guardian.py status`.
+    Two channels, two different bars. The desktop notification says only that something
+    changed and how many: it can appear on a shared or recorded screen, and a finding may
+    name a private routine. The detail always goes to the log and to `guardian.py status`.
+
+    The inbox has the higher bar, and `D.mail_decide` owns it: only a FAIL still open in
+    `report` once this run's repair has been attempted, something no amount of waiting
+    fixes because the guardian already tried. A repair that succeeded, a problem that
+    resolved, a warn-only change: desktop only. The mail is built from those findings
+    themselves, not from the notification actions, so a run that repairs something while an
+    unrelated FAIL happens to be open does not mail about the repair.
+
+    `hooks:probe:*` FAILs are debounced one run by `D.probe_mail_worthy()`: they page only
+    once still open on the next run, since the probe's own findings have been seen to
+    resolve themselves within one 15-minute cycle.
     """
     state = _safe(ports.state.load) or {}
     now = ports.clock.now()
-    alerts, actions = D.decide(state.get("alerts"), report.findings, now)
+    prev_alerts = state.get("alerts") or {}
+    alerts, actions = D.decide(prev_alerts, report.findings, now)
     actions = D.merge_alerts(D.repair_alert(list(repaired), list(backups)), actions)
     open_count = len(report.findings)
     status = ("%d open problem(s). Details: guardian.py status" % open_count
@@ -232,12 +249,19 @@ def _alert(ports, report, repaired=(), backups=()):
             _safe(ports.notifier.notify, "Brain guardian", "Repaired %d item(s). %s" % (len(repaired), status))
         elif a.kind == "notify-change":
             _safe(ports.notifier.notify, "Brain guardian", status)
-        if ports.mail_to:
-            _safe(ports.outbox.enqueue, ports.mail_to, a.subject, a.body)
+    mail_worthy = D.probe_mail_worthy(report.findings, prev_alerts.get("active"))
+    mails, mail_state = D.mail_decide(mail_worthy, prev_alerts.get("mail"), now)
+    if ports.mail_to:
+        for m in mails:
+            _safe(ports.outbox.enqueue, ports.mail_to, m.subject, m.body)
+        alerts["mail"] = mail_state
+    else:
+        mails = []
+        alerts["mail"] = prev_alerts.get("mail") or {}
     state["alerts"] = alerts
     _safe(ports.state.save, state)
     _safe(ports.outbox.flush)
-    return actions
+    return actions + mails
 
 
 # ---------------------------------------------------------------- use cases

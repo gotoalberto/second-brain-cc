@@ -228,7 +228,7 @@ def cmd_add(args):
         if os.path.splitext(rel)[1].lower() in EMBEDDABLE and not args.no_embed:
             entries.append((rel, "![[%s]]\n*%s*" % (rel, caption_)))
         else:
-            entries.append((rel, "- [[%s]] — %s (%s)" % (rel, caption_, human(size))))
+            entries.append((rel, "- [[%s]]: %s (%s)" % (rel, caption_, human(size))))
 
     mode = anchor(args.to, entries, args.sid)
     for rel, size, status in guardados:

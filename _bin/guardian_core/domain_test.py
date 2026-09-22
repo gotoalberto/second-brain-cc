@@ -569,6 +569,37 @@ def test_duplicates_and_degraded(D):
           D.duplicate_task_findings([("weekly-report", "a")], [dict(rows[2], enabled=False)]) == []
           and D.duplicate_task_findings([], rows) == [])
 
+    print("\n== Claude app tasks against the registry ==")
+    HOST = "workstation-0f0f0f0f"
+    reg = [{"id": "daily-digest", "type": "claude-app", "machine": HOST, "enabled": False},
+           {"id": "example-routine-b", "type": "claude-app", "machine": HOST, "enabled": True},
+           {"id": "other-box-task", "type": "claude-app", "machine": "laptop-0a1b2c3d", "enabled": True},
+           {"id": "everywhere", "type": "claude-app", "machine": "*", "enabled": True}]
+    desktop = [("weekly-report-to-chat", "acct"), ("other-box-task", "acct"),
+               ("daily-digest", "acct"), ("everywhere", "acct"), ("everywhere", "acct-2")]
+    fs = D.app_task_registry_findings(desktop, reg, HOST)
+    keys = [(f.key, f.severity, f.repairable) for f in fs]
+    check("an enabled app task with no registry row is a warning naming this machine",
+          ("app-task:unregistered:weekly-report-to-chat", "warn", False) in keys
+          and any(HOST in f.summary for f in fs if "unregistered" in f.key), keys)
+    check("an enabled app task the registry gives to another machine is a failure",
+          ("app-task:wrong-machine:other-box-task", "fail", False) in keys, keys)
+    check("an app task enabled here while its row says no is drift",
+          ("app-task:registry-drift:daily-digest", "warn", False) in keys, keys)
+    check("a row enabled for this machine that the app does not run is drift",
+          ("app-task:registry-drift:example-routine-b", "warn", False) in keys, keys)
+    check("a task for every machine, enabled in two accounts, is fine and reported once at most",
+          not any("everywhere" in k for k, _, _ in keys) and len(keys) == 4, keys)
+    check("nothing enabled and nothing owned is silence",
+          D.app_task_registry_findings([], [dict(reg[0])], HOST) == [])
+    keyed = [{"id": "keyed-task", "type": "claude-app", "machine": "box-1a2b3c4d", "enabled": True}]
+    check("a row pinned by machine key counts as this machine when is_mine says so",
+          D.app_task_registry_findings([("keyed-task", "a")], keyed, "some-host",
+                                       lambda m: m == "box-1a2b3c4d") == [])
+    check("and as another machine without it",
+          [f.key for f in D.app_task_registry_findings([("keyed-task", "a")], keyed, "some-host")]
+          == ["app-task:wrong-machine:keyed-task"])
+
     print("\n== routines degraded by a stale browser bridge ==")
     rows = [{"id": "example-routine-b-agent", "enabled": True, "needs_bridge": ["example-bridge", "claude-in-chrome"]},
             {"id": "daily-digest-agent", "enabled": True, "needs_bridge": ["email", "skill-defined"]},
@@ -665,6 +696,20 @@ def test_hook_liveness(D):
                                                   hb("aaaa1111", "stop-memory-gate", 30)], specs, now, young)
     check("nor is one whose first turn ended moments ago (async hooks may still be running)",
           rep.findings == [], rep.findings)
+
+    # Unattended runs go through the SDK, and there Claude Code itself can cancel the
+    # SessionStart hooks as the queued prompt starts: compass.py is killed before its
+    # heartbeat is written. The transcript records it as a `hook_cancelled` attachment, so
+    # the hook was wired and started. That is not Brain failing.
+    cancelled = D.SessionTranscript("dddd4444", "-Users-me-Brain", now - 600, now - 60,
+                                    frozenset({"SessionStart"}))
+    rep = D.hook_liveness([cancelled], [hb("dddd4444", "prompt-submit", 590),
+                                        hb("dddd4444", "stop-memory-gate", 400)], specs, now, young)
+    check("a SessionStart that Claude Code cancelled is not hooks:silent:session-start",
+          rep.findings == [], rep.findings)
+    rep = D.hook_liveness([cancelled], [hb("dddd4444", "stop-memory-gate", 400)], specs, now, young)
+    check("but a cancelled SessionStart does not excuse a missing prompt-submit",
+          ks(rep) == [("hooks:silent:prompt-submit", "warn")], rep.findings)
 
     def runs(statuses):
         return [hb("bbbb2222", "prompt-submit", 100 + i * 10, s, "ValueError" if s == "error" else "")
@@ -774,6 +819,56 @@ def test_hook_probe(D):
           [(f.key, f.severity) for f in fs] == [("hooks:probe:session-start", "fail")]
           and "compass.py" in fs[0].summary and "SyntaxError" in fs[0].summary and "\n" not in fs[0].summary, fs)
 
+    probe_fail = D.Finding("hooks:probe:session-end", D.FAIL, "hook session-end fails")
+    other_fail = D.Finding("routine-auth:token:routines-1", D.FAIL, "token dead")
+    warn = D.Finding("launchd-drift:com.x", D.WARN, "plist drifted")
+    check("a hooks:probe:* FAIL new this run (no previous active state) is not mail-worthy",
+          D.probe_mail_worthy([probe_fail], None) == [] and D.probe_mail_worthy([probe_fail], {}) == [])
+    check("the same hooks:probe:* FAIL, already open last run, is mail-worthy",
+          D.probe_mail_worthy([probe_fail], {"hooks:probe:session-end": {"severity": "fail"}}) == [probe_fail])
+    check("a non-probe FAIL is mail-worthy on its first appearance regardless of previous state",
+          D.probe_mail_worthy([other_fail], None) == [other_fail]
+          and D.probe_mail_worthy([other_fail], {}) == [other_fail])
+    check("a WARN is never mail-worthy, probe or not",
+          D.probe_mail_worthy([warn], {"launchd-drift:com.x": {"severity": "warn"}}) == [])
+    check("a mix keeps the non-probe FAIL and the still-open probe FAIL, drops the new probe FAIL and the warn",
+          D.probe_mail_worthy([probe_fail, other_fail, warn],
+                              {"routine-auth:token:routines-1": {"severity": "fail"}}) == [other_fail])
+    check("a key already mailed is dropped when the caller asks for that filter",
+          D.probe_mail_worthy([probe_fail], {"hooks:probe:session-end": {}}, {"hooks:probe:session-end"}) == [])
+
+
+def test_mail_decide(D):
+    print("\n== what goes to the inbox ==")
+    import datetime as dt
+    now = dt.datetime(2026, 9, 20, 12, 0, 0)
+    a = D.Finding("token:dead", D.FAIL, "token dead")
+    b = D.Finding("githooks:missing", D.FAIL, "git hook missing")
+    mails, st = D.mail_decide([], None, now)
+    check("nothing mail-worthy is no mail and an empty record", mails == [] and st["mailed"] == [], (mails, st))
+    mails, st = D.mail_decide([a], None, now)
+    check("a fail that needs a person pages once, naming it",
+          len(mails) == 1 and mails[0].kind == "mail" and "need you" in mails[0].subject
+          and "token dead" in mails[0].body, mails)
+    check("and is remembered as mailed", st["mailed"] == ["token:dead"] and st["last_digest"], st)
+    later = now + dt.timedelta(hours=1)
+    mails, st2 = D.mail_decide([a], st, later)
+    check("still open an hour later: no second mail", mails == [] and st2["mailed"] == ["token:dead"], (mails, st2))
+    mails, st3 = D.mail_decide([a, b], st2, later)
+    check("a second fail appearing pages only for itself",
+          len(mails) == 1 and "git hook missing" in mails[0].body and "token dead" not in mails[0].body, mails)
+    day = now + dt.timedelta(hours=25)
+    mails, st4 = D.mail_decide([a, b], st3, day)
+    check("a day later one digest carries everything still open",
+          len(mails) == 1 and "still open" in mails[0].subject and "token dead" in mails[0].body
+          and "git hook missing" in mails[0].body, mails)
+    mails, _ = D.mail_decide([a, b], st4, day + dt.timedelta(minutes=15))
+    check("and the digest is not repeated the next run", mails == [], mails)
+    mails, st5 = D.mail_decide([b], st4, day + dt.timedelta(minutes=30))
+    check("a key that resolved drops out of the record", st5["mailed"] == ["githooks:missing"], st5)
+    mails, _ = D.mail_decide([a, b], st5, day + dt.timedelta(minutes=45))
+    check("so a fresh occurrence of it pages again", len(mails) == 1 and "token dead" in mails[0].body, mails)
+
 
 def test_health_notice(D):
     print("\n== session-start health notice ==")
@@ -811,7 +906,7 @@ def main():
         for t in (test_hook_identity, test_merge_hooks, test_stale_hooks, test_localize, test_schedule,
                   test_decide, test_report_and_rules, test_agents_and_drift, test_agent_conflicts, test_git_hooks,
                   test_repair_alert, test_token_pool, test_duplicates_and_degraded, test_routine_permissions,
-                  test_hook_liveness, test_hook_probe, test_health_notice):
+                  test_hook_liveness, test_hook_probe, test_mail_decide, test_health_notice):
             try:
                 t(D)
             except Exception as exc:

@@ -7,14 +7,25 @@
 #   {prompt_file}  a temporary 0600 file holding that same prompt, removed when the run ends
 #   ~              the home directory
 # Each routine appends its own `agent_args` from its frontmatter (a JSON list of strings); the runner then
-# appends `--add-dir <scratch directory>`, the attempt's own <brain state>/routine-scratch/<run id>.
+# appends `--chrome` on the attempt that runs on the CLI's own login (below) and `--add-dir <scratch
+# directory>`, the attempt's own <brain state>/routine-scratch/<run id>.
 # BRAIN_AGENT_CMD in the environment overrides this file.
 #
 # This is configuration, not code. The example below is the standalone Claude Code CLI (the native
-# install), never a desktop app's bundled copy and never with --bare: the runner refuses both. Every run
-# uses a token from 90-Meta/routine-tokens.json, read from KeePass, never the account the CLI or an app is
-# logged into. Another CLI agent is this one line plus that agent's own credential step, for example:
+# install), never a desktop app's bundled copy and never with --bare: the runner refuses both. A run uses
+# a token from 90-Meta/routine-tokens.json, read from KeePass, never the account an app is logged into.
+# The one exception: a routine whose --allowedTools allows mcp__claude-in-chrome runs first on the CLI's
+# own login with --chrome, because a pool token never gets the browser, and falls back to the pool without
+# the browser when that login is missing. Another CLI agent is this one line plus that agent's own
+# credential step, for example:
 #   opencode run {prompt}
 #   llm -m <model> {prompt}
+#
+# The model. With no --model, a scheduled run follows whatever the CLI defaults to for the account at the
+# time, which can change from one week to the next without anyone deciding it. Recommended: pin the model
+# for scheduled runs here, explicitly, with the model of your choice. A routine's own `agent_args` come
+# after this line, so a routine that passes its own --model wins over it. For example, the active line
+# with a pinned model would read:
+#   ~/.local/bin/claude -p {prompt} --output-format json --model <model>
 # Runbooks: 30-Knowledge/2026-09-15-runbook-brain-guardian.md, 30-Knowledge/2026-09-15-runbook-brain-routine-auth.md
 ~/.local/bin/claude -p {prompt} --output-format json

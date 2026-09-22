@@ -448,8 +448,8 @@ def test_repair():
           stale_key not in keys(res.report), keys(res.report))
     check("a stale alert about the guardian's own exit resolves on the first run after the fix",
           stale_key not in ((st.data.get("alerts") or {}).get("active") or {}), st.data)
-    check("and that run says it resolved, announcing nothing new",
-          [q[1] for q in outbox.queued] == ["Brain guardian: 1 resolved"], outbox.queued)
+    check("resolving a warn-only alert clears it silently: nothing left to fix, no email",
+          outbox.queued == [], outbox.queued)
 
     lj = FakeLaunchd({"com.x.guardian": {"installed": True, "loaded": True, "drifted": True}},
                      self_label="com.x.guardian")
@@ -540,7 +540,7 @@ def last_mail(p):
 
 
 def test_repair_notifies():
-    print("\n== repair notifies what it changed ==")
+    print("\n== repair notifies what it changed; email is only for what stayed broken ==")
     agent = FakeAgent(changes=[MISSING_HOOK])
     p = make(agents=[agent])
     res = A.run_repair(p)
@@ -550,22 +550,18 @@ def test_repair_notifies():
     check("the notification counts what was repaired and carries no detail",
           "repaired 1 item(s)" in message.lower() and "gate_memory" not in title + message
           and "hook" not in (title + message).lower(), (title, message))
-    check("one email goes to the configured address",
-          len(p.outbox.queued) == 1 and p.outbox.queued[0][0] == "me@example.com", p.outbox.queued)
-    subject, body = last_mail(p)
-    check("the email lists exactly what changed",
-          "repaired 1 item(s)" in subject and MISSING_HOOK[1] in body, (subject, body))
-    check("and the backup path", "/fake/claude-code.bak" in body, body)
-    check("the alert is handed back for the log",
+    check("a repair that fixed everything sends no email: nothing is left that needs a person",
+          p.outbox.queued == [], p.outbox.queued)
+    check("the alert is handed back for the log regardless",
           any("repaired 1 item(s)" in s for s in getattr(res, "alerts", [])), getattr(res, "alerts", None))
 
     A.run_repair(p)
     check("a later repair that changes nothing does not notify again",
-          len(p.notifier.sent) == 1 and len(p.outbox.queued) == 1, (p.notifier.sent, p.outbox.queued))
+          len(p.notifier.sent) == 1 and p.outbox.queued == [], (p.notifier.sent, p.outbox.queued))
     agent.changes = [MISSING_HOOK]
     A.run_repair(p)
-    check("the same breakage later is a new event and notifies again",
-          len(p.notifier.sent) == 2 and len(p.outbox.queued) == 2, (p.notifier.sent, p.outbox.queued))
+    check("the same breakage later is a new event and notifies again, still with no email",
+          len(p.notifier.sent) == 2 and p.outbox.queued == [], (p.notifier.sent, p.outbox.queued))
 
     p = make()
     A.run_repair(p)
@@ -573,43 +569,56 @@ def test_repair_notifies():
 
     p = make(launchd=FakeLaunchd({"com.x.a": {"installed": False, "loaded": False}}))
     A.run_repair(p)
-    subject, body = last_mail(p)
-    check("installing and loading a launchd job is one notification listing both",
-          len(p.notifier.sent) == 1 and "repaired 2 item(s)" in subject
-          and "installed launchd job com.x.a" in body and "loaded launchd job com.x.a" in body, (subject, body))
+    check("installing and loading a launchd job is one notification and no email, since it is now fixed",
+          len(p.notifier.sent) == 1 and p.outbox.queued == [], (p.notifier.sent, p.outbox.queued))
 
     p = make(launchd=FakeLaunchd({"com.x.d": {"installed": True, "loaded": True, "drifted": True}}))
     A.run_repair(p)
-    subject, body = last_mail(p)
-    check("a drifted plist fixed notifies and names the plist backup",
-          len(p.notifier.sent) == 1 and "com.x.d" in body and "/state/plist-backups/com.x.d.plist.1" in body, body)
+    check("a drifted plist fixed notifies and sends no email",
+          len(p.notifier.sent) == 1 and p.outbox.queued == [], (p.notifier.sent, p.outbox.queued))
 
     p = with_git_hooks(FakeGitHooks(hooks_path=None))
     A.run_repair(p)
-    subject, body = last_mail(p)
-    check("setting the vault's core.hooksPath notifies", len(p.notifier.sent) == 1 and "core.hooksPath" in body, body)
+    check("setting the vault's core.hooksPath notifies and sends no email",
+          len(p.notifier.sent) == 1 and p.outbox.queued == [], (p.notifier.sent, p.outbox.queued))
 
     agent = FakeAgent(changes=[("plugin:skills/x", "skills/x: in the vault, to install into the agent")])
     p = make(agents=[agent])
     A.run_repair(p)
-    check("installing a skill notifies", len(p.notifier.sent) == 1 and "skills/x" in last_mail(p)[1], last_mail(p))
+    check("installing a skill notifies and sends no email",
+          len(p.notifier.sent) == 1 and p.outbox.queued == [], (p.notifier.sent, p.outbox.queued))
 
     agent = FakeAgent(changes=[MISSING_HOOK])
     p = make(agents=[agent])
     A.run_check(p)
+    check("the check alone emails the new fail, before any repair is attempted",
+          len(p.outbox.queued) == 1, p.outbox.queued)
     A.run_repair(p)
-    subject, body = last_mail(p)
-    check("a repair that also resolves an announced finding sends one message, not two",
-          len(p.notifier.sent) == 2 and len(p.outbox.queued) == 2, (p.notifier.sent, p.outbox.queued))
-    check("and that message carries both the repair and the resolution",
-          "repaired 1 item(s)" in subject and "resolved" in subject and "RESOLVED" in body
-          and "/fake/claude-code.bak" in body, (subject, body))
+    check("the repair that resolves it pops one more notification, but no second email",
+          len(p.notifier.sent) == 2 and len(p.outbox.queued) == 1, (p.notifier.sent, p.outbox.queued))
 
     p = make(launchd=FakeLaunchd({"com.x.a": {"installed": False, "loaded": False, "install_ok": False}}))
     A.run_repair(p)
-    text = " ".join(m for _, m in p.notifier.sent) + " ".join(s for _, s, _ in p.outbox.queued)
+    text = " ".join(m for _, m in p.notifier.sent)
     check("a repair that only failed sends no repair notice, the finding path speaks instead",
-          "repaired" not in text.lower() and len(p.notifier.sent) == 1, (p.notifier.sent, p.outbox.queued))
+          "repaired" not in text.lower() and len(p.notifier.sent) == 1, p.notifier.sent)
+    subject, body = last_mail(p)
+    check("but a fail that stayed open after the repair attempt IS emailed: this is what a person is for",
+          len(p.outbox.queued) == 1 and "com.x.a is not installed" in body, (subject, body))
+
+    agent = FakeAgent(changes=[("plugin:agents/context-scout",
+                                "agents/context-scout: in the vault, to install into the agent")])
+    p = make(agents=[agent], launchd=FakeLaunchd({"com.x.a": {"installed": False, "loaded": False,
+                                                              "install_ok": False}}))
+    A.run_repair(p)
+    subject, body = last_mail(p)
+    check("a repair that worked is not mailed just because an unrelated fail is open",
+          len(p.outbox.queued) == 1 and "REPAIRED" not in body and "com.x.a is not installed" in body,
+          (subject, body))
+    A.run_repair(p)
+    A.run_repair(p)
+    check("and repairing the same thing every run never mails again while that fail stays open",
+          len(p.outbox.queued) == 1, p.outbox.queued)
 
     p = make(agents=[FakeAgent(changes=[MISSING_HOOK])], mail_to="")
     A.run_repair(p)
@@ -624,6 +633,78 @@ def test_repair_notifies():
     except Exception as exc:
         raised = exc
     check("a failing notifier and outbox never make repair raise", raised is None, raised)
+
+
+def test_mail_only_for_what_needs_a_person():
+    print("\n== email is only for a FAIL-severity finding still open after repair ==")
+    lj = FakeLaunchd({"com.x.sync": {"installed": True, "loaded": True, "drifted": True}})
+    p = make(launchd=lj)
+    A.run_check(p)
+    check("a new warn-only finding notifies the desktop but sends no email",
+          len(p.notifier.sent) == 1 and p.outbox.queued == [], (p.notifier.sent, p.outbox.queued))
+
+    p = make(token_pool=FakeTokenPool(D.TokenPool([token(status="dead", last_kind="auth_invalid")])))
+    A.run_check(p)
+    check("a new fail-severity finding notifies the desktop AND emails: nobody but a person renews a token",
+          len(p.notifier.sent) == 1 and len(p.outbox.queued) == 1, (p.notifier.sent, p.outbox.queued))
+
+    # a digest (nothing changed today, but something has been open for a day) follows the same rule
+    warn_state, _ = D.decide(None, [D.Finding("vault:unpushed", D.WARN, "vault commits unpushed for 8 h")], NOW)
+    st = FakeState()
+    st.data = {"alerts": warn_state}
+    p = make(vault=FakeVault(sync=D.SyncStatus(pending=1, unpushed_age_s=8 * 3600, remote_ok=True)), state=st)
+    A.run_check(p)
+    check("a digest of only-warn open problems sends no email", p.outbox.queued == [], p.outbox.queued)
+
+    fail_state, _ = D.decide(None, [D.Finding("routine-auth:keepass", D.FAIL, "KeePass did not answer")], NOW)
+    st = FakeState()
+    st.data = {"alerts": fail_state}
+    p = make(token_pool=FakeTokenPool(D.TokenPool([token(status="dead", last_kind="auth_invalid")])), state=st)
+    A.run_check(p)
+    check("a digest that still includes an open fail does email", len(p.outbox.queued) == 1, p.outbox.queued)
+
+    # hooks:probe:* FAILs are debounced: probe timeouts have been seen to appear on one run
+    # and be gone on the next, so the first occurrence must not email.
+    case = D.ProbeCase("session-end", "SessionEnd", "session_end.py",
+                       "/usr/bin/python3 /v/_bin/session_end.py", 20, {})
+    timed_out = D.ProbeResult("session-end", None, timed_out=True)
+    p = make(hook_probe=FakeProbe([(case, timed_out)]))
+    A.run_check(p)
+    check("a probe FAIL notifies the desktop but does not email on its first occurrence",
+          len(p.notifier.sent) == 1 and p.outbox.queued == [], (p.notifier.sent, p.outbox.queued))
+    A.run_check(p)
+    check("the same probe FAIL, still open on the guardian's next run 15 minutes later, does email",
+          len(p.outbox.queued) == 1, p.outbox.queued)
+
+    # the catch-up mail is exactly one page, not a repeat-alert schedule of its own: the same
+    # still-open probe FAIL must not re-email on the 3rd, 4th or 5th consecutive run.
+    A.run_check(p)
+    check("still open on run 3, no new email", len(p.outbox.queued) == 1, p.outbox.queued)
+    A.run_check(p)
+    check("still open on run 4, no new email", len(p.outbox.queued) == 1, p.outbox.queued)
+    A.run_check(p)
+    check("still open on run 5, no new email", len(p.outbox.queued) == 1, p.outbox.queued)
+
+    # once it resolves and later reappears as a fresh occurrence, it goes silent-then-catchup again
+    p.hook_probe.pairs = []
+    A.run_check(p)
+    check("the probe finding resolving does not itself add a new email",
+          len(p.outbox.queued) == 1, p.outbox.queued)
+    p.hook_probe.pairs = [(case, timed_out)]
+    A.run_check(p)
+    check("a fresh occurrence of the same probe key notifies the desktop but does not email again immediately",
+          len(p.outbox.queued) == 1, p.outbox.queued)
+    A.run_check(p)
+    check("and only emails once it is still open on the *next* run after reappearing",
+          len(p.outbox.queued) == 2, p.outbox.queued)
+    A.run_check(p)
+    check("and then stays debounced again, not re-emailing on the run after that",
+          len(p.outbox.queued) == 2, p.outbox.queued)
+
+    p = make(token_pool=FakeTokenPool(D.TokenPool([token(status="dead", last_kind="auth_invalid")])))
+    A.run_check(p)
+    check("a non-probe FAIL still emails on the very first run_check, unchanged: the debounce is scoped to probe findings only",
+          len(p.outbox.queued) == 1, p.outbox.queued)
 
 
 def test_status():
@@ -753,6 +834,11 @@ def test_duplicates_and_degraded():
     r = A.run_check(make(routines=FakeRoutines(ROWS), desktop_tasks=FakeDesktopTasks([("daily-digest", "a")])))
     check("a routine source without frontmatter metadata finds nothing and does not crash",
           not any(k.startswith(("duplicate:", "probe:")) for k in keys(r)), keys(r))
+    r = A.run_check(make(routines=FakeRoutines(ROWS),
+                         desktop_tasks=FakeDesktopTasks([("daily-digest", "a"), ("weekly-report-to-chat", "a")])))
+    check("an enabled Claude app task with no registry row is reported by check",
+          "app-task:unregistered:weekly-report-to-chat" in keys(r)
+          and not any(k.startswith("app-task:") and "daily-digest" in k for k in keys(r)), keys(r))
 
     stale = FakeRaised({"bridge:stale": {"severity": "warn", "summary": "bridge stale"}})
     p = make(routines=FakeRoutinesMeta(ROWS, META), raised=stale)
@@ -886,7 +972,8 @@ def main():
         check("guardian_core.application, ports and the agent value types import", False,
               "%s: %s" % (type(exc).__name__, exc))
     else:
-        for t in (test_collect, test_repair, test_git_hooks, test_repair_notifies, test_status, test_token_pool,
+        for t in (test_collect, test_repair, test_git_hooks, test_repair_notifies,
+                  test_mail_only_for_what_needs_a_person, test_status, test_token_pool,
                   test_duplicates_and_degraded, test_permissions, test_hook_liveness):
             try:
                 t()

@@ -220,6 +220,10 @@ Full rationale: `~/Brain/30-Knowledge/2026-09-18-convention-anti-ai-slop-design-
 After building, after every critique round and after every single correction, open the page in the
 agent's browser tool and look at it. A fix nobody saw rendered is a fix nobody knows works.
 
+- Whether this machine has a browser:
+  `~/Brain/30-Knowledge/2026-09-21-reference-where-claude-in-chrome-is-available.md`. Every
+  supported environment (macOS and Linux) has its own Chrome with the Claude extension; the
+  session-start `## This machine` block says whether it is usable here. Never decide from the OS.
 - Start it through the agent's preview or browser tooling, not a stray background server.
 - Give the user the app's LAN address, not `localhost`, and verify in the agent's own browser on
   `localhost`: `~/Brain/30-Knowledge/2026-08-22-convention-app-urls-with-local-ip.md`.

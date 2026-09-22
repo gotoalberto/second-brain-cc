@@ -19,6 +19,9 @@ Detail: `30-Knowledge/2026-09-15-decision-first-run-asks-before-connecting-accou
   `30-Knowledge/2026-08-26-convention-code-development-pipeline.md`
 - You only need context, without executing → `/ctx <topic>` or `/recall <query>`.
 - Trivial or conversational question → answer directly. Don't spin up machinery.
+- **Before any task, mid-session too, the vault is queried and pulled**, so you work from what
+  every machine has pushed. The per-prompt hook (`retrieve.py`) does both on its own; without
+  hooks, run `git -C ~/Brain pull` and `python3 ~/Brain/_bin/query.py "<terms>"` yourself.
 
 ## 2. Context
 - The pointers that arrive at startup and on every prompt are **paths**, not full context.
@@ -58,8 +61,12 @@ mattered in this session.
 ### Language
 **Everything in the vault is written in one language, English by default**: body, `title:`,
 `tags:`/`area:`/`projects:`, the filename slug, and the comments and docstrings in `_bin/`.
-The user may write to you in another language, and you answer in that language. The note
-still goes in English.
+**Talk to the user in their language, always**: whatever language the question arrived in, and
+whatever language the code, the note or the document under discussion is in. Switching to English
+because the material is English is the usual slip. This is about the conversation only: notes,
+commit messages, code and identifiers stay in English, and a quote stays verbatim. Set the user's
+language once in `90-Meta/PROTOCOL-COMPACT.md` so every session gets it.
+`30-Knowledge/2026-09-16-convention-talk-to-the-user-in-their-language.md`
 
 The reason is retrieval, not style. Search is lexical. `sanitize_fts` carries a small
 glossary that maps query terms from another language (Spanish ships as the example) onto
@@ -111,7 +118,9 @@ messages, documents) is written **the way a person would, as simply as possible*
   recommendation, one at a time, never as widgets.
   `30-Knowledge/2026-08-29-convention-decisions-as-plain-text-lettered-lists.md`
 - Links are clickable and verified: vault notes as repository URLs after syncing, apps by LAN
-  address, deliverables sent as files.
+  address (bound to `0.0.0.0`), deliverables sent as files. The one exception: a page opened in the
+  agent's own browser pane uses `localhost`, which is where that pane runs.
+  `30-Knowledge/2026-08-22-convention-app-urls-with-local-ip.md`
   `30-Knowledge/2026-08-28-convention-clickable-links-and-send-files.md`
 - Messages in the user's name: read the end of the thread first, draft, show, and send only
   when told. `30-Knowledge/2026-09-05-convention-read-thread-end-before-outbound-message.md`
@@ -172,8 +181,10 @@ create a skill with `skill-forge`. The `40-Skills/` catalog regenerates itself.
 
 A skill is **self-contained** and **canonical in the vault**. Everything it needs lives in its own
 directory, with no references to other repositories; provenance is a sentence, never a step. The
-vault's `integrations/claude-code/plugin/brain/skills/` and `.../agents/` are canonical and
-`~/.claude/` holds installed copies. After editing either, run
+test for any line: if that external directory did not exist on this machine, could the skill still
+be run end to end? A skill that says "read X in that repository for the full story" is broken; it
+just has not failed yet. The vault's `integrations/claude-code/plugin/brain/skills/` and
+`.../agents/` are canonical and `~/.claude/` holds installed copies. After editing either, run
 `python3 ~/Brain/_bin/install_plugin.py sync`, which backs up, back-ports and never clobbers. Not
 synced means not saved. Detail: `30-Knowledge/2026-09-12-convention-back-up-a-skill-before-rewriting-it.md`.
 
@@ -204,9 +215,25 @@ that group; the rest of the database is the user's and is never touched, not eve
 - **The normal route.** The user adds the entry in KeePassXC and tells you its name; `kp.py news`
   lists what appeared, by path only. While KeePassXC has the database open, reads work and a `put`
   exits with code 5: ask the user to save and close it.
+- **Reorganize the agent group when the user says they added something.** `kp.py mv <source>
+  <target>` moves or renames an entry and rewrites the `kp://` references in the notes; `kp.py
+  rmdir <group>` removes a group left empty. Only inside the agent group. Always say what you moved
+  and where. Layout: `30-Knowledge/2026-08-20-convention-claude-kdbx-group-layout.md`.
 - **The reference for the note.** `kp.py ref <entry>` prints the `kp://` string to paste.
 - **The master password** is asked for outside the conversation and cached for a limited time. Never
-  ask for it in the chat, never pass it through argv, never write it to a file.
+  ask for it in the chat, never pass it through argv, never write it to a file. A store whose key
+  file is its whole key has no master: `kp.py status` says so, and nothing is asked or cached.
+- **Stale lock.** A client can leave the database lock behind. `kp.py` clears only one it can prove
+  dead (a kp.py lock from this machine whose process is gone, a kp.py lock older than 30 minutes, a
+  host that does not resolve after 12 hours idle) and never one from a machine that answers. Faced
+  with exit code 5: `kp.py locks` gives the evidence and `kp.py locks --clear` removes it, which
+  asks for confirmation at the machine (`--force` from a remote session, and only with the user's
+  explicit permission).
+- **Exit code 4** means no master is available and nobody at the machine can type it (a remote or
+  scheduled session). Ask the user to warm the cache at the machine with `kp.py unlock` (for
+  example `--ttl 8h`). Never work around it.
+- **A cloud session** (a sandbox that is not the user's machine) cannot reach the local `.kdbx`, so
+  `kp.py` cannot work there. Say so instead of improvising another store.
 - **If the user pastes a secret into the chat**: file it at once with
   `kp.py put <entry> --stdin --exposed` from a heredoc, never repeat it in a later answer, and say
   once that it should be rotated. `kp.py audit` lists what is pending rotation.
@@ -255,6 +282,10 @@ Detail and reasoning: `30-Knowledge/2026-08-21-convention-worktree-isolation-per
   work ends in production, checked on the real URL, not at the commit. Deploy after each
   change; if the deploy fails, say so.
   `30-Knowledge/2026-09-02-convention-deploy-to-prod-on-every-change.md`
+- **A vault change is done when it is pushed to `origin`**, not at the commit and not at the merge.
+  Push in the same session, as part of the merge step, and never leave it for the periodic sync
+  job: every other machine reads the vault from the remote. If the push cannot happen, say so.
+  `30-Knowledge/2026-09-16-convention-push-vault-changes-immediately.md`
 - **Verify a plan's claims about semantics before writing them** (what a construct does on
   failure, who calls whom). A grep or a throwaway test is cheaper than a wrong plan. If a
   comment in the repo contradicts the plan, the comment wins.
@@ -290,6 +321,13 @@ Detail and reasoning: `30-Knowledge/2026-08-21-convention-worktree-isolation-per
   or four at a time. `30-Knowledge/2026-09-11-convention-agent-write-findings-to-disk-incrementally.md`
 
 ## 10. Machinery and integrations
+- **Your tools and services are listed in one note**:
+  `30-Knowledge/2026-09-12-reference-tool-and-service-catalogue.md`. Read it before saying a
+  capability is missing or suggesting the user buy one. When the user grants access to any new
+  tool, key or connector, verify it with a real call, then update that note in the same session.
+- **Project repositories live in one code directory** (for example `~/git/<repo>`). A short name
+  the user gives matches a repository's name or suffix. Look there before scanning the home
+  directory.
 - **Nothing depends on an agent app or account.** Scheduling runs from launchd, systemd or cron;
   credentials come from the kdbx; agent hooks are generated wiring that the guardian repairs and
   proves alive. `30-Knowledge/2026-09-15-decision-brain-machinery-independent-of-claude-app-and-account.md`
@@ -305,8 +343,11 @@ Detail and reasoning: `30-Knowledge/2026-08-21-convention-worktree-isolation-per
 - **Every session is told which machine it is on.** The `## This machine` block at startup
   (`_bin/machine_caps.py`) names the machine key, its scheduler, the tools on its PATH, whether its
   own Chrome is paired with Claude Code and which agent tasks run there. Decide what a machine can
-  do from that block or a probe, never from its OS alone. Skills and scheduled tasks are written to
-  work on both macOS and Linux, and generic content never names a specific machine.
+  do from that block or a probe, never from its OS alone. Every supported environment (macOS and
+  Linux) has its own Chrome with the Claude extension, and the block says whether this machine's is
+  usable: `30-Knowledge/2026-09-21-reference-where-claude-in-chrome-is-available.md`. Skills and
+  scheduled tasks are written to work on both macOS and Linux, and generic content never names a
+  specific machine.
   `_bin/machines.py` keeps one record per machine (on the shared path when one is configured, never
   in the vault); every machine registers itself, at the end of its first run and once a day from the
   guardian's scheduled repair. `_bin/machine_identity.py` recognises every name a machine has gone

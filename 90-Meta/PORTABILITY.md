@@ -145,6 +145,45 @@ Before ending a session that decided anything, write it down in 30-Knowledge/.
 
 ---
 
+## Across macOS and Linux
+
+The vault runs on macOS and Linux, and a machine added later should be cheaper than the first one.
+These are the assumptions that broke when a setup that had only ever run on one Mac got a Linux peer.
+Keep them in mind when writing any script, skill or scheduled task.
+
+- **Find programs, never hardcode their path.** A literal `/opt/homebrew/bin/<tool>` dies on Linux
+  with a message that reads like a missing install rather than a wrong assumption. Use
+  `shutil.which` (or `command -v` in shell) and say plainly when the program is absent.
+- **The same program can differ by platform.** `ping` is `/sbin/ping` on macOS and `/usr/bin/ping`
+  on Linux, and its `-W` timeout is in milliseconds on macOS and seconds on Linux, so a value meant as
+  1.5 seconds waits 25 minutes on the other system. Look the program up and pick units per platform.
+  The same care applies to `sed -i`, `date`, `stat` and `pgrep`, whose flags differ between BSD and
+  GNU.
+- **Scheduler files travel in the vault.** launchd plists and systemd units are in the repository,
+  so every machine sees all of them. Code that supervises one scheduler must do nothing when that
+  scheduler is absent (no `launchctl` on Linux), instead of failing on every pass and exiting non
+  zero forever.
+- **A platform check can be a live gate.** A test for a macOS only mount or path, written as a
+  health signal, turned out to make whole features return early on every other machine, silently.
+  When a check depends on the platform, read what happens when it is false.
+- **Compare installed files after localizing them.** Files rewritten on install (a home path put into
+  a hook, for example) never match the vault copy byte for byte. A sync that compares raw hashes sees
+  every install as needing repair, forever, and reports a repair on every pass. Hash the localized
+  text on both sides.
+- **Report what you cannot repair.** A system unit under `/etc/systemd/system` cannot be installed or
+  reloaded by the non root user the harness runs as. Supervision of such units reports; it does not
+  try to fix, and it never escalates privileges on its own, even where passwordless sudo exists.
+- **Install from the main checkout.** `install_plugin.py sync` run from a worktree does not stick
+  when the guardian reinstalls from the main checkout; run it after merging.
+- **Skills name their platform.** A skill that truly needs one operating system says so in its own
+  description, so it is skipped elsewhere instead of failing in a confusing way, and gives the other
+  system's path when there is one.
+
+What each machine actually has is decided from the `## This machine` block at startup or a probe,
+never from the operating system's name. Detail:
+`30-Knowledge/2026-09-21-decision-supported-environments-macos-and-linux.md` and
+`30-Knowledge/2026-09-21-convention-scheduled-task-resources-checked-per-machine.md`.
+
 ## What cannot be taken with you
 
 - **The contents of `80-Private/`, `60-Context-Packs/` and `_index/`**: they are not on the

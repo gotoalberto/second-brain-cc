@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-15
+updated: 2026-09-21
 supersedes: []
 ---
 
@@ -71,7 +71,16 @@ budget only warns and is raised when full").
 - **A rule that only lives in a note does not reach sessions.** This one is in
   `90-Meta/PROTOCOL-COMPACT.md` and `90-Meta/AGENT-PROTOCOL.md`, and pasted into the agent
   definitions, because subagents never see the startup protocol.
-- Before sending any draft, scan it for dashes, then read the headings alone.
+- Before sending any draft, scan it for dashes, then read the headings alone. The dash scan is
+  its own separate step: a literal search of the text for the em dash, the en dash and a spaced
+  hyphen, never folded into a general reread. It is needed even when this rule is already in the
+  session's context. Knowing the rule is not the same as checking for it, and the usual slip sits
+  where a pause feels natural, such as right after the greeting.
+- When summarising a dense technical source (design docs, an architecture, a spec), translate its
+  vocabulary into plain language instead of compressing it. Every term is explained the first time
+  it appears, headings stay plain topics, and the same pass covers diagram labels, captions and
+  tooltips, not only the body text. A deck that keeps the source's jargon reads as machine written
+  and cannot be understood by the people it was made for.
 - The dash ban also covers vault notes and code comments.
 - For generated documents (LaTeX, HTML rendered to PDF), run a check that fails on dash characters
   and their encoded forms before rendering. A rule that only lives in template documentation gets

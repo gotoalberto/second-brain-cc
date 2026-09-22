@@ -174,6 +174,8 @@ def test_kdbx_and_google():
     check("the database is created at the default path after a yes",
           ("init", db, True) in p.kdbx.calls and ("unlock",) in p.kdbx.calls, p.kdbx.calls)
     check("the kdbx step records the database", p.state.data["steps"]["kdbx"].get("db") == db, p.state.data["steps"]["kdbx"])
+    check("a database that does not exist yet points at handoff.py redeem, for one that lives on another machine",
+          any("handoff.py redeem" in s and "handoff.py issue" in s for s in p.prompt.said), p.prompt.said)
     check("the Google account is added with its client and authorised",
           ("add", "personal", "cid-1", "sec-1", "me@example.com") in p.google.calls
           and ("authorize", "personal") in p.google.calls, p.google.calls)
@@ -332,15 +334,15 @@ def test_remote_control_step():
     p = ports(BEFORE_RC + [True, "", "", True, True], remote=remote, scheduler=sched)
     A.run(p)
     check("a yes checks the machine first", ("preflight",) in remote.calls, remote.calls)
-    check("the name defaults to this machine's, the repository to a folder of that name in the home directory",
-          ("prepare", "/home/u/workstation") in remote.calls
-          and ("configure", "/home/u/workstation", "workstation") in remote.calls, remote.calls)
+    check("the name defaults to this machine's, the working directory to the home directory",
+          ("prepare", "/home/u") in remote.calls
+          and ("configure", "/home/u", "workstation") in remote.calls, remote.calls)
     check("the supervisor is shown before anything is set up", any("Restart=always" in t for t in p.prompt.said),
           p.prompt.said)
     check("the one-time prompts are explained: trust, enable, same-dir spawn mode",
           any("same-dir" in t and "Enable Remote Control" in t for t in p.prompt.said), p.prompt.said)
     check("it is started once in the terminal to answer them, before the supervisor exists",
-          order.index("first_start") < order.index("install") and ("first_start", "/home/u/workstation", "workstation")
+          order.index("first_start") < order.index("install") and ("first_start", "/home/u", "workstation")
           in remote.calls, order)
     check("the directory and name are recorded before the supervisor starts the server",
           order.index("configure") < order.index("install"), order)
@@ -349,7 +351,7 @@ def test_remote_control_step():
           ("install", "systemd", ["remote-control"]) in sched.calls, sched.calls)
     check("the step records where the guardian will look",
           p.state.data["steps"]["remote_control"] == {"status": "done", "at": "2026-09-15T18:00:00+00:00",
-                                                      "kind": "systemd", "dir": "/home/u/workstation",
+                                                      "kind": "systemd", "dir": "/home/u",
                                                       "name": "workstation"}, p.state.data["steps"].get("remote_control"))
     check("the periodic jobs are left as the scheduler step recorded them",
           p.state.data["scheduler"]["jobs"] == [], p.state.data["scheduler"])
@@ -366,7 +368,7 @@ def test_remote_control_step():
 
     p = ports(BEFORE_RC + [True, "two words", "workstation", "", True, True])
     A.run(p)
-    check("a name that cannot be a folder is asked again", ("configure", "/home/u/workstation", "workstation")
+    check("a name that is not a valid label is asked again", ("configure", "/home/u", "workstation")
           in p.remote.calls, (p.prompt.said, p.remote.calls))
 
     p = ports(BEFORE_RC + [True, "", "", True, True],

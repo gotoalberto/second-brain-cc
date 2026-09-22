@@ -22,7 +22,13 @@ Usage:
   tasks.py            run whatever is due on this machine
   tasks.py --list     show the registry as this machine sees it
   tasks.py --dry-run  say what would run, run nothing
-  tasks.py --force <id>  run one task now, ignoring schedule and last-run
+  tasks.py --force <id>  run one task now, ignoring schedule and last-run, but NOT the
+                         `machine` column: a task owned by another machine is refused
+                         (exit 3), because forcing one that posts somewhere from the wrong
+                         machine posts it twice. `--anywhere` overrides that, deliberately.
+
+`--list` prints at the top what this host matches as: its hostname and its stable machine
+key (machine_identity), either of which a row's `machine` may name.
 
 Task types:
   shell       the runner executes `command` with the vault as working directory
@@ -306,6 +312,20 @@ def machine_is_mine(value: str) -> bool:
     return _MINE_CACHE[value]
 
 
+def host_names() -> list:
+    """What a registry `machine` cell may say to mean this machine: hostname, then stable key."""
+    names = [host()]
+    try:
+        import machine_identity
+
+        key = machine_identity.current_key()
+        if key and key not in names:
+            names.append(key)
+    except Exception:
+        pass
+    return names
+
+
 def mine(task: dict) -> bool:
     return GD.machine_matches(task["machine"], host(), machine_is_mine)
 
@@ -496,6 +516,7 @@ def run_task(task: dict, state: dict, changed: set | None = None) -> int:
 
 def cmd_list(tasks: list[dict], state: dict) -> None:
     print(f"host: {host()}   registry: {REGISTRY}")
+    print(f"this host matches as: {', '.join(host_names())} (or *)")
     if not tasks:
         print("  (registry empty or unreadable)")
         return
@@ -516,7 +537,10 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="run the vault's periodic tasks for this machine")
     ap.add_argument("--list", action="store_true", help="show the registry as this machine sees it")
     ap.add_argument("--dry-run", action="store_true", help="say what would run, run nothing")
-    ap.add_argument("--force", metavar="ID", help="run one task now, ignoring schedule and last-run")
+    ap.add_argument("--force", metavar="ID",
+                    help="run one task now, ignoring schedule and last-run (not ownership)")
+    ap.add_argument("--anywhere", action="store_true",
+                    help="with --force, run a task that belongs to another machine")
     args = ap.parse_args(argv)
 
     tasks = read_registry()
@@ -533,6 +557,13 @@ def main(argv=None) -> int:
                 if t["type"] not in GD.RUNNABLE_TYPES:
                     print(f"{t['id']}: type '{t['type']}' is not run by this runner", file=sys.stderr)
                     return 2
+                if not mine(t) and not args.anywhere:
+                    # Ownership is not a scheduling detail: a task pinned to one machine so it
+                    # posts once would post twice if --force ran it here regardless.
+                    print(f"{t['id']} belongs to {t['machine']}, and this is {host()} "
+                          f"({', '.join(host_names())}). Run it there, or pass --anywhere if "
+                          f"you really mean to run it here.", file=sys.stderr)
+                    return 3
                 rc = run_task(t, state, changed)
                 save_state(state, changed)
                 print(f"{t['id']}: exit={rc}  (log: {Path(LOG_DIR) / (t['id'] + '.log')})")

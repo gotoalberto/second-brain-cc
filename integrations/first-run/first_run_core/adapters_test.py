@@ -268,7 +268,7 @@ FAKE_CLAUDE = r"""#!/bin/sh
 echo "$(pwd)|$*|${DISABLE_TELEMETRY:-unset}|${ANTHROPIC_API_KEY:-unset}" >> "%(log)s"
 case "$*" in
   "auth status") printf '%%s\n' '%(auth)s'; exit 0 ;;
-  "remote-control --help") printf '%%s\n' '%(help)s'; exit 0 ;;
+  "remote-control --chrome --help") printf '%%s\n' '%(help)s'; exit 0 ;;
 esac
 exit 0
 """
@@ -319,6 +319,10 @@ def test_remote_control():
           blocking == [], (blocking, warnings))
     calls = open(log).read()
     check("the login is read with claude auth status", "|auth status|" in calls, calls)
+    check("--chrome is asked of the parser, not grepped from the help text",
+          "|remote-control --chrome --help|" in calls, calls)
+    check("a shell script standing in for claude is a warning, not a refusal",
+          any("wrapper" in w for w in warnings), warnings)
 
     blocking, _ = remote(home, state, vault, claude, euid=0).preflight()
     check("root is refused: Claude Code will not bypass permissions there", any("root" in b for b in blocking), blocking)
@@ -328,10 +332,14 @@ def test_remote_control():
     d2, home2, state2, vault2, claude2, _ = remote_world(auth='{"loggedIn": true, "authMethod": "api_key"}')
     blocking, _ = remote(home2, state2, vault2, claude2).preflight()
     check("an API key login is refused", any("claude.ai" in b for b in blocking), blocking)
-    d2, home2, state2, vault2, claude2, _ = remote_world(help_text="  --name <name>")
+    d2, home2, state2, vault2, claude2, _ = remote_world(help_text="error: Unknown argument: --chrome")
     blocking, _ = remote(home2, state2, vault2, claude2).preflight()
     check("a CLI too old for remote-control --chrome is refused, with claude update",
           any("claude update" in b for b in blocking), blocking)
+    d2, home2, state2, vault2, claude2, _ = remote_world(help_text="  --name <name>")
+    blocking, _ = remote(home2, state2, vault2, claude2).preflight()
+    check("a help text that hides --chrome is not a refusal: only the parser's Unknown argument is",
+          blocking == [], blocking)
     d2, home2, state2, vault2, claude2, _ = remote_world(settings={"env": {"DISABLE_TELEMETRY": "1"}})
     blocking, _ = remote(home2, state2, vault2, claude2).preflight()
     check("a telemetry switch in ~/.claude/settings.json is refused: the server would read it too",
@@ -355,8 +363,11 @@ def test_remote_control():
     check("a ~ path is this HOME's, and an existing repository is kept as it is", good and again == path, again)
     good, why = r.prepare(vault)
     check("the vault itself is refused", not good and "vault" in why, why)
-    good, why = r.prepare(home)
-    check("so is the home directory, where trust is never kept", not good and "home" in why, why)
+    good, got = r.prepare(home)
+    check("the home directory is taken as it is: trust is kept for it, and no git repository is needed",
+          good and got == home and not os.path.exists(os.path.join(home, ".git")), got)
+    good, got = r.prepare("~")
+    check("~ is this HOME", good and got == home, got)
 
     good, where = r.configure(path, "workstation")
     import remote_control as RC

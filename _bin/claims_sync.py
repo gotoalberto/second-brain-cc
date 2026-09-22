@@ -13,10 +13,20 @@ One small JSON record per (resource, machine, session) lives at
 lease.py and presence.py guard their own files. `machine_identity.current_key()` is used
 instead of bare hostname, so two machines that happen to share one do not collide.
 
-This iteration is **informational only**: nothing here is wired into claim.py's local
-SQLite table or gate_write.py's conflict check (see the plan's "what is NOT touched"). A
-claim is published or withdrawn explicitly, through this module's own CLI; nobody publishes
-one on your behalf.
+How it is wired in:
+
+  - claim.py, after recording or releasing claims in its local SQLite table, calls
+    `publish_async(sid)`: a detached `claims_sync.py publish --sid <sid>` that reads that
+    session's claims from the table and hands them to `sync()` as the whole desired set. The
+    claim command itself never waits on the shared path.
+  - gate_write.py calls `remote_conflict(path)`, which reads only the local cache this module
+    writes (an open(), no shared-path IO on the hook path) and names a fresh claim another
+    machine holds on the same repo file. The git lookup that maps the file to its resource
+    runs only when the cache holds some other machine's claim at all.
+
+Claims gate_write records on its own for each edited file stay local: they are published only
+when claim.py runs for that session. The CLI (`claim`, `release`, `reap`, `view`, `publish`)
+is still there for a deliberate call.
 
 `sync()` is deliberately safe to call with no known local claims: passing `paths=None` runs
 a read-only refresh (rescans the shared path and rewrites the local cache) with no publish or
@@ -168,10 +178,12 @@ def cache_read():
         return {}
 
 
-def cache_write(rows):
+def cache_write(rows, machine=None):
+    """The rows a scan saw, and this machine's key, so a reader never has to compute it."""
     try:
         os.makedirs(B.STATE, exist_ok=True)
-        B.atomic_write(CACHE, json.dumps({"rows": rows, "read_at": time.time()}, ensure_ascii=False))
+        B.atomic_write(CACHE, json.dumps({"rows": rows, "read_at": time.time(),
+                                          "machine": machine or _machine()}, ensure_ascii=False))
     except Exception as e:
         B.log_error("claims_sync.cache_write", e)
 
@@ -206,7 +218,7 @@ def sync(sid, paths=None, now=None, ttl=TTL):
     except OSError as e:
         B.log("claims_sync", "sync-fails", err=repr(e)[:200])
         return False, repr(e)
-    cache_write(remote)
+    cache_write(remote, machine)
     return True, ""
 
 
@@ -242,10 +254,67 @@ def foreign_view(ttl=TTL):
     return C.foreign_claims(scan(), _machine(), time.time(), ttl)
 
 
+def local_paths(sid, con=None):
+    """The files this session claims in claim.py's local SQLite table: sync()'s desired set."""
+    own = con is None
+    con = con or B.db()
+    try:
+        return [row[0] for row in con.execute("SELECT pattern FROM claims WHERE sid=?", (sid,))]
+    finally:
+        if own:
+            con.close()
+
+
+def publish_async(sid, popen=None):
+    """Publish this session's claims to the shared path, detached. True when a worker started.
+
+    claim.py calls it after every change to the local table. Nothing is started when
+    multi-machine coordination is not configured, offline, or without a session id; a
+    failure to start is logged, never raised.
+    """
+    if B.OFFLINE or not sid or not configured():
+        return False
+    try:
+        import subprocess
+        (popen or subprocess.Popen)(
+            [sys.executable, os.path.abspath(__file__), "publish", "--sid", sid],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            start_new_session=True)
+        return True
+    except Exception as e:
+        B.log_error("claims_sync.publish_async", e)
+        return False
+
+
+def remote_conflict(path, cache=None, now=None, ttl=TTL, resolve=None):
+    """A fresh claim another machine holds on the same repo file as `path`, else None.
+
+    Reads the cache only (an open(), never the shared path). `resolve` maps a path to its
+    resource (resource_for by default, which asks git); it is called only when the cache
+    holds some other machine's fresh claim, the rare case. Never raises.
+    """
+    try:
+        cache = cache_read() if cache is None else cache
+        rows = cache.get("rows") or []
+        if not rows:
+            return None
+        machine = cache.get("machine") or _machine()
+        foreign = C.foreign_claims(rows, machine, time.time() if now is None else now, ttl)
+        if not foreign:
+            return None
+        resource = (resolve or resource_for)(path)
+        if not resource:
+            return None
+        return next((r for r in foreign if r.get("resource") == resource), None)
+    except Exception as e:
+        B.log_error("claims_sync.remote_conflict", e)
+        return None
+
+
 def main():
     import argparse
     p = argparse.ArgumentParser(prog="claims_sync")
-    p.add_argument("action", choices=["claim", "release", "reap", "view"])
+    p.add_argument("action", choices=["claim", "release", "reap", "view", "publish"])
     p.add_argument("path", nargs="*")
     p.add_argument("--sid", default="")
     a = p.parse_args()
@@ -257,6 +326,18 @@ def main():
         n = reap()
         B.log("claims_sync", "reap", n=n)
         print("%d claim(s) reaped" % n)
+        return 0
+    if a.action == "publish":
+        # claim.py's detached worker: the session's whole claim set from the local table.
+        if not a.sid:
+            sys.stderr.write("claims_sync: publish needs --sid\n")
+            return 2
+        ok, err = sync(a.sid, local_paths(a.sid))
+        if not ok:
+            B.log("claims_sync", "publish-fails", err=err[:150])
+            print("failed: %s" % err)
+            return 1
+        print("ok")
         return 0
     if not a.sid or not a.path:
         sys.stderr.write("claims_sync: %s needs --sid and at least one path\n" % a.action)

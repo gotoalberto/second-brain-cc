@@ -9,7 +9,7 @@ status: active
 confidence: medium
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-15
+updated: 2026-09-22
 supersedes: []
 ---
 
@@ -32,6 +32,7 @@ Commands below are the shape of the tool; `guardian.py --help` is authoritative.
 | githooks | the vault's `core.hooksPath` is not `githooks`, or a hook file is missing or not executable | the key and execute bits yes |
 | token pool | an agent routine's token refused, malformed, resting after a limit, near expiry or expired | no |
 | permissions | a routine whose arguments would give an unattended run unrestricted permissions | no |
+| app tasks | a Claude app scheduled task enabled on this machine with no registry row (warn), with a row naming another machine (fail: it runs twice), or whose row disagrees about `enabled` (warn) | no: the app's tasks are changed by hand |
 | hook liveness | hooks that do not fire or keep failing (see below) | no |
 | hook probe | a canonical hook, run in a scratch state, exits wrong, times out or prints broken output | no |
 | raised | alerts other processes raised: a failed routine, the file watcher's detections | no |
@@ -52,7 +53,8 @@ python3 ~/Brain/_bin/guardian.py run-routine <id>   # run one routine now
 - `check` is for a person or a script asking "is anything wrong?": 0 ok, 1 warn, 2 fail.
 - `repair` is what the scheduler runs. It exits 0 when the run completed, whatever it found, and
   non-zero only when its own repair work errored. Findings reach you through `status`, the
-  notification, the email and the log, never through the job's exit status. The probe for failed
+  notification, the email (only for what needs a person) and the log, never through the job's exit
+  status. The probe for failed
   job runs never reports the guardian's own job.
   [[2026-09-15-convention-scheduled-job-exit-code-should-reflect-crash-not-findings]]
 
@@ -91,7 +93,10 @@ model in the loop.
   payload writes one; a person at a terminal or a program importing the script writes nothing.
 - **Sessions.** Each Claude Code session writes a transcript under `~/.claude/projects/`. The guardian
   matches recent transcripts with heartbeats. Sessions under temporary directories and the probe's own
-  session are ignored.
+  session are ignored. A session whose transcript records a `hook_cancelled` attachment for
+  SessionStart is not held to the session-start heartbeat: an unattended SDK run can have Claude Code
+  cancel SessionStart as the queued prompt starts, which kills the hook before it writes its line.
+  [[2026-09-17-analysis-cancelled-session-start-hooks-in-unattended-runs]]
 - **The epoch.** Liveness starts at the first `check` or `repair` after install; sessions that started
   earlier are never judged.
 - **The rules.** A session active in the last 30 minutes, past a short grace period, with no heartbeat
@@ -119,13 +124,20 @@ model in the loop.
 
 ## Alerts
 
-- A problem is announced when it appears, when it escalates from warn to fail, and when it resolves.
-  While it stays open the guardian is quiet, apart from one daily digest.
-- A repair that changed something always notifies, once per run. A repair with no changes never does.
-  The same breakage an hour later notifies again, because something keeps breaking it.
-- Three channels. The **desktop notification** says only how many items were repaired and how many
-  problems are open, because a screen may be shared or recorded. The **email** carries the detail and
-  every backup path. The **log** keeps everything.
+- A problem is announced on the desktop when it appears, when it escalates from warn to fail, and when
+  it resolves. While it stays open the guardian is quiet, apart from one daily digest.
+- A repair that changed something always notifies the desktop, once per run. A repair with no changes
+  never does. The same breakage an hour later notifies again, because something keeps breaking it.
+- Three channels, two bars. The **desktop notification** says only how many items were repaired and how
+  many problems are open, because a screen may be shared or recorded. The **log** and
+  `guardian.py status` keep everything, with every backup path.
+- The **email** is only for a problem a person must fix: a fail still open after this run's repair was
+  attempted. It is sent once when that fail first becomes mail-worthy, then at most one digest a day
+  while any stays open. A repair that worked, a problem that resolved, a warn: desktop only, never mail.
+  A `hooks:probe:*` fail becomes mail-worthy only when it is still open on the next run, because probe
+  timeouts have been seen to clear by themselves within one cycle.
+  [[2026-09-20-decision-guardian-mail-only-for-findings-a-person-must-fix]]
+  [[2026-09-16-decision-guardian-hook-probe-timeout-not-reproducible-debounce-added]]
 - Email goes through the account and address chosen during the first run. Every message is queued
   first and sent from the queue, so a missing token, a locked KeePass or no network only delays it. The
   queue is capped in size and age, so re-enabling mail after an outage does not send a flood.
@@ -156,12 +168,14 @@ Use scratch paths for anything that writes state.
 3. In a scratch settings file, point one vault hook at a nonexistent script: `check` reports it,
    `repair --hooks-only --settings <scratch file>` removes it and restores the canonical hook, and a
    second repair changes nothing.
-4. Remove all vault hooks from a scratch settings file and repair: one notification, one email listing
-   every restored hook and the backup path; the next run is silent.
+4. Remove all vault hooks from a scratch settings file and repair: one notification, no email (the
+   repair fixed it), and `status` lists every restored hook and the backup path; the next run is
+   silent.
 5. `git -C ~/Brain config --get core.hooksPath` prints `githooks`.
 6. The scheduler shows the guardian job loaded with last exit 0 even while `status` shows an open
    warning.
-7. With the network off, trigger an alert: it waits in the queue and goes out once the network is back.
+7. With the network off, trigger a fail repair cannot fix (a dead routine token): the email waits in
+   the queue and goes out once the network is back.
 8. Open an agent session, send one prompt, let the turn end: the heartbeat log shows session-start,
    prompt-submit and stop lines for that session, and `status` shows the probe passing.
 9. In a scratch copy of `_bin`, append a syntax error to the startup hook and run the probe against the

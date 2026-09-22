@@ -38,8 +38,11 @@ def test_classify(D):
               fx["verified"] or UNVERIFIED in fx["note"] or "nothing" in fx["note"], fx["note"])
 
     verified = [n for n, fx in FIXTURES.items() if fx["verified"] and fx["kind"] == D.AUTH_INVALID]
-    check("the 401 shapes are the verified ones, in text and json form",
-          sorted(verified) == ["auth_invalid_json", "auth_invalid_text"], verified)
+    check("the verified auth failures: the 401 in text and json form, and the CLI's own 'Not logged in'",
+          sorted(verified) == ["auth_invalid_json", "auth_invalid_text", "auth_not_logged_in"], verified)
+    nl = D.classify(1, FIXTURES["auth_not_logged_in"]["stdout"], "")
+    check("a logged-out CLI is an auth failure, named by its own words",
+          nl.kind == D.AUTH_INVALID and "Not logged in" in nl.detail, nl)
     check("a classification says whether its pattern is verified",
           D.classify(1, FIXTURES["auth_invalid_text"]["stdout"], "").verified is True
           and D.classify(1, FIXTURES["usage_limit_text"]["stdout"], "").verified is False)
@@ -481,6 +484,13 @@ def test_prompt_framing(D):
     bare = D.frame_prompt("r", "Do it.", "r-1", None)
     check("with no scratch directory it says not to write temporary files",
           "no scratch directory" in bare.lower() and "Do it." in bare, bare)
+    check("a routine that wants no browser is told nothing about one", "browser:" not in bare, bare)
+    chrome = D.frame_prompt("r", "Do it.", "r-1", None, browser=True)
+    check("with the browser, the run is told this machine's Chrome holds the user's logged-in sessions",
+          "logged-in sessions" in chrome and "isLocal: true" in chrome and "Never sign in" in chrome, chrome)
+    blind = D.frame_prompt("r", "Do it.", "r-1", None, browser=False)
+    check("without it, after a fallback, the run is told to take the procedure's fallback and say so",
+          "browser: none" in blind and "skipped" in blind, blind)
 
 
 def test_run_identity_and_env(D):
@@ -506,6 +516,19 @@ def test_run_identity_and_env(D):
     env = D.routine_env({"HOME": "/h", "BRAIN_ROUTINE_RUN_ID": "parent-run"}, FAKE_TOKEN)
     check("with no run, no run id is inherited from the parent", "BRAIN_ROUTINE_RUN_ID" not in env
           and "BRAIN_ROUTINE_SCRATCH" not in env and env.get("BRAIN_HEADLESS") == "1", env)
+    env = D.routine_env({"HOME": "/h", "CLAUDE_CODE_OAUTH_TOKEN": "parent"}, None,
+                        extra={"CLAUDE_CODE_OAUTH_TOKEN": "an extra must not slip a token in either"})
+    check("with no token (the CLI-login attempt) there is no token variable at all, so the CLI's own login under "
+          "HOME is used", "CLAUDE_CODE_OAUTH_TOKEN" not in env and env.get("HOME") == "/h", env)
+
+    print("\n== which routines want the browser ==")
+    check("a routine allowing Claude in Chrome wants the browser",
+          D.wants_browser(["--permission-mode", "acceptEdits", "--allowedTools", "Read,mcp__claude-in-chrome"]))
+    check("one allowing a single Chrome tool does too",
+          D.wants_browser(("--allowedTools", "mcp__claude-in-chrome__navigate")))
+    check("one without it does not", not D.wants_browser(["--allowedTools", "Read,Bash"]))
+    check("nor one that only names it outside --allowedTools",
+          not D.wants_browser(["--disallowedTools", "mcp__claude-in-chrome"]) and not D.wants_browser([]))
 
 
 def test_delivery_contract(D):

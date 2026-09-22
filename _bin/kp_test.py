@@ -51,6 +51,148 @@ def world(root, db=None):
     return env, state
 
 
+# A fake keepassxc-cli for a keyfile-only store: it opens only with `--no-password`, the way
+# the real one refuses an empty password next to a key file.
+FAKE_KEYFILE_ONLY_CLI = """#!/bin/sh
+printf '%s\\n' "$@" >> "{dir}/argv-all"
+printf '%s\\n' "$@" > "{dir}/argv"
+cat > "{dir}/stdin"
+for a in "$@"; do [ "$a" = "--no-password" ] && exit 0; done
+echo "Error while reading the database: Invalid credentials were provided" >&2
+exit 1
+"""
+
+
+def keyfile_world(root, fake_body):
+    env, state = world(root)
+    fake = os.path.join(root, "keepassxc-cli")
+    with open(fake, "w") as fh:
+        fh.write(fake_body.replace("{dir}", root))
+    os.chmod(fake, 0o755)
+    db = os.path.join(root, "store.kdbx")
+    open(db, "wb").write(b"\x03\xd9\xa2\x9a" + b"\0" * 2048)
+    keyfile = os.path.join(root, "store.key")
+    open(keyfile, "wb").write(os.urandom(64))
+    env.update(BRAIN_KP_DB=db, BRAIN_KP_KEYFILE=keyfile)
+    return env, db, keyfile
+
+
+def test_keyfile_only(root):
+    print("\n== keyfile-only stores ==")
+    env, db, keyfile = keyfile_world(os.path.join(root, "kf"), FAKE_KEYFILE_ONLY_CLI)
+    argv_all = os.path.join(root, "kf", "argv-all")
+    K = import_kp(env)
+    asked = []
+    K.get_master = lambda interactive=True: asked.append(1) or ("typed", False)
+    pw = K.unlocked(interactive=False)
+    probe = open(os.path.join(root, "kf", "argv")).read().split("\n")
+    check("with a key file configured the store is probed once with --no-password",
+          "-k" in probe and keyfile in probe and "--no-password" in probe, probe)
+    check("the probe hands over no master, not even an empty line",
+          open(os.path.join(root, "kf", "stdin")).read() == "")
+    check("when it opens, unlocked() returns no master and never asks for one", pw is None and asked == [],
+          (pw, asked))
+    os.remove(argv_all)
+    K.unlocked(interactive=False)
+    check("the answer is kept: a second unlocked() does not probe again", not os.path.exists(argv_all))
+    K.cli(["ls", K.DB], None)
+    argv = open(os.path.join(root, "kf", "argv")).read().split("\n")
+    check("every later call carries -k and --no-password", "-k" in argv and "--no-password" in argv, argv)
+    check("and sends no master on stdin", open(os.path.join(root, "kf", "stdin")).read() == "")
+
+    rc, out, err = run(env, "ls")
+    check("a keyfile-only store opens with no master and asks for none (headless, no cache)",
+          rc == 0 and "master" not in err.lower(), (rc, err))
+    rc, out, err = run(env, "status")
+    check("status says the keyfile is the whole key, not that a master is missing",
+          "the keyfile is the whole key" in out and "not available" not in out, out)
+    rc, out, err = run(env, "unlock")
+    check("unlock on a keyfile-only store has nothing to cache and says so",
+          rc == 0 and "keyfile is the whole key" in out, (rc, out, err))
+
+    env_skip = dict(env, BRAIN_KP_NO_PASSWORD="1")
+    K = import_kp(env_skip)
+    if os.path.exists(argv_all):
+        os.remove(argv_all)
+    check("BRAIN_KP_NO_PASSWORD=1 skips the probe and treats the key file as the whole key",
+          K.keyfile_only() is True and not os.path.exists(argv_all))
+
+    env_both, db2, kf2 = keyfile_world(os.path.join(root, "kf2"), FAKE_CLI)
+    # This fake opens with anything, so make it refuse --no-password: a password + key file store.
+    fake2 = os.path.join(root, "kf2", "keepassxc-cli")
+    with open(fake2, "w") as fh:
+        fh.write(FAKE_CLI.replace("{dir}", os.path.join(root, "kf2")).replace(
+            "exit 0", 'for a in "$@"; do [ "$a" = "--no-password" ] && exit 1; done\nexit 0'))
+    K = import_kp(env_both)
+    check("a store that also has a password is not taken for keyfile-only", K.keyfile_only() is False)
+    rc, out, err = run(env_both, "ls")
+    check("and headless with no cached master it still exits EXIT_NOMASTER",
+          rc == K.EXIT_NOMASTER, (rc, err))
+    K.get_master = lambda interactive=True: ("typed-master", False)
+    K.cache_put = lambda pw, ttl=None: None
+    pw = K.unlocked(interactive=False)
+    K.cli(["ls", K.DB], pw)
+    argv = open(os.path.join(root, "kf2", "argv")).read().split("\n")
+    stdin = open(os.path.join(root, "kf2", "stdin")).read()
+    check("password plus key file: -k is passed, --no-password is not, the master goes on stdin",
+          "-k" in argv and "--no-password" not in argv and stdin.startswith("typed-master\n"), (argv, stdin))
+
+    # ---- init records a key file, for a caller that sets up a new machine without a prompt
+    env_init, state = world(os.path.join(root, "init"))
+    db3 = os.path.join(root, "init", "new.kdbx")
+    kf3 = os.path.join(root, "init", "new.key")
+    rc, out, err = run(env_init, "init", "--db", db3, "--keyfile", kf3)
+    cfg = json.load(open(os.path.join(state, "kp-config.json")))
+    check("init --db --keyfile records both, non-interactively",
+          rc == 0 and cfg.get("db") == db3 and cfg.get("keyfile") == kf3, (rc, out, err, cfg))
+    rc, out, err = run(env_init, "init", "--db", db3, "--no-password")
+    check("init --no-password without a key file is refused (nothing would open the store)",
+          rc != 0 and "--keyfile" in err, (rc, err))
+
+
+def test_keyfile_real_cli(root):
+    print("\n== keyfile stores against the real keepassxc-cli ==")
+    real = shutil.which("keepassxc-cli")
+    if not real:
+        print("  (skipped: keepassxc-cli is not installed on this machine)")
+        return
+    env, state = world(os.path.join(root, "real"))
+    env["BRAIN_KP_CLI"] = real
+    env.pop("BRAIN_KP_BACKEND", None)
+    env["BRAIN_KP_BACKEND"] = "keepassxc"
+    db = os.path.join(root, "real", "store.kdbx")
+    kf = os.path.join(root, "real", "store.key")
+    rc, out, err = run(env, "init", "--db", db, "--keyfile", kf, "--create", "--no-password")
+    check("init --create --no-password makes a keyfile-only database and its key file",
+          rc == 0 and os.path.exists(db) and os.path.exists(kf), (rc, out, err))
+    rc, out, err = run(env, "status")
+    check("status on it says the keyfile is the whole key",
+          "the keyfile is the whole key" in out and "not available" not in out, out)
+    rc, out, err = run(env, "put", "apis/demo", "--stdin", stdin="demo-secret\n")
+    check("a write lands with no master anywhere", rc == 0, (rc, out, err))
+    rc, out, err = run(env, "get", "demo", "--pipe", "cat")
+    check("and reads back through a pipe, bare name resolved",
+          rc == 0 and out.strip() == "demo-secret", (rc, out, err))
+
+    env2, state2 = world(os.path.join(root, "real2"))
+    env2.update(BRAIN_KP_CLI=real, BRAIN_KP_BACKEND="keepassxc")
+    db2 = os.path.join(root, "real2", "store.kdbx")
+    kf2 = os.path.join(root, "real2", "store.key")
+    rc, out, err = run(env2, "init", "--db", db2, "--keyfile", kf2, "--create",
+                       stdin="swordfish-test\nswordfish-test\n")
+    check("init --create with a key file and no --no-password makes a password plus key file database",
+          rc == 0 and os.path.exists(db2) and os.path.exists(kf2), (rc, out, err))
+    p = subprocess.run([real, "ls", "-q", "-k", kf2, db2], input="swordfish-test\n",
+                       capture_output=True, text=True)
+    check("it opens with both", p.returncode == 0, p.stderr)
+    p = subprocess.run([real, "ls", "-q", "-k", kf2, "--no-password", db2], stdin=subprocess.DEVNULL,
+                       capture_output=True, text=True)
+    check("and not with the key file alone", p.returncode != 0, p.stdout)
+    rc, out, err = run(env2, "ls")
+    check("kp.py does not take it for keyfile-only: headless with no master it exits EXIT_NOMASTER",
+          rc == 4, (rc, err))
+
+
 def run(env, *args, stdin=""):
     p = subprocess.run([sys.executable, KP] + list(args), env=env, input=stdin, capture_output=True,
                        text=True, timeout=60)
@@ -83,7 +225,6 @@ def main():
         check("no absolute or remote database path is hardcoded as a default",
               not re.search(r"[\"'](?:/Users/|/home/|/Volumes/)", src)
               and not re.search(r"[\"'](?!kp://)[a-z][a-z0-9+.-]*://", src))
-        check("no 1Password reference remains", "op://" not in src and "1Password" not in src)
 
         # ------------------------------------------------ where the database is
         env, state = world(os.path.join(root, "a"))
@@ -214,6 +355,9 @@ def main():
         lin = K.ping_command("linux", "host", which_all)
         check("ping waits in milliseconds on macOS and seconds on Linux",
               "1500" in mac and "2" in lin and "1500" not in lin, (mac, lin))
+
+        test_keyfile_only(root)
+        test_keyfile_real_cli(root)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

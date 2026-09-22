@@ -359,7 +359,7 @@ MAC_CHROME = "/Applications/Google Chrome.app"
 
 
 class RemoteControlSetup:
-    """What the remote_control step does to the machine: check it can serve, create the dedicated repository,
+    """What the remote_control step does to the machine: check it can serve, prepare the working directory,
     start the server once on the terminal for its one-time prompts, record the directory and name where
     remote_control.py reads them, and keep a systemd user unit running with no one logged in (lingering).
     The supervisor itself is installed by SchedulerSetup, like every other job."""
@@ -426,15 +426,20 @@ class RemoteControlSetup:
                             "as a normal user (with sudo rights if it administers the machine)")
         claude = self._claude()
         if not claude:
-            blocking.append("no claude CLI on PATH or in ~/.local/bin: install Claude Code first")
+            blocking.append("no claude CLI on PATH, in ~/.local/bin, /opt/homebrew/bin or /usr/local/bin: install "
+                            "Claude Code first, with its native installer")
         else:
             rc, out = self._call([claude, "auth", "status"])
             blocking += D.auth_problems(out if rc is not None else "")
-            rc, out = self._call([claude, "remote-control", "--help"])
+            # --chrome is hidden from `remote-control --help` on some platforms while fully supported, so the
+            # help text proves nothing. Ask the parser instead: `--chrome --help` exits at once without starting
+            # a second server, and only an old CLI answers "Unknown argument".
+            rc, out = self._call([claude, "remote-control", "--chrome", "--help"])
             if rc is None:
                 warnings.append("could not ask the claude CLI about remote-control (%s)" % out)
-            elif "chrome" not in out:
+            elif "unknown argument" in out.lower():
                 blocking.append("this claude CLI does not know remote-control --chrome: run `claude update`")
+            warnings += RC.warnings(claude)
         found = RC.blocking_env(self._settings_env())
         if found:
             blocking.append("%s set in the env block of ~/.claude/settings.json: the server reads it too, and it "
@@ -454,12 +459,14 @@ class RemoteControlSetup:
         return os.path.abspath(full)
 
     def prepare(self, path):
+        """The home directory as it is; any other folder created if missing and made a small git repository, so
+        a dedicated one keeps working the way it always has. Never the vault."""
         full = self._full(path)
         norm = os.path.normpath(full).casefold()
         if norm == os.path.normpath(self._vault).casefold():
-            return False, "%s is the vault: Remote Control serves from a small repository of its own" % full
+            return False, "%s is the vault: serve from the home directory or a folder of its own" % full
         if norm == os.path.normpath(self.home).casefold():
-            return False, "%s is the home directory, where workspace trust is never kept" % full
+            return (True, full) if os.path.isdir(full) else (False, "%s is not there" % full)
         try:
             os.makedirs(full, exist_ok=True)
         except OSError as exc:

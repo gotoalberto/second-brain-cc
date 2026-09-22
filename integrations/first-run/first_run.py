@@ -12,9 +12,9 @@ Steps, in order: kdbx, google, files, multi_machine, alert_email, mcp, scheduler
 files cannot be declined: it records the local directory files.py keeps files in (proposed: ~/BrainFiles).
 multi_machine is opt-in: a shared folder (Dropbox, iCloud, a NAS) over which this machine coordinates
 presence and file claims with others (brain_shared.py, presence.py, claims_sync.py); declined by default.
-remote_control makes the machine reachable from the Claude app: a dedicated git repository (proposed:
-~/<host name>), one start on the terminal for the server's one-time prompts, then a launchd agent or a
-systemd user unit that keeps `claude remote-control --chrome` running (remote_control.py).
+remote_control makes the machine reachable from the Claude app: a working directory (proposed: the home
+directory, no git repository needed), one start on the terminal for the server's one-time prompts, then a
+launchd agent or a systemd user unit that keeps `claude remote-control --chrome` running (remote_control.py).
 Answers live in <brain state>/first-run.json; the guardian installs and repairs only the scheduled
 jobs accepted here. A run and skip-all both end by registering this machine in the machine registry
 (machines.py register --daily), which the guardian's scheduled repair then keeps fresh.

@@ -54,6 +54,16 @@ FIXTURES = {
         "stderr": "",
         "kind": "auth_invalid",
     },
+    "auth_not_logged_in": {
+        "verified": True,
+        "note": ("seen 2026-09-21: `claude -p --output-format json` with no CLAUDE_CODE_OAUTH_TOKEN and a HOME with "
+                 "no login, exit 1; the CLI-login attempt of a browser routine on a machine whose CLI is logged out"),
+        "exit_code": 1,
+        "stdout": json.dumps({"is_error": True, "result": "Not logged in \u00b7 Please run /login",
+                              "terminal_reason": "api_error", "total_cost_usd": 0}),
+        "stderr": "",
+        "kind": "auth_invalid",
+    },
     "usage_limit_text": {
         "verified": False,
         "note": UNVERIFIED,

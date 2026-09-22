@@ -706,8 +706,37 @@ class HookLivenessSource:
                     continue
                 started = getattr(st, "st_birthtime", None) or st.st_mtime
                 out.append(D.SessionTranscript(D.session_sid(name[:-len(".jsonl")]), d,
-                                               min(started, st.st_mtime), st.st_mtime))
+                                               min(started, st.st_mtime), st.st_mtime,
+                                               self._cancelled(os.path.join(folder, name))))
         return out
+
+    HEAD_BYTES = 64 * 1024
+
+    @classmethod
+    def _cancelled(cls, path):
+        """Hook events Claude Code cancelled at the start of a session, from its transcript.
+
+        Only the head is read: a SessionStart cancellation is written before the first turn,
+        and a transcript can run to megabytes. Lines that cannot mention one are not parsed.
+        """
+        out = set()
+        try:
+            with open(path, "rb") as fh:
+                head = fh.read(cls.HEAD_BYTES)
+        except OSError:
+            return frozenset()
+        for line in head.splitlines():
+            if b"hook_cancelled" not in line:
+                continue
+            try:
+                att = json.loads(line).get("attachment") or {}
+            except (ValueError, AttributeError):
+                continue
+            if isinstance(att, dict) and att.get("type") == "hook_cancelled":
+                event = att.get("hookEvent") or str(att.get("hookName") or "").split(":")[0]
+                if event:
+                    out.add(str(event))
+        return frozenset(out)
 
     def heartbeats(self, since):
         out = []

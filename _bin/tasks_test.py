@@ -59,6 +59,7 @@ id: scheduled-tasks
 | routine-gone | box | 06:00 | * | agent | 90-Meta/routines/missing.md | yes | file missing |
 | app-row | box | 06:00 | * | claude-app | (Claude app scheduler) | yes | inventory only |
 | elsewhere | other-box | 06:00 | * | agent | 90-Meta/routines/routine-a.md | yes | other machine |
+| by-key | box-1a2b3c4d | -- | -- | agent | 90-Meta/routines/routine-a.md | yes | pinned by machine key |
 """
 
 # The registry's own cells as the note writes them: a bare `*`, one in code ticks, and emphasis
@@ -564,6 +565,30 @@ def main():
 
         rc, _ = quiet(T.main, ["--force", "routine-now"])
         check("--force runs a manual-only agent routine", rc == 0 and os.path.exists(args_file), rc)
+
+        print("\n== --force respects who owns the task ==")
+        saved_is_mine, saved_names = T.machine_is_mine, T.host_names
+        T.machine_is_mine = lambda m: m == "box-1a2b3c4d"
+        T.host_names = lambda: ["box", "box-1a2b3c4d"]
+        try:
+            os.remove(args_file)
+            rc, out = quiet(T.main, ["--force", "by-key"])
+            check("--force runs a row pinned to this machine's key, not only to its hostname",
+                  rc == 0 and os.path.exists(args_file), (rc, out))
+            os.remove(args_file)
+            rc, out = quiet(T.main, ["--force", "elsewhere"])
+            check("--force refuses a task that belongs to another machine",
+                  rc == 3 and not os.path.exists(args_file), (rc, out))
+            check("and the refusal names the owner and the flag that overrides it",
+                  "other-box" in out and "--anywhere" in out, out)
+            rc, out = quiet(T.main, ["--force", "elsewhere", "--anywhere"])
+            check("--anywhere runs it anyway, for the rare deliberate case",
+                  rc == 0 and os.path.exists(args_file), (rc, out))
+            rc, out = quiet(T.main, ["--list"])
+            check("--list says what this host matches as",
+                  "this host matches as: box, box-1a2b3c4d" in out, out[:400])
+        finally:
+            T.machine_is_mine, T.host_names = saved_is_mine, saved_names
 
         print("\n== failures go to the alert channel ==")
         root, args_file = setup(T, agent_exit=3)

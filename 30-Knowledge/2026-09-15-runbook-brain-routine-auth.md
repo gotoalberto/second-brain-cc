@@ -9,7 +9,7 @@ status: active
 confidence: medium
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative. Only the invalid-token failure shape was seen from a real CLI; the other failure patterns are best guesses until a real failure confirms them"
-updated: 2026-09-15
+updated: 2026-09-22
 supersedes: []
 ---
 
@@ -102,7 +102,7 @@ account hits a limit.
 
 | kind | what it means | what the run does | what to do |
 |---|---|---|---|
-| `auth_invalid` | the token is refused | marks it dead, fails over | renew it |
+| `auth_invalid` | the token is refused, or on the CLI-login attempt the CLI is not logged in | marks it dead, fails over; a CLI-login attempt falls back to the pool and raises `routine-auth:cli-login` | renew it; for the CLI login, `claude auth login` on that machine |
 | `token_malformed` | the stored value is not one token | marks it dead, fails over, the CLI never sees it | re-store it with the command in the alert |
 | `usage_limit` | a usage or rate limit | rests the token until the reset time, fails over | wait, or add a token from another account |
 | `credit_exhausted` | out of credit | rests the token for a day, fails over | top up, or add a token |
@@ -156,8 +156,22 @@ force one run from a scratch registry to confirm nothing is denied.
 
 ## Headless limits
 
-A routine run has no vendor connector and no browser bridge. Each routine says what it does headless,
-and one that needs a capability it lacks fails and alerts instead of silently doing nothing.
+A routine run has no vendor connector. Each routine says what it does headless, and one that needs a
+capability it lacks fails and alerts instead of silently doing nothing.
+
+**The browser is the one exception, and it does not come from the pool.** Claude Code keeps Claude in
+Chrome off for a `claude setup-token` token even with `--chrome`, so a routine whose `--allowedTools`
+allows `mcp__claude-in-chrome` gets a first attempt **on the CLI's own claude.ai login, with
+`--chrome`**: no pool token is read and no token variable is set, so the CLI uses its login under
+`HOME`. The prompt tells the run that this machine's Chrome is where the user's logged-in sessions
+live, to pick the local browser, and never to sign in or accept a consent screen. The attempt is
+listed as `cli-login`.
+
+Only when that attempt fails as `auth_invalid` (the CLI's `Not logged in` counts) does the run go on
+to the pool, without `--chrome`, with a prompt saying there is no browser so it takes the procedure's
+fallback, and it raises the `routine-auth:cli-login` warning: run `claude auth login` on that
+machine. Any other failure of the CLI-login attempt is the run's result; no token is spent on it. The
+pool's failover limit counts only pool attempts. [[2026-09-21-reference-where-claude-in-chrome-is-available]]
 `BRAIN_HEADLESS=1` is exported so hook scripts can tell an unattended run apart.
 
 ## Smoke checks

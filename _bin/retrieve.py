@@ -37,75 +37,19 @@ THRESHOLD_MISSES   = 2           # CONSECUTIVE misses before the threshold start
 NOVELTY_THRESHOLD   = 0.6     # this similar to the previous prompt means a continuation
 REINDEX_EVERY       = 60      # segundos
 
-
-PULL_EVERY = 300               # seconds between vault pulls
-PULL_TIMEOUT = 8              # a prompt never blocks longer than this on the network
-
-
-def _rebase_in_progress():
-    """Two stats: cheap enough to ask on the prompt path without being felt.
-
-    It repeats vault_sync's check on purpose instead of importing it: this hook runs on
-    EVERY prompt and its budget is tens of milliseconds, whereas importing vault_sync
-    would drag the whole of index_vault along with it.
-    """
-    g = os.path.join(B.VAULT, ".git")
-    return os.path.isdir(os.path.join(g, "rebase-merge")) or\
-           os.path.isdir(os.path.join(g, "rebase-apply"))
+# A term filter ("only score terms the vault already knows") is DELIBERATELY NOT USED here,
+# and `terms_the_vault_knows` must not come back. It cannot tell noise from a subject the
+# vault has simply never met, so it silently turns "I don't know about this" into "this
+# looks relevant", which is the one failure retrieval must not have: inventing relevance is
+# worse than admitting a gap. The threshold above earns its confidence from coverage
+# instead. retrieve_core_test.py guards this by looking for this very comment; deleting it
+# re-enables nothing, it only removes the alarm.
 
 
-def maybe_pull():
-    """Fetch the vault before answering, if it has been a while since the last pull.
-
-    It exists because the vault may have changed from another machine or another
-    session: answering with stale memory is worse than taking a second longer. It uses
-    the SAME flock as vault_sync, the only process allowed to touch git, and if it does
-    not get the lock or the network is slow it gives up silently: the user's prompt never
-    waits on the network.
-    """
-    if B.OFFLINE:
-        return                    # the hook probe: no git, no network
-    marker = os.path.join(B.STATE, "last_pull")
-    try:
-        if time.time() - os.path.getmtime(marker) < PULL_EVERY:
-            return
-    except OSError:
-        pass
-    try:
-        with B.flock(os.path.join(B.VAULT, "_index", ".gitlock"), timeout=1) as lk:
-            if not lk.held:
-                return
-            # If a rebase was ALREADY under way on arrival, it is not ours: most likely
-            # the user is resolving a conflict by hand in ~/Brain. Aborting it would wipe
-            # the resolution work already done, and this runs on EVERY prompt. Leave
-            # without touching anything.
-            if _rebase_in_progress():
-                B.log("sync", "pull-skipped-foreign-rebase")
-                return
-            _, head_before, _ = B.run([B.GIT, "rev-parse", "HEAD"], cwd=B.VAULT)
-            code, _, err = B.run([B.GIT, "pull", "--rebase", "--autostash", "--quiet"],
-                                 cwd=B.VAULT, timeout=PULL_TIMEOUT)
-            # Whatever the pull rewrote now has mtime = now. Marked so the memory gate
-            # cannot read someone else's commit as this session having saved.
-            if code == 0 and head_before.strip():
-                rc2, changed, _ = B.run([B.GIT, "diff", "--name-only",
-                                         head_before.strip(), "HEAD"], cwd=B.VAULT)
-                if rc2 == 0 and changed.strip():
-                    B.mark_git_touched(changed.splitlines())
-            # The result canNOT be ignored. A failed pull — a conflict, or the 8 s
-            # timeout cutting the rebase mid-apply — leaves a half-finished
-            # .git/rebase-merge, and from there everything vault_sync commits lands on a
-            # detached HEAD: the vault stops converging and nobody notices. It is aborted
-            # exactly as fetch_from_remote() does, here and now, with the lock still in
-            # hand; a local operation, adding no network and no wait to the prompt.
-            # This one IS ours: there was no rebase on entry and this pull left it.
-            if code != 0 and _rebase_in_progress():
-                B.run([B.GIT, "rebase", "--abort"], cwd=B.VAULT, timeout=5)
-                B.log("sync", "pull-hook-rebase-abortado", err=(err or "")[:200])
-        os.makedirs(B.STATE, exist_ok=True)
-        open(marker, "w").close()
-    except Exception as e:
-        B.log_error("retrieve.maybe_pull", e)
+# The pull itself (throttle, lock, rebase safety) lives in brainlib.maybe_pull, so
+# compass.py's forced pull at SessionStart shares the exact same safety logic instead of
+# a second copy. Aliased here so every call site in this file keeps saying `maybe_pull()`.
+maybe_pull = B.maybe_pull
 
 
 def maybe_beat(sid, cwd):

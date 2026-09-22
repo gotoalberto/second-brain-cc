@@ -52,7 +52,7 @@ class Classification:
 
 # ---------------------------------------------------------------- classify
 
-_AUTH_401 = re.compile(r"Failed to authenticate\.?.{0,40}?\b401\b|API Error:\s*401\b", re.I | re.S)
+_AUTH_401 = re.compile(r"Failed to authenticate\.?.{0,40}?\b401\b|API Error:\s*401\b|Not logged in\b", re.I | re.S)
 _CREDIT = re.compile(r"credit balance is too low|insufficient credit|out of credits|"
                      r"API Error:\s*402\b|payment required", re.I)
 _USAGE = re.compile(r"usage limit|rate[ _]limit|limit reached|API Error:\s*429\b|too many requests", re.I)
@@ -556,11 +556,28 @@ EXIT_CODES = {CLI_MISSING: 127, CONFIG: 78, TOKEN_MALFORMED: 78,
               KEEPASS_LOCKED: 75, KEEPASS_UNAVAILABLE: 75, NO_TOKEN: 75, CONTRACT_BREACH: 65}
 
 
-def routine_env(base_env: dict, token: str, run_id=None, scratch=None, extra=None) -> dict:
+BROWSER_TOOL = "mcp__claude-in-chrome"
+BROWSER_FLAG = "--chrome"
+CLI_LOGIN_LABEL = "cli-login"       # the attempt that runs on the CLI's own login instead of a pool token
+
+
+def wants_browser(agent_args) -> bool:
+    """A routine that allows Claude in Chrome in its --allowedTools. Such a routine runs first on the
+    CLI's own claude.ai login with --chrome: Claude Code refuses Chrome to a `claude setup-token` token
+    even with --chrome."""
+    args = list(agent_args or ())
+    for i, a in enumerate(args):
+        if a == "--allowedTools" and i + 1 < len(args) and BROWSER_TOOL in args[i + 1]:
+            return True
+    return False
+
+
+def routine_env(base_env: dict, token, run_id=None, scratch=None, extra=None) -> dict:
     """The environment of one routine attempt, built from scratch: the allowlist, the runner's
     `extra` variables (the send log path), the run's id and scratch directory, BRAIN_HEADLESS=1,
     auto-update off so a CLI upgrade never lands in the middle of a run, and the pool token
-    last, so nothing can replace it."""
+    last, so nothing can replace it. `token` None is the CLI-login attempt: no token variable at
+    all, so the CLI uses its own login under HOME."""
     base = base_env or {}
     env = {k: base[k] for k in ENV_KEEP if base.get(k)}
     env.setdefault("PATH", DEFAULT_PATH)
@@ -573,7 +590,10 @@ def routine_env(base_env: dict, token: str, run_id=None, scratch=None, extra=Non
         env[RUN_ID_ENV] = run_id
     if scratch:
         env[SCRATCH_ENV] = scratch
-    env[TOKEN_ENV] = token
+    if token:
+        env[TOKEN_ENV] = token
+    else:
+        env.pop(TOKEN_ENV, None)      # not even an `extra` may slip a token into the CLI-login attempt
     return env
 
 
@@ -611,7 +631,7 @@ def routine_body(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def frame_prompt(routine_id: str, body: str, run_id: str, scratch=None) -> str:
+def frame_prompt(routine_id: str, body: str, run_id: str, scratch=None, browser=None) -> str:
     """The whole prompt of one attempt: an explicit order to run the routine now, the facts of
     this run, the rules of an unattended run, then the routine body.
 
@@ -619,7 +639,8 @@ def frame_prompt(routine_id: str, body: str, run_id: str, scratch=None) -> str:
     model asks what to do (seen in a real run). The rules are the
     ones the first real runs broke: the `save` skill and a background agent after the work,
     `cd ... &&`, temporary files in /tmp or inside the vault, `cat`, and a timestamp line that
-    vw.py adds a second time.
+    vw.py adds a second time. `browser` True says the run has this machine's Chrome, False that a
+    routine wanting it fell back to a pool token without it, None (no browser wanted) says nothing.
     """
     head = ('You are running the Brain routine "%s" unattended, right now, with nobody at the keyboard. '
             "Execute the procedure below from start to finish now. Do not ask for a request, do not wait for input. "
@@ -632,6 +653,16 @@ def frame_prompt(routine_id: str, body: str, run_id: str, scratch=None) -> str:
     else:
         facts.append("- there is no scratch directory for this run: write no temporary files, not in /tmp and not "
                      "inside ~/Brain.")
+    if browser is True:
+        facts.append("- browser: this run has Claude in Chrome (the `mcp__claude-in-chrome__*` tools, load them with "
+                     "ToolSearch). It drives THIS machine's own Chrome with the Claude extension, and that Chrome is "
+                     "where the user's logged-in sessions live: use it for every step that needs a logged-in site. "
+                     "Pick the local browser in `list_connected_browsers` (`isLocal: true`). Never sign in, never type "
+                     "a password, never accept a consent screen: if a site is signed out, say so in the report and "
+                     "carry on without it.")
+    elif browser is False:
+        facts.append("- browser: none in this run (it fell back to a pool token, which gets no Claude in Chrome). "
+                     "Do the browser steps' fallback the procedure names and say in the report that they were skipped.")
     rules = [
         "Rules for an unattended run:",
         "- The procedure's own steps are the whole job. Do not invoke the `save` skill and do not spawn subagents or "

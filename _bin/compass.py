@@ -237,6 +237,14 @@ def main():
     sid = B.sid8(data.get("session_id"))
     cwd = data.get("cwd") or os.getcwd()
 
+    # Before anything else is read: pull, so a session that opens right after another
+    # machine or session pushed does not build its startup context (rules, active
+    # projects, health) from a stale local vault. Forced, because SessionStart's own
+    # throttle is "once per session", not retrieve.py's "once per 5 minutes on the prompt
+    # path"; bounded to 3 s so it cannot eat SessionStart's whole hook budget. Same silent,
+    # lock-respecting give-up as every other caller of brainlib.maybe_pull.
+    B.maybe_pull(force=True, timeout=3)
+
     con = B.db()
     cleanup(con, keep=sid)
     con.execute(

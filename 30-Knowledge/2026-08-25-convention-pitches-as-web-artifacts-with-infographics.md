@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-15
+updated: 2026-09-21
 supersedes: []
 ---
 
@@ -57,6 +57,20 @@ or ambitious-prompt variety across an infographic set instead of the same templa
 slide, a blind fresh-context critic pass on the rendered slides before calling the deck done, and
 generated image or video where a CSS-only graphic would look generic.
 [[2026-09-18-convention-anti-ai-slop-design-techniques]]
+
+## Mobile decks are checked in WebKit
+
+A deck that looks right in headless Chromium can still break on a phone. The known case: inline SVGs
+that carry only a `viewBox`, with no `width` or `height`, placed inside a CSS grid column. Chromium
+sizes them to the column; Safari draws them at full width, over the text. Nothing in a Chromium
+review shows it.
+
+- Give every inline SVG explicit `width` and `height` attributes, or add a rule such as
+  `svg[viewBox]{width:100%;height:auto}`, and give fixed-size icons their own pixel size.
+- Before handing over any mobile HTML, render every slide in WebKit with an iPhone device profile and
+  look at the screenshots. Playwright does this locally: `python3 -m playwright install webkit` (on
+  Linux also `python3 -m playwright install-deps webkit` once, which needs root), then a WebKit
+  browser with `playwright.devices["iPhone 13"]`.
 
 ## Why
 

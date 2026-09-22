@@ -72,6 +72,70 @@ $kdbx->dump_file($db, $master);
 '''
 
 
+FIXTURE_KEYED_PL = r'''
+use strict; use warnings;
+use File::KDBX; use File::KDBX::Key::File;
+my ($db, $keyfile, $master) = @ARGV;
+open(my $fh, '>:raw', $keyfile) or die $!; print $fh join('', map { chr(int(rand(256))) } 1..64); close $fh;
+my $kf = File::KDBX::Key::File->new($keyfile);
+my $key = (defined $master && length $master) ? [$master, $kf] : $kf;
+my $kdbx = File::KDBX->new;
+my $e = $kdbx->root->add_entry(title => "keyed");
+$e->password("keyed-secret");
+$kdbx->dump_file($db, $key);
+'''
+
+
+def test_keyfile():
+    print("\n== key files: keyfile-only and password plus key file ==")
+    if not perl_available() or not kdbx_module_available():
+        print("  (skipped: File::KDBX is not installed, `cpanm --local-lib=~/perl5 File::KDBX`)")
+        return
+    tmp = tempfile.mkdtemp(prefix="kp-kdbx-pl-key-")
+    try:
+        fixture = os.path.join(tmp, "fixture.pl")
+        with open(fixture, "w") as fh:
+            fh.write(FIXTURE_KEYED_PL)
+        empty = os.path.join(tmp, "empty")
+        open(empty, "w").close()
+        withpw = os.path.join(tmp, "withpw")
+        with open(withpw, "w") as fh:
+            fh.write("swordfish-test")
+
+        def kp(db, pwfile, keyfile, *args, **kw):
+            env = dict(os.environ, BRAIN_KP_KEYFILE=keyfile)
+            return run([SCRIPT] + list(args) + ["--db", db, "--pwfile", pwfile], env=env, **kw)
+
+        only_db, only_key = os.path.join(tmp, "only.kdbx"), os.path.join(tmp, "only.key")
+        p = run(["perl", fixture, only_db, only_key])
+        check("a keyfile-only fixture was created", p.returncode == 0, (p.stdout, p.stderr))
+        p = kp(only_db, empty, only_key, "show", "--entry", "keyed", "--attr", "Password", "--reveal")
+        check("a keyfile-only store opens with the key file alone and an empty password file",
+              p.returncode == 0 and p.stdout.strip() == "keyed-secret", (p.stdout, p.stderr))
+        p = kp(only_db, empty, only_key, "add", "--entry", "second", "--stdin-secret", input="n-secret")
+        check("and a write keeps it keyfile-only", p.returncode == 0, (p.stdout, p.stderr))
+        p = kp(only_db, empty, only_key, "show", "--entry", "second", "--attr", "Password", "--reveal")
+        check("the store still opens with the key file alone after the write",
+              p.returncode == 0 and p.stdout.strip() == "n-secret", (p.stdout, p.stderr))
+        p = kp(only_db, empty, "", "ls")
+        check("with neither a master nor a key file it refuses", p.returncode != 0, (p.stdout, p.stderr))
+
+        both_db, both_key = os.path.join(tmp, "both.kdbx"), os.path.join(tmp, "both.key")
+        p = run(["perl", fixture, both_db, both_key, "swordfish-test"])
+        check("a password plus key file fixture was created", p.returncode == 0, (p.stdout, p.stderr))
+        p = kp(both_db, withpw, both_key, "ls")
+        check("password plus key file opens with both", p.returncode == 0 and "keyed" in p.stdout,
+              (p.stdout, p.stderr))
+        p = kp(both_db, empty, both_key, "ls")
+        check("the key file alone does not open a store that also has a password", p.returncode != 0,
+              (p.stdout, p.stderr))
+        p = kp(both_db, withpw, "", "ls")
+        check("the password alone does not open it either, and the error says wrong key",
+              p.returncode != 0 and "wrong key" in p.stderr, (p.stdout, p.stderr))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_functional():
     print("\n== a real File::KDBX round trip ==")
     if not perl_available() or not kdbx_module_available():
@@ -151,7 +215,7 @@ def test_functional():
 
 
 def main():
-    for t in (test_syntax, test_functional):
+    for t in (test_syntax, test_functional, test_keyfile):
         try:
             t()
         except Exception as exc:

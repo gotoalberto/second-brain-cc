@@ -130,6 +130,31 @@ gh api repos/<owner>/<repo>/commits/$(git rev-parse HEAD) --jq '.commit.verifica
 (`git log --format=%G?` printing `G`) only proves the key signed it, not that GitHub knows the
 key. Delete the branch afterwards.
 
+## Organisations with SAML SSO
+
+For an organisation that enforces SAML single sign-on, cloning over SSH can still fail with
+`The '<org>' organization has enabled or enforced SAML SSO ... grant this key access`, even with
+everything above in place. `gh repo clone` fails the same way, because with `git_protocol ssh` it
+shells out to the same blocked path. `gh api` and `gh repo list <org>` keep working, which is
+misleading: the OAuth token is authorized for SSO, the SSH key is not.
+
+Either authorize the SSH key for the organisation on GitHub, or clone over HTTPS through `gh`'s own
+credential helper, which uses the authorized token:
+
+```sh
+git -c credential.helper='!gh auth git-credential' clone https://github.com/<org>/<repo>.git
+```
+
+## Accepting a repository invitation
+
+An invitation to a private repository you have not accepted yet can be listed and accepted from
+the CLI, with no browser:
+
+```sh
+gh api user/repository_invitations
+gh api -X PATCH user/repository_invitations/<id>
+```
+
 ## The root user
 
 Leave root's git identity alone and give it no `gh`. The harness runs as its own user, and that

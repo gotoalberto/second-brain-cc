@@ -744,6 +744,11 @@ def test_hook_liveness_source():
     projects = os.path.join(d, "projects")
     app = os.path.join(projects, "-Users-me-code-app")
     write(os.path.join(app, "3ac18522-ed92-4c1a-9d0e-000000000001.jsonl"), '{"type": "user"}\n')
+    brain = os.path.join(projects, "-Users-me-Brain")
+    write(os.path.join(brain, "b5fc96bc-0958-4907-b9c1-d15b608f0847.jsonl"),
+          '{"type": "queue-operation", "operation": "enqueue"}\nnot json\n'
+          '{"type": "attachment", "attachment": {"type": "hook_cancelled", "hookName": "SessionStart:startup", '
+          '"hookEvent": "SessionStart"}}\n{"type": "user"}\n')
     old = write(os.path.join(app, "0dd00000-0000-4000-8000-000000000002.jsonl"), "{}\n")
     os.utime(old, (now - 10000, now - 10000))
     write(os.path.join(app, "3ac18522-ed92-4c1a-9d0e-000000000001", "subagents", "agent-1.jsonl"), "{}\n")
@@ -773,7 +778,10 @@ def test_hook_liveness_source():
 
     ss = src.sessions(now - 3600)
     check("top-level transcripts written since the horizon are sessions, keyed by short id",
-          [(x.sid, x.project_dir) for x in ss] == [("3ac18522", "-Users-me-code-app")], ss)
+          [(x.sid, x.project_dir) for x in ss] == [("b5fc96bc", "-Users-me-Brain"), ("3ac18522", "-Users-me-code-app")], ss)
+    check("a hook Claude Code cancelled is read from the transcript as its hook event",
+          [x.cancelled for x in ss] == [frozenset({"SessionStart"}), frozenset()], ss)
+    ss = [x for x in ss if x.sid == "3ac18522"]
     check("with a start time no later than their last write", ss and ss[0].started <= ss[0].mtime, ss)
     check("a missing projects directory is no sessions",
           A_.HookLivenessSource(os.path.join(d, "nope"), log, registry, os.path.join(d, "e")).sessions(0) == [])

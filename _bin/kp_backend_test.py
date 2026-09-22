@@ -156,15 +156,15 @@ def test_build():
     print("\n== build ==")
     tmp = tempfile.mkdtemp(prefix="kp-backend-test-")
     try:
-        argv, prefix, cleanup = K.build("keepassxc", "/bin/keepassxc-cli", ["ls", "-R"], "/db.kdbx",
-                                        "swordfish-test", os.path.join(tmp, "pw"))
+        argv, prefix, cleanup, env = K.build("keepassxc", "/bin/keepassxc-cli", ["ls", "-R"], "/db.kdbx",
+                                             "swordfish-test", os.path.join(tmp, "pw"))
         check("keepassxc-cli: argv passes through with the binary prepended",
               argv == ["/bin/keepassxc-cli", "ls", "-R"], argv)
         check("keepassxc-cli: the master is the first line on stdin", prefix == "swordfish-test\n", prefix)
         cleanup()   # must be a harmless no-op
 
-        argv, prefix, cleanup = K.build("kpcli", "/bin/kp_kdbx.pl", ["ls"], "/db.kdbx", "swordfish-test",
-                                        os.path.join(tmp, "pw"))
+        argv, prefix, cleanup, env = K.build("kpcli", "/bin/kp_kdbx.pl", ["ls"], "/db.kdbx", "swordfish-test",
+                                             os.path.join(tmp, "pw"))
         check("kpcli: argv carries --db and --pwfile, not the master itself",
               argv[:2] == ["/bin/kp_kdbx.pl", "ls"] and "--db" in argv and "/db.kdbx" in argv
               and "--pwfile" in argv, argv)
@@ -173,9 +173,83 @@ def test_build():
               os.path.isfile(pwfile) and open(pwfile).read() == "swordfish-test"
               and stat.S_IMODE(os.stat(pwfile).st_mode) == 0o600, pwfile)
         check("kpcli: stdin is left free (no master prefix) for a new secret", prefix == "", prefix)
+        check("kpcli: a call with no key file still sets BRAIN_KP_KEYFILE, empty, so an inherited "
+              "value cannot leak in", env is not None and env.get("BRAIN_KP_KEYFILE") == "",
+              env and env.get("BRAIN_KP_KEYFILE"))
         cleanup()
         check("kpcli: cleanup shreds the pwfile", not os.path.exists(pwfile))
     finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_keyfile():
+    print("\n== key files: keepassxc-cli takes -k itself, kp_kdbx.pl gets it through the environment ==")
+    tmp = tempfile.mkdtemp(prefix="kp-backend-test-")
+    saved = os.environ.get("BRAIN_KP_KEYFILE")
+    os.environ["BRAIN_KP_KEYFILE"] = "/stale/inherited.key"
+    try:
+        argv, prefix, cleanup, env = K.build("keepassxc", "/bin/keepassxc-cli",
+                                             ["ls", "-k", "/k/store.key", "/db.kdbx"], "/db.kdbx",
+                                             "swordfish-test", os.path.join(tmp, "pw"))
+        check("keepassxc-cli: -k stays in argv, where keepassxc-cli reads it",
+              argv == ["/bin/keepassxc-cli", "ls", "-k", "/k/store.key", "/db.kdbx"], argv)
+        check("keepassxc-cli: no environment of its own is needed", env is None, env)
+        argv, prefix, cleanup, env = K.build("keepassxc", "/bin/keepassxc-cli",
+                                             ["ls", "-k", "/k/store.key", "--no-password", "/db.kdbx"],
+                                             "/db.kdbx", "", os.path.join(tmp, "pw"))
+        check("keepassxc-cli with --no-password: nothing is prefixed on stdin, not even a newline "
+              "(it would be read as the next secret)", prefix == "", repr(prefix))
+
+        argv, prefix, cleanup, env = K.build("kpcli", "/bin/kp_kdbx.pl",
+                                             ["ls", "--group", "Brain", "-k", "/k/store.key"],
+                                             "/db.kdbx", "swordfish-test", os.path.join(tmp, "pw"))
+        check("kpcli: build() strips -k <path> before the helper sees its arguments",
+              "-k" not in argv and "/k/store.key" not in argv, argv)
+        check("kpcli: the key file path reaches the helper as BRAIN_KP_KEYFILE",
+              env.get("BRAIN_KP_KEYFILE") == "/k/store.key", env.get("BRAIN_KP_KEYFILE"))
+        pwfile = argv[argv.index("--pwfile") + 1]
+        check("kpcli: the master still goes through the 0600 file, never the environment",
+              open(pwfile).read() == "swordfish-test"
+              and "swordfish-test" not in "".join(str(v) for v in env.values()))
+        cleanup()
+
+        argv, prefix, cleanup, env = K.build("kpcli", "/bin/kp_kdbx.pl",
+                                             ["ls", "-k", "/k/store.key", "--no-password"],
+                                             "/db.kdbx", "stray-master", os.path.join(tmp, "pw"))
+        pwfile = argv[argv.index("--pwfile") + 1]
+        check("kpcli with --no-password: the password file is empty, so the key file alone is the key "
+              "(an empty password plus a key file is a different key)",
+              open(pwfile).read() == "" and "--no-password" not in argv, (open(pwfile).read(), argv))
+        cleanup()
+
+        rest, keyflags = K.take_key_flags(["ls", "-k", "/k/store.key", "--no-password", "/db.kdbx", "Brain"])
+        check("take_key_flags separates the key flags from what translate() reads",
+              rest == ["ls", "/db.kdbx", "Brain"] and keyflags == ["-k", "/k/store.key", "--no-password"],
+              (rest, keyflags))
+
+        seen = {}
+
+        def fake_run(argv, input=None, capture_output=None, text=None, timeout=None, env=None):
+            seen.update(argv=argv, env=env, input=input)
+            import types
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        real = K.subprocess.run
+        K.subprocess.run = fake_run
+        try:
+            K.run("kpcli", "/bin/kp_kdbx.pl", ["ls", "-k", "/k/store.key", "/db.kdbx", "Brain"], "/db.kdbx",
+                  "swordfish-test", pwfile_dir=os.path.join(tmp, "pw"))
+        finally:
+            K.subprocess.run = real
+        check("run(): a keepassxc-shaped call with -k translates cleanly and carries the key file",
+              seen.get("argv", [])[1:4] == ["ls", "--group", "Brain"]
+              and (seen.get("env") or {}).get("BRAIN_KP_KEYFILE") == "/k/store.key", seen)
+    finally:
+        if saved is None:
+            os.environ.pop("BRAIN_KP_KEYFILE", None)
+        else:
+            os.environ["BRAIN_KP_KEYFILE"] = saved
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -193,7 +267,8 @@ def test_split_confirmation():
 def main():
     for t in (test_resolve, test_default_fallback_paths_never_silently_picks_kpcli, test_translate_ls,
               test_translate_search, test_translate_show, test_translate_mkdir,
-              test_translate_add_edit, test_translate_unsupported, test_build, test_split_confirmation):
+              test_translate_add_edit, test_translate_unsupported, test_build, test_keyfile,
+              test_split_confirmation):
         try:
             t()
         except Exception as exc:

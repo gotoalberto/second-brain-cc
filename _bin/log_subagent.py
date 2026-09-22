@@ -9,6 +9,10 @@ import brainlib as B
 @B.fail_open
 def main():
     data = B.read_hook_input()
+    # Claude Code always sends a session id. A payload without one is a test or a person at a
+    # terminal, and it used to leave a `nosess.md` trace in 50-Sessions every time it ran.
+    if not data.get("session_id"):
+        sys.exit(0)
     sid = B.sid8(data.get("session_id"))
     agent = data.get("agent_type") or "?"
     day = time.strftime("%Y-%m-%d")

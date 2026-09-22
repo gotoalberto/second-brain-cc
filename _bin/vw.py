@@ -74,7 +74,9 @@ def cmd_append(args):
     if redacted:
         sys.stderr.write("vw: " + B.redaction_notice(redacted))
     stamp = time.strftime("%Y-%m-%d %H:%M")
-    entry = "\n- **%s**%s — %s\n" % (stamp, (" · " + args.sid) if args.sid else "",
+    # A colon and not a dash: the write-like-a-person convention bans dashes as punctuation
+    # in vault notes too, and this line is written into a note every time anything is logged.
+    entry = "\n- **%s**%s: %s\n" % (stamp, (" · " + args.sid) if args.sid else "",
                                     content.strip())
 
     alt, owner = _lease_redirect(path, args.sid)

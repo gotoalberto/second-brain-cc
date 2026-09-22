@@ -134,6 +134,11 @@ def apply(con, fixes):
                 os.utime(path, (st.st_atime, st.st_mtime))
             except OSError:
                 pass
+            # linkfix is a sanctioned writer, so it records the write exactly as vw.py does.
+            # Restoring the mtime above is best-effort: when it does not take, vault_ledger
+            # sees a protected note newer than vw.py's record and reports a note written
+            # around the gate, accusing the one path that did the right thing.
+            B.note_vw_write(path)
             changed.append(src)
     if changed:
         import index_vault as IV

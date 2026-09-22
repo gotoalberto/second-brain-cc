@@ -8,7 +8,8 @@
      told to prefer Bash over the file tools, which routed every write around the
      only thing protecting shared notes. Detail:
      30-Knowledge/2026-09-08-analysis-every-instrument-watches-one-surface-and-reports-on-all-of-them.md
-  2. Warns/blocks if another live session holds a claim on that path.
+  2. Warns/blocks if another live session holds a claim on that path, on this machine or,
+     through claims_sync's local cache, on another one.
   3. Context Pack gate (strict mode, off by default).
 
 Deliberate exemptions so as not to self-block: subagents, the vault itself,
@@ -45,6 +46,24 @@ def deny(reason):
 def warn(msg):
     print(json.dumps({"systemMessage": msg}, ensure_ascii=False))
     sys.exit(0)
+
+
+def remote_claim_conflict(path):
+    """(who, project) when a session on ANOTHER machine claims this file, else None.
+
+    Reads only the cache claims_sync leaves in the state directory: no shared-path IO on the
+    hook path. With no cache file at all (multi-machine not configured) nothing is imported.
+    """
+    try:
+        if not os.path.exists(os.path.join(B.STATE, "claims-cache.json")):   # claims_sync.CACHE
+            return None
+        import claims_sync
+        hit = claims_sync.remote_conflict(path)
+        if hit:
+            return "%s on %s" % (hit.get("sid") or "?", hit.get("machine") or "?"), None
+    except Exception as e:
+        B.log_error("gate_write.remote_claim_conflict", e)
+    return None
 
 
 @B.heartbeat("pre-write-gate")
@@ -100,6 +119,8 @@ def main():
         if row:
             rows.append((osid, pattern, row[0], row[1], row[2]))
     conflict = claim_conflict(path, sid, rows, B.session_live)   # ghost claims are skipped there
+    if not conflict:
+        conflict = remote_claim_conflict(path)
 
     # record this session's dynamic claim
     try:

@@ -180,17 +180,18 @@ def token_label(n: int) -> str:
 
 
 def valid_label(name) -> bool:
-    """The name the machine shows under Remote Control, and its dedicated repository's folder name."""
+    """The name the server passes as --name, and the folder name when a dedicated one is chosen."""
     return bool(_LABEL.fullmatch(name or "")) and ".." not in name
 
 
 def default_remote_dir(home: str, label: str, vault: str) -> str:
-    """~/<label>: the app lists the machine under its working directory's repository name, so the folder is
-    named like the machine. Never the vault (compared case-insensitively, as macOS disks are)."""
-    path = os.path.join(home, label)
-    if os.path.normpath(path).casefold() in (os.path.normpath(vault).casefold(), os.path.normpath(home).casefold()):
-        path = os.path.join(home, label + "-remote")
-    return path
+    """The home directory: a session started from the app then opens where you would open a terminal. It needs
+    no git repository, because spawn mode stays same-dir, and its workspace trust is kept like any directory's.
+    Never the vault (compared case-insensitively, as macOS disks are); if the home somehow is the vault, a
+    folder named like the machine instead."""
+    if os.path.normpath(home).casefold() == os.path.normpath(vault).casefold():
+        return os.path.join(home, label)
+    return home
 
 
 def auth_problems(text: str) -> list:

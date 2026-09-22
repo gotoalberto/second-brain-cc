@@ -74,6 +74,15 @@ whatever it reported. Two rounds maximum; on the third, stop and tell the user.
 If the rebase conflicts, **do not resolve it blind**: report it. If it is clean, run
 `verifier` again. Clean rebase + green verifier is the only valid exit.
 
+Then merge into the base branch and **push to origin immediately**, in this same step. Don't
+leave it for the periodic sync job to pick up later:
+```
+/usr/bin/git -C <base-checkout> merge <branch> --ff-only
+/usr/bin/git -C <base-checkout> push origin <base-branch>
+```
+A change isn't done until it's pushed. If the push fails, say so. Detail:
+`~/Brain/30-Knowledge/2026-09-16-convention-push-vault-changes-immediately.md`.
+
 ### 7. Memory (mandatory)
 
 - **Everything written into the vault goes in English**: `title:`, `tags:`, the prose.

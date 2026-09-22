@@ -74,6 +74,11 @@ def main():
             return finish()
         check("brainlib points at the fixture vault, not the real one", B.VAULT == VAULT, B.VAULT)
 
+        src = open(os.path.join(HERE, "retrieve.py"), errors="replace").read()
+        check("the term filter that cannot tell noise from an unknown subject stays unwired",
+              "DELIBERATELY NOT USED" in src and "def terms_the_vault_knows" not in src,
+              "wiring it in makes retrieval invent relevance for what it does not know")
+
         print("\n== prompt classification ==")
         for prompt, task in (("haz la migración", True), ("fix the sync", True),
                              ("what did we decide about keepass?", False), ("hola", False)):

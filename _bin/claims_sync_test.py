@@ -181,6 +181,98 @@ def main():
         check("view exits ok with JSON", rc == 0, (rc, out, err))
         check("only a fresh claim from a DIFFERENT machine key is reported",
               [r["resource"] for r in rows] == [resource + "-friend"], rows)
+
+        print("\n== remote_conflict reads the cache only ==")
+        import claims_sync as CS
+        now = time.time()
+        other = machine + "-other"
+        calls = []
+
+        def resolve(path):
+            calls.append(path)
+            return resource
+
+        check("an empty cache is no conflict and asks git nothing",
+              CS.remote_conflict(tracked, cache={}, now=now, resolve=resolve) is None and calls == [], calls)
+        mine_only = {"machine": machine, "rows": [{"resource": resource, "machine": machine, "sid": "s1", "at": now}]}
+        check("only this machine's claims are no conflict, and git is still not asked",
+              CS.remote_conflict(tracked, cache=mine_only, now=now, resolve=resolve) is None and calls == [], calls)
+        theirs = {"machine": machine, "rows": [{"resource": resource, "machine": other, "sid": "s9", "at": now - 5}]}
+        hit = CS.remote_conflict(tracked, cache=theirs, now=now, resolve=resolve)
+        check("a fresh claim by another machine on the same file is the conflict",
+              hit and hit["machine"] == other and hit["sid"] == "s9" and calls == [tracked], (hit, calls))
+        stale = {"machine": machine, "rows": [{"resource": resource, "machine": other, "sid": "s9", "at": now - CS.TTL - 5}]}
+        check("a stale one is not", CS.remote_conflict(tracked, cache=stale, now=now, resolve=resolve) is None)
+        check("another file is not",
+              CS.remote_conflict(tracked, cache=theirs, now=now, resolve=lambda p: resource + "-else") is None)
+        check("a cache that cannot be read is no conflict, never an error",
+              CS.remote_conflict(tracked, cache={"rows": "garbage"}, now=now, resolve=resolve) is None)
+
+        print("\n== publish: claim.py's detached worker ==")
+        started = []
+        check("nothing is started when multi-machine is not configured",
+              CS.publish_async("sessP", popen=lambda *a, **k: started.append(a)) is False and started == [], started)
+        os.environ["BRAIN_SHARED_DIR"] = shared
+        try:
+            check("configured, one detached worker is started for the session",
+                  CS.publish_async("sessP", popen=lambda *a, **k: started.append((a, k))) is True
+                  and len(started) == 1 and started[0][0][0][-3:] == ["publish", "--sid", "sessP"]
+                  and started[0][1].get("start_new_session") is True, started)
+        finally:
+            del os.environ["BRAIN_SHARED_DIR"]
+
+        vault = os.path.join(root, "vault")
+        os.makedirs(vault)
+        seed = ("import sys; sys.path.insert(0, %r); import brainlib as B; con = B.db(); "
+                "con.execute('INSERT INTO claims VALUES(?,?,?)', ('sessP', %r, B.now())); con.commit()"
+                % (HERE, tracked))
+        subprocess.run([sys.executable, "-c", seed], env=dict(base, BRAIN_VAULT=vault), check=True, timeout=60)
+        rc, out, err = run("publish", "--sid", "sessP", BRAIN_SHARED_DIR=shared, BRAIN_VAULT=vault)
+        check("publish sends the session's claims from the local table",
+              rc == 0 and os.path.isfile(record_path(resource, "sessP")), (rc, out, err))
+        cache = json.load(open(os.path.join(state, "claims-cache.json")))
+        check("and the cache it leaves names this machine, so a reader never computes it",
+              cache.get("machine") == machine, cache.get("machine"))
+
+        print("\n== claim.py publishes what it records ==")
+        p = subprocess.run([sys.executable, os.path.join(HERE, "claim.py"), tracked, "--sid", "sessR"],
+                           env=dict(base, BRAIN_SHARED_DIR=shared, BRAIN_VAULT=vault), cwd=repo,
+                           capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        target = record_path(resource, "sessR")
+        deadline = time.time() + 20
+        while not os.path.isfile(target) and time.time() < deadline:
+            time.sleep(0.1)
+        check("claim.py records locally and the detached worker publishes it to the shared path",
+              p.returncode == 0 and "1 claim(s) recorded" in p.stdout and os.path.isfile(target),
+              (p.returncode, p.stdout, p.stderr[-400:]))
+        p = subprocess.run([sys.executable, os.path.join(HERE, "claim.py"), "--release", "--sid", "sessR"],
+                           env=dict(base, BRAIN_SHARED_DIR=shared, BRAIN_VAULT=vault), cwd=repo,
+                           capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        deadline = time.time() + 20
+        while os.path.isfile(target) and time.time() < deadline:
+            time.sleep(0.1)
+        check("and a release withdraws it", p.returncode == 0 and not os.path.isfile(target),
+              (p.returncode, p.stdout, p.stderr[-400:]))
+
+        print("\n== gate_write warns on another machine's claim ==")
+        write_record(resource, other, "sess7777", time.time() - 5)
+        CS_sync = ("import sys; sys.path.insert(0, %r); import claims_sync as CS; print(CS.sync('sessQ'))" % HERE)
+        subprocess.run([sys.executable, "-c", CS_sync], env=dict(base, BRAIN_SHARED_DIR=shared, BRAIN_VAULT=vault),
+                       check=True, timeout=60, capture_output=True)
+        payload = {"session_id": "abcd1234-0000-4000-8000-000000000001", "tool_name": "Edit",
+                   "tool_input": {"file_path": tracked}, "cwd": repo}
+        p = subprocess.run([sys.executable, os.path.join(HERE, "gate_write.py")], input=json.dumps(payload),
+                           env=dict(base, BRAIN_VAULT=vault, BRAIN_OFFLINE="1"), capture_output=True, text=True,
+                           timeout=60)
+        check("an edit to a file another machine claims gets a warning naming that machine",
+              p.returncode == 0 and "systemMessage" in p.stdout and "sess7777 on " + other in p.stdout,
+              (p.returncode, p.stdout, p.stderr[-400:]))
+        os.remove(os.path.join(state, "claims-cache.json"))
+        p = subprocess.run([sys.executable, os.path.join(HERE, "gate_write.py")], input=json.dumps(payload),
+                           env=dict(base, BRAIN_VAULT=vault, BRAIN_OFFLINE="1"), capture_output=True, text=True,
+                           timeout=60)
+        check("with no cache (multi-machine not configured) the edit passes silently",
+              p.returncode == 0 and "systemMessage" not in p.stdout, (p.returncode, p.stdout, p.stderr[-400:]))
     finally:
         for d in TMP:
             shutil.rmtree(d, ignore_errors=True)

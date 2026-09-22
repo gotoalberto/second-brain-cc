@@ -39,6 +39,16 @@ BASH_CASES = [
     ("python3 ~/Brain/_bin/files.py put deck.pdf --to 10-Projects/x.md --project demo --caption \"cp of the deck\"",
      None, "files.py is a sanctioned writer"),
     ("python3 _bin/vault_sync.py", None, "vault_sync is allowed"),
+    # A sanctioned writer exempts only its own segment: one mention of `git` anywhere used
+    # to waive the entire command, so a raw write riding alongside it passed.
+    ("cp /tmp/x.md 10-Projects/note.md && git add -A", "10-Projects",
+     "a raw write is not waived by a git call beside it"),
+    ("echo hi >> 10-Projects/x.md ; python3 _bin/vw.py append 10-Projects/x.md", "10-Projects",
+     "nor by a vw.py call sequenced after it"),
+    ("echo hi >> 10-Projects/x.md\npython3 _bin/files.py put a.pdf", "10-Projects",
+     "nor by a files.py call on the next line"),
+    ("python3 _bin/vw.py append 10-Projects/x.md --sid abc && git commit -m x", None,
+     "two sanctioned segments are still allowed"),
     ("echo hi > 30-Knowledge/x.md", None, "an unprotected folder"),
     ("", None, "empty command"),
     (None, None, "no command"),

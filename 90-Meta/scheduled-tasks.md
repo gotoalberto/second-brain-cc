@@ -115,11 +115,22 @@ resolves.
 
 ## Adding a machine
 
-Nothing to configure in the vault: the registry is already shared. On the new machine run the first
-run, accept the tasks job for its scheduler, use its `hostname -s` in the `machine` column of the rows
-it should own, and check with `tasks.py --list`. Pin an agent task to it only once
-`python3 ~/Brain/_bin/routine_requires.py here --fix` shows that task ✓ there: `--fix` clones a
-missing repo that has a url, and a missing program is yours to install.
+Nothing to configure in the vault: the registry is already shared. On the new machine:
+
+1. Run the first run and accept the tasks job for its scheduler.
+2. Take the stable machine id for the `machine` column, not `hostname -s`. Two machines can report
+   the same hostname, and a hostname can change. `tasks.py --list` prints on its second line what
+   this host matches as: its hostname and its stable key (`python3 ~/Brain/_bin/machine_identity.py`
+   prints the key alone). The hostname still works in the column and is easier to read, but it is
+   the one that can change under you.
+3. Check with `tasks.py --list` that the machine sees only its own rows as its own.
+
+Pin an agent task to it only once `python3 ~/Brain/_bin/routine_requires.py here --fix` shows that
+task ✓ there: `--fix` clones a missing repo that has a url, and a missing program is yours to install.
+
+`tasks.py --force <id>` runs a task now but still respects the `machine` column: a task pinned to
+another machine is refused (exit 3) unless `--anywhere` is passed, so a manual run cannot make a task
+that posts somewhere post twice.
 
 ## Design notes
 

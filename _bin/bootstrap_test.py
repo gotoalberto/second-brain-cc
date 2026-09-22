@@ -27,9 +27,9 @@ def check(name, cond, detail=""):
 def main():
     script_path = os.path.join(REPO, "bootstrap.sh")
     script = open(script_path, encoding="utf-8").read()
-    reaches = [w for w in ("op account", "op signin", "1password", "launchctl", "systemctl", "crontab ")
+    reaches = [w for w in ("launchctl", "systemctl", "crontab ")
                if w in script.lower()]
-    check("bootstrap.sh never calls 1Password or a scheduler", reaches == [], reaches)
+    check("bootstrap.sh never calls a scheduler", reaches == [], reaches)
     check("it checks for keepassxc-cli and offers the first run",
           "keepassxc-cli" in script and "integrations/first-run/setup.sh" in script)
     if reaches:

@@ -16,9 +16,10 @@ Pass it, in the delegation message:
   project.
 - **What is still open** and what is blocking it.
 - **Files produced in the session**: every deliverable, intermediate and source file that
-  exists only outside the vault (a scratch directory, `/tmp`, a worktree about to be removed).
-  For each one: absolute path, kind (deliverable, intermediate or material), the project slug
-  and a one-line caption. Skip only what already lives in a git repository that will survive,
+  exists only outside the vault (a scratch directory, `/tmp`, a worktree about to be removed,
+  files sent to the user, for example with SendUserFile). For each one: absolute path, kind
+  (deliverable, intermediate or material), the project slug and a one-line caption.
+  Transcripts, generated HTML, PDFs, screenshots and datasets all count. Skip only what already lives in a git repository that will survive,
   or a raw download that can be fetched again (name where it lives instead).
   Build this list yourself before delegating: look back over the session and list the scratch
   directory. The librarian cannot see it and will not know those files exist unless you say so.
@@ -32,6 +33,10 @@ The librarian stores every listed file in the local files directory chosen durin
 python3 ~/Brain/_bin/files.py put <file...> --to <note it wrote or updated> \
   --project <slug> --kind deliverable|intermediate|material --caption "what it is"
 ```
+
+`--to` is the note that explains the files, usually the one it just created. If no active
+project fits, use a short descriptive slug (for example `team-meetings`); the slug is a folder in
+the files directory, not a vault project, so it needs no new project note.
 
 When it returns, verify with `python3 ~/Brain/_bin/files.py ls --project <slug>` that every file
 is there, and store what is missing yourself. If `files.py` says no files directory is configured,

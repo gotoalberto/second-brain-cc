@@ -39,6 +39,14 @@ nobody invokes is worse than having none.
 5. Open the entry `~/Brain/40-Skills/<name>.md` and fill in, **below the
    `<!-- AUTO:END -->` marker**, the real case the skill was born from. Everything above
    it is regenerated automatically.
+6. **Portable across machines.** The vault supports macOS and Linux, and any skill may end up
+   running on either, interactively or inside a scheduled task. So: commands use `~/...` paths
+   and bare program names (`python3`, never `/opt/homebrew/bin/python3` or `/Users/<name>`); no
+   macOS-only tool (the clipboard, `ioreg`, the keychain) without saying so in the description and
+   giving the Linux path; every repository, program and dependency folder the skill needs is
+   written in the skill (a repository with its clone url), so the scheduled task that uses it can
+   list it in `requires:`. Check a command on both systems when you can. Detail:
+   `~/Brain/30-Knowledge/2026-09-21-convention-scheduled-task-resources-checked-per-machine.md`.
 
 Return: the skill name, its path, and in one sentence which recurring problem it solves.
 

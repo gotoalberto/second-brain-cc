@@ -11,6 +11,45 @@ import brainlib as B
 
 AUTO_BEGIN, AUTO_END = "<!-- AUTO:BEGIN -->", "<!-- AUTO:END -->"
 HOME = os.path.expanduser("~")
+EXCERPT_CHARS = 1200
+CUT_MARK = "[…]"
+
+
+def excerpt(body, limit=EXCERPT_CHARS):
+    """The start of a skill's instructions, cut where a reader expects a cut.
+
+    It was `body[:1200]`: every note ended mid-word, often with a dangling `**`, which read
+    as a corrupt file, and a hand repair was undone by the next SessionStart. Cut at the
+    last line that fits (a word, if one line alone is longer) and say it was cut.
+    """
+    body = body.strip()
+    if len(body) <= limit:
+        return body
+    head = body[:limit + 1]
+    cut = head.rfind("\n")
+    if cut <= 0:
+        cut = head.rfind(" ")
+    if cut <= 0:
+        cut = limit
+    return body[:cut].rstrip() + "\n" + CUT_MARK
+
+
+def fence_for(text):
+    """A code fence no backtick run inside `text` can close."""
+    run = longest = 0
+    for ch in text:
+        run = run + 1 if ch == "`" else 0
+        longest = max(longest, run)
+    return "`" * max(3, longest + 1)
+
+
+def machine_key():
+    """This machine's stable key (machine_identity), or "" when it cannot be read."""
+    try:
+        import machine_identity
+        return machine_identity.current_key()
+    except Exception:
+        return ""
 
 
 def sources(cwd=None):
@@ -56,7 +95,7 @@ def collect(cwd=None):
             "tools": str(meta.get("allowed-tools") or ""),
             "ctx": str(meta.get("context") or ""), "agent": str(meta.get("agent") or ""),
             "model": str(meta.get("model") or ""), "path": path, "scope": scope_of(path),
-            "body": body.strip()[:1200],
+            "body": excerpt(body),
         })
     return skills
 
@@ -83,8 +122,13 @@ def write_index(skills):
              "title: Skills catalogue (%s)" % maq,
              "type: meta", "area: [infra-personal]", "projects: [brain]",
              "tags: [skills, catalogo]", "status: active", "confidence: high",
-             "source: agent", "provenance: skills_index.py", "maquina: " + maq,
-             "updated: " + today,
+             "source: agent", "provenance: skills_index.py", "maquina: " + maq]
+    # The hostname in the file name can be shared by two machines and can change; the key
+    # says which machine really wrote this index.
+    key = machine_key()
+    if key:
+        lines.append("machine_key: " + key)
+    lines += ["updated: " + today,
              "supersedes: []", "---", "",
              "Skills installed on **%s**. Regenerated automatically. "
              "**Do not edit by hand.**" % maq, "",
@@ -94,7 +138,7 @@ def write_index(skills):
         one = (s["desc"] or s["when"] or "").replace("\n", " ").strip()
         if len(one) > 150:
             one = one[:147] + "..."
-        lines.append("- `/%s` (%s) — %s" % (s["name"], s["scope"], one))
+        lines.append("- `/%s` (%s): %s" % (s["name"], s["scope"], one))
     lines.append("")
     lines.append("One note per skill in `40-Skills/<name>.md`.")
     B.atomic_write(index_path(), "\n".join(lines) + "\n")
@@ -118,7 +162,8 @@ def write_note(s):
     if extra:
         auto += ["**Config**: " + " · ".join(extra), ""]
     if s["body"]:
-        auto += ["**Instructions (excerpt)**", "```", s["body"], "```", ""]
+        fence = fence_for(s["body"])
+        auto += ["**Instructions (excerpt)**", fence, s["body"], fence, ""]
     auto.append(AUTO_END)
     auto_block = "\n".join(auto)
 
@@ -162,6 +207,52 @@ def remove_old_index():
         return False
 
 
+STALE_INDEX_DAYS = 7
+
+
+def retire_stale_indexes(days=STALE_INDEX_DAYS, today=None):
+    """Marks `status: superseded` every machine index nobody has regenerated in `days`.
+
+    Each machine rewrites its own index on every SessionStart, so one untouched for a week
+    belongs to a machine that is gone or renamed, and agents kept reading it as current.
+    The file is never deleted (notes are superseded, not removed), and only files carrying
+    our provenance are touched. The one this machine writes is skipped whatever its date.
+    """
+    import datetime as _dt
+    today = today or _dt.date.today()
+    mine = os.path.abspath(index_path())
+    folder = os.path.join(B.VAULT, "40-Skills")
+    retired = []
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        return retired
+    for name in names:
+        if not (name.startswith("INDEX-") and name.endswith(".md")):
+            continue
+        path = os.path.join(folder, name)
+        if os.path.abspath(path) == mine:
+            continue
+        try:
+            text = open(path, errors="replace").read()
+            meta, _ = B.parse_frontmatter(text)
+            if meta.get("provenance") != "skills_index.py" or meta.get("status") != "active":
+                continue
+            updated = _dt.date.fromisoformat(str(meta.get("updated"))[:10])
+            if (today - updated).days < days:
+                continue
+            head, sep, body = text.partition("\n---\n")
+            head = head.replace("\nstatus: active", "\nstatus: superseded", 1)
+            note = ("> **Superseded** on %s: no machine has regenerated this index in %d "
+                    "days. Read the index of a machine that is still active.\n\n"
+                    % (today.isoformat(), days))
+            B.atomic_write(path, head + sep + "\n" + note + body.lstrip("\n"))
+            retired.append(name)
+        except Exception as e:
+            B.log_error("skills_index.retire_stale_indexes", e)
+    return retired
+
+
 @B.heartbeat("skills-catalogue")
 @B.fail_open
 def main():
@@ -170,6 +261,7 @@ def main():
     skills = collect(cwd)
     write_index(skills)
     retirado = remove_old_index()
+    retire_stale_indexes()
     for s in skills:
         write_note(s)
     # Skills not installed HERE are no longer flipped to `status: archived`: each machine

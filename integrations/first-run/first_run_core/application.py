@@ -76,6 +76,9 @@ def _kdbx(c):
     path = c.ask_until("  Database path", lambda v: bool(v), D.default_kdbx_path(p.platform, p.home))
     create = False
     if not p.kdbx.exists(path):
+        p.prompt.say("  If your database already lives on another machine, do not create a new one: run "
+                     "python3 _bin/handoff.py issue there and python3 _bin/handoff.py redeem '<TOKEN>' here, "
+                     "then run the first run again.")
         if not p.prompt.yes_no("  %s does not exist. Create it now? keepassxc-cli asks for its master password" % path,
                                True):
             return c.declined("kdbx", reason="no database to use")
@@ -267,14 +270,15 @@ def _remote_control(c):
         return c.failed("remote_control", "; ".join(blocking))
     label = c.ask_until("  Name this machine shows under Remote Control", D.valid_label, p.remote.default_label(),
                         "letters, digits, dots, dashes and underscores")
-    path = c.ask_until("  Dedicated git repository to serve from (not the vault; created if missing)", lambda v: bool(v),
-                       D.default_remote_dir(p.home, label, p.remote.vault()), "a directory is required")
+    path = c.ask_until("  Working directory sessions open in (the home directory, or a folder of its own; not the "
+                       "vault)", lambda v: bool(v), D.default_remote_dir(p.home, label, p.remote.vault()),
+                       "a directory is required")
     p.prompt.say("  This is what would be installed:\n%s" % p.scheduler.preview(kind, [D.REMOTE_CONTROL_JOB]))
     if c.dry_run:
-        p.prompt.say("  Dry run: %s would be created as a git repository and recorded, and the server installed."
-                     % path)
+        p.prompt.say("  Dry run: %s would be recorded as the working directory (created if missing), and the server "
+                     "installed." % path)
         return
-    if not p.prompt.yes_no("  Set it up now: the repository, one start in this terminal, then the supervisor?", False):
+    if not p.prompt.yes_no("  Set it up now: the directory, one start in this terminal, then the supervisor?", False):
         return c.declined("remote_control", kind=kind)
     good, detail = p.remote.prepare(path)
     if not good:

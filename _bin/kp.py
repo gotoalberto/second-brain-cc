@@ -6,7 +6,8 @@ that resolve against a local KeePass database (.kdbx) chosen by its owner at fir
 (`kp.py init --db PATH`, or BRAIN_KP_DB). macOS and Linux.
 
   kp.py status                      state of the kdbx, the lock and the cache
-  kp.py init --db PATH [--create]   record (or create) the database this machine uses
+  kp.py init --db PATH [--keyfile PATH] [--create [--no-password]]
+                                    record (or create) the database this machine uses
   kp.py unlock [--ttl 365d]         arm the master cache for 365 days (to work remotely later)
   kp.py lock                        forget the cached master
   kp.py ls [group] [-R]             list entries (never secrets)
@@ -36,6 +37,10 @@ except Exception:                                   # kp.py must work without th
     STATE = os.path.join(os.path.expanduser("~"), ".claude", "state", "brain")
 
 import kp_backend as KPB                            # backend resolution and argv translation
+try:
+    import machine_identity as MI                   # whose lock is it, beyond the hostname
+except Exception:                                   # kp.py must work on its own
+    MI = None
 
 # The harness redirects state to a temp dir: that way no test writes (or deletes) backups
 # backups under $HOME.
@@ -66,6 +71,10 @@ def resolve_db(environ, config):
 _CFG     = load_config()
 DB       = resolve_db(os.environ, _CFG)
 KEYFILE  = os.environ.get("BRAIN_KP_KEYFILE") or os.path.expanduser(str(_CFG.get("keyfile") or ""))
+# A store may have no master at all: the key file is the whole key, the same trust model as
+# an SSH private key. That is found out by trying once (see `keyfile_only`); this variable
+# skips the probe on a machine where it is known and the probe would be wasted.
+NO_PASSWORD = os.environ.get("BRAIN_KP_NO_PASSWORD") in ("1", "true", "yes")
 # Backend and binary: kp_backend._resolve() (BRAIN_KP_BACKEND, then shutil.which(), then a
 # short fallback list) is the single place that owns this precedence now; kp.py only adds its
 # own long-standing BRAIN_KP_CLI override on top, and only for keepassxc-cli — kp_backend's
@@ -100,6 +109,14 @@ KEEP_BACKUPS = 40
 # than this untouched
 # is treated as stale. At 0 the automation is off and every lock needs a human hand.
 LOCK_STALE_H = float(os.environ.get("BRAIN_KP_LOCK_STALE_H") or 12)
+# kp.py writes a 4th line into its lock, this tag plus the machine key, so that a lock is
+# judged by WHICH machine took it and not by hostname: two machines can share a hostname,
+# and a kdbx in a synced folder shows both of them the same lock. Judged by hostname alone,
+# a twin's dead pid read as our own dead process and the lock was cleared under a live write.
+BRAIN_LOCK_TAG = "brain:"
+# kp.py holds its lock for one write (backup, write, verify): well under a minute. A kp.py
+# lock older than this is a killed process on whichever machine, whether or not it answers.
+BRAIN_LOCK_STALE_S = float(os.environ.get("BRAIN_KP_BRAIN_LOCK_STALE_S") or 1800)
 
 EXIT_NOMASTER = 4                                   # the agent can tell "master missing" apart
 EXIT_LOCKED   = 5                                   # the database is open elsewhere
@@ -180,18 +197,25 @@ def db_ok(need_write=False):
 
 
 def lock_info():
-    """KeePassXC leaves `.<name>.lock` beside the database: pid, user, host."""
+    """KeePassXC leaves `.<name>.lock` beside the database: pid, user (the app), host, and on
+    a 4th line the machine's unique id (Qt's QLockFile). kp.py writes the same shape with its
+    own tag and the machine key on that 4th line."""
     p = os.path.join(os.path.dirname(DB), "." + os.path.basename(DB) + ".lock")
     if not os.path.exists(p):
         return None
     try:
         lines = open(p, errors="replace").read().split("\n")
+        tag = lines[3].strip() if len(lines) > 3 else ""
+        ours = tag.startswith(BRAIN_LOCK_TAG)
         return {"path": p, "pid": lines[0].strip(),
                 "user": lines[1].strip() if len(lines) > 1 else "?",
                 "host": lines[2].strip() if len(lines) > 2 else "?",
+                "machine": tag[len(BRAIN_LOCK_TAG):] if ours else "",
+                "qt_machine": "" if ours else tag,
                 "age": int(time.time() - os.path.getmtime(p))}
     except Exception:
-        return {"path": p, "pid": "?", "user": "?", "host": "?", "age": -1}
+        return {"path": p, "pid": "?", "user": "?", "host": "?", "machine": "",
+                "qt_machine": "", "age": -1}
 
 
 def lock_path():
@@ -200,6 +224,43 @@ def lock_path():
 
 def _host():
     return socket.gethostname().split(".")[0]
+
+
+def _machine_key():
+    """This machine's key (`<hostname>-<8hex>`), or the hostname when machine_identity is missing."""
+    try:
+        return MI.current_key() if MI else _host()
+    except Exception:
+        return _host()
+
+
+def _machine_uuid():
+    """The id KeePassXC writes into its lock: /etc/machine-id on Linux, IOPlatformUUID on macOS."""
+    try:
+        return MI.read_uuid(sys.platform, MI._run, open) if MI else ""
+    except Exception:
+        return ""
+
+
+def _same_id(a, b):
+    ha = re.sub(r"[^0-9a-f]", "", (a or "").lower())
+    hb = re.sub(r"[^0-9a-f]", "", (b or "").lower())
+    return bool(ha) and ha == hb
+
+
+def _key_is_mine(value):
+    """Does this kp.py lock key name this machine? machine_is_mine() accepts every form this
+    machine has written, including one from before a rename. The bare hostname is the one form
+    it accepts that a twin can also write, so it counts only while our own key is bare too."""
+    mine = _machine_key()
+    if MI is None:
+        return value == mine
+    if value.strip().casefold() == _host().casefold() and mine.casefold() != _host().casefold():
+        return False
+    try:
+        return MI.machine_is_mine(value)
+    except Exception:
+        return value == mine
 
 
 def pid_alive(pid):
@@ -234,7 +295,18 @@ def lock_state():
     lk = lock_info()
     if not lk:
         return {"status": "free"}
-    if lk["host"] == _host():
+    if lk.get("machine"):
+        # Written by kp.py: the machine key settles whose it is, hostname twins included.
+        own = _key_is_mine(lk["machine"])
+    elif lk.get("qt_machine"):
+        # KeePassXC names the machine too: compare it with this machine's own id.
+        own = _same_id(lk["qt_machine"], _machine_uuid())
+    else:
+        # Only a hostname to go on. Two machines can share it, so a dead pid proves nothing:
+        # the lock is ours only while its pid is alive here. A dead one of ours is then
+        # cleared by hand (`kp.py locks --clear`) or by age, never by guessing whose it was.
+        own = lk["host"] == _host() and pid_alive(lk["pid"])
+    if own:
         lk["reach"] = "local"
         lk["status"] = "own-alive" if pid_alive(lk["pid"]) else "own-dead"
     else:
@@ -245,8 +317,8 @@ def lock_state():
 
 
 def lock_who(lk):
-    return "%s@%s (pid %s, for %.1f h)" % (lk["user"], lk["host"], lk["pid"],
-                                                  lk["hours"])
+    return "%s@%s (pid %s, for %.1f h)" % (lk["user"], lk.get("machine") or lk["host"],
+                                           lk["pid"], lk["hours"])
 
 
 def lock_stale(lk):
@@ -254,11 +326,16 @@ def lock_stale(lk):
 
     Only the provable or the very improbable is automated:
       - a process on this machine that no longer exists: direct proof,
+      - a kp.py lock from another machine older than any kp.py write lasts (30 min),
       - a machine whose name does not even resolve and has been idle half a day.
     A lock from a machine that answers is NEVER cleared automatically: it may be real,
     and two clients writing at once clobber each other."""
     if lk["status"] == "own-dead":
         return "process %s belonged to this machine and no longer exists" % lk["pid"]
+    if (lk.get("machine") and lk["status"].startswith("foreign")
+            and lk["age"] > BRAIN_LOCK_STALE_S):
+        return ("kp.py on %s took it %.0f min ago, and a kp.py write never lasts that long"
+                % (lk["machine"], lk["age"] / 60.0))
     if (lk["status"] == "foreign-doubtful" and LOCK_STALE_H > 0
             and lk["hours"] > LOCK_STALE_H):
         return ("\"%s\" does not resolve on this network and the lock has been idle %.1f h"
@@ -392,9 +469,10 @@ def write_lock():
             # Marking it up front, the finally clears it even if the write is cut short.
             own = True
             try:
-                os.write(fd, ("%d\n%s\n%s\n" % (os.getpid(),
-                                                os.environ.get("USER", "?"),
-                                                _host())).encode())
+                os.write(fd, ("%d\n%s\n%s\n%s%s\n" % (os.getpid(),
+                                                      os.environ.get("USER", "?"),
+                                                      _host(), BRAIN_LOCK_TAG,
+                                                      _machine_key())).encode())
             except Exception:
                 pass
             finally:
@@ -478,8 +556,8 @@ def cache_fresh(meta):
 def cache_get():
     """Read the master from the Keychain if the cache is still fresh."""
     meta = _meta_read().get(_acct()) or {}
-    vigente, _ = cache_fresh(meta)
-    if not vigente:
+    fresh, _ = cache_fresh(meta)
+    if not fresh:
         if meta:
             cache_del()          # after a reboot, ignoring it is not enough: it is deleted
         return None
@@ -784,17 +862,63 @@ def refresh_work_copy():
     shutil.copy2(DB, DBF[0])
 
 
-def _probe(pw, path):
+def _probe(pw, path, no_password=None):
     """Does the master open this file at all? `unlocked()` calls this directly, ahead of
     every command, so it has to speak whichever backend is in use — the "ls" translation is
     always available (one of the six), so this doubles as the kpcli backend's master check.
     """
     if KIND == "kpcli":
-        return KPB.run(KIND, CLI, ["ls", path], path, pw, timeout=CLI_TIMEOUT,
-                       pwfile_dir=os.path.join(STATE, "kp-pwfiles"))
-    return subprocess.run([CLI, "ls", "-q"] + (["-k", KEYFILE] if KEYFILE else []) + [path],
-                          timeout=CLI_TIMEOUT, input=pw + "\n",
+        return KPB.run(KIND, CLI, ["ls"] + _key_args(no_password) + [path], path, pw or "",
+                       timeout=CLI_TIMEOUT, pwfile_dir=os.path.join(STATE, "kp-pwfiles"))
+    return subprocess.run([CLI, "ls", "-q"] + _key_args(no_password) + [path],
+                          timeout=CLI_TIMEOUT, input=_master_stdin(pw, no_password),
                           capture_output=True, text=True)
+
+
+#: Unknown (None), yes or no. Once decided it shapes every argv below, so it is decided once.
+_NOPW = [True if (NO_PASSWORD and KEYFILE) else None]
+
+
+def _key_args(no_password=None):
+    """The flags that say how the database is keyed, for every call that opens it.
+
+    `--no-password` is what stops keepassxc-cli waiting on stdin for a master the store does
+    not have; kp_backend reads the same flag to leave the kpcli helper's password empty."""
+    args = ["-k", KEYFILE] if KEYFILE else []
+    if KEYFILE and (_NOPW[0] if no_password is None else no_password):
+        args.append("--no-password")
+    return args
+
+
+def _master_stdin(master, no_password=None):
+    """What goes on stdin ahead of anything else: the master and a newline, or nothing at all
+    for a keyfile-only store. A bare newline there would be read as the next secret."""
+    if KEYFILE and (_NOPW[0] if no_password is None else no_password):
+        return ""
+    return (master or "") + "\n"
+
+
+def keyfile_only():
+    """Is the key file the WHOLE key of this store?
+
+    A store meant for a headless machine (no dialog, no keyring) can be created with a key file
+    and no password: possession of the file is the access. Asking for a master there would end
+    in EXIT_NOMASTER and send whoever reads it looking for a password nobody ever set.
+
+    Answered by trying once with `--no-password`, not by configuration, so a store with a
+    password AND a key file keeps working on the same code path. BRAIN_KP_NO_PASSWORD=1 skips
+    the probe."""
+    if not KEYFILE:
+        return False
+    if _NOPW[0] is None:
+        p = _probe("", DBF[0], no_password=True)
+        if (p.returncode != 0 and DBF[0] == DB
+                and not re.search(_BAD_KEY, (p.stderr or p.stdout or ""))):
+            local_copy = work_copy()       # the same fallback unlocked() takes for a drive
+            if local_copy:
+                p = _probe("", local_copy, no_password=True)
+        _NOPW[0] = p.returncode == 0
+    return _NOPW[0]
 
 
 def probe_real(pw):
@@ -843,14 +967,12 @@ def cli(args, master, extra_stdin="", check=True):
     """
     if KIND == "kpcli":
         return _cli_kpcli(args, master, extra_stdin, check)
-    cmd = [CLI, args[0], "-q"]
-    if KEYFILE:
-        cmd += ["-k", KEYFILE]
+    cmd = [CLI, args[0], "-q"] + _key_args()
     # The call sites name `DB`, which is the real database. What is handed to
     # `keepassxc-cli` is whatever it can actually open, and here is the single place
     # that knows the difference.
     cmd += [DBF[0] if a == DB else a for a in args[1:]]
-    stdin = master + "\n" + extra_stdin
+    stdin = _master_stdin(master) + extra_stdin
     _t0 = time.time()
     try:
         # ALWAYS capped. The database lives on an SMB mount: if the network drops halfway
@@ -889,8 +1011,9 @@ def _cli_kpcli(args, master, extra_stdin, check):
     """
     _t0 = time.time()
     try:
-        p = KPB.run(KIND, CLI, args, DB, master, stdin_extra=extra_stdin, timeout=CLI_TIMEOUT,
-                   pwfile_dir=os.path.join(STATE, "kp-pwfiles"))
+        p = KPB.run(KIND, CLI, [args[0]] + _key_args() + list(args[1:]), DB, master or "",
+                    stdin_extra=extra_stdin, timeout=CLI_TIMEOUT,
+                    pwfile_dir=os.path.join(STATE, "kp-pwfiles"))
     except KPB.Unsupported as exc:
         die("kp_backend: \"%s\" is not one of the operations available with the kpcli "
             "backend (only ls, search, show, mkdir, add, edit are). Switch to keepassxc-cli "
@@ -930,14 +1053,12 @@ def cli_clip(entry, attr, seconds, master):
     if KIND == "kpcli":
         die("kp_backend: clipboard copying is not available with the kpcli backend. Use "
             "`kp.py get <entry> --show` or `--pipe <cmd>` instead.", EXIT_NODB)
-    cmd = [CLI, "clip", "-q"]
-    if KEYFILE:
-        cmd += ["-k", KEYFILE]
+    cmd = [CLI, "clip", "-q"] + _key_args()
     cmd += ["-a", attr, DBF[0], entry, str(seconds)]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, start_new_session=True)
     try:
-        proc.stdin.write(master + "\n"); proc.stdin.flush()
+        proc.stdin.write(_master_stdin(master)); proc.stdin.flush()
     except Exception:
         pass
     try:
@@ -951,8 +1072,11 @@ def cli_clip(entry, attr, seconds, master):
 
 
 def unlocked(interactive=True):
-    """Returns a master already validated against the database."""
+    """Returns a master already validated against the database, or None when the store has none
+    (the key file is the whole key: nothing to ask for and nothing to cache)."""
     db_ok()
+    if keyfile_only():
+        return None
     # The local copy stays a FALLBACK, taken only when the direct read fails. Making it
     # unconditional was tried once and reverted the same hour: the copy is taken
     # while resolving the master, which happens BEFORE `write_lock()`, so three
@@ -1150,10 +1274,11 @@ def ensure_group(pw, group):
 
 def exists(pw, entry):
     if KIND == "kpcli":
-        return KPB.run(KIND, CLI, ["show", DB, entry], DB, pw, timeout=CLI_TIMEOUT,
+        return KPB.run(KIND, CLI, ["show"] + _key_args() + [DB, entry], DB, pw or "",
+                       timeout=CLI_TIMEOUT,
                        pwfile_dir=os.path.join(STATE, "kp-pwfiles")).returncode == 0
-    return subprocess.run([CLI, "show", "-q"] + (["-k", KEYFILE] if KEYFILE else []) +
-                          [DB, entry], input=pw + "\n", timeout=CLI_TIMEOUT,
+    return subprocess.run([CLI, "show", "-q"] + _key_args() + [DBF[0], entry],
+                          input=_master_stdin(pw), timeout=CLI_TIMEOUT,
                           capture_output=True, text=True).returncode == 0
 
 
@@ -1221,13 +1346,17 @@ def cmd_status(a):
               ("STALE, will clear itself on write" if reason
                else "blocks writing (kp.py locks)")))
     meta = _meta_read().get(_acct()) or {}
-    vigente, reason = cache_fresh(meta)
-    if vigente and meta.get("exp"):
+    fresh, reason = cache_fresh(meta)
+    if _status_keyfile_only():
+        # Said plainly: on a keyfile-only store "master: not available" reads as a fault and
+        # sends whoever is looking hunting for a password nobody ever set.
+        print("master     : not used, the keyfile is the whole key of this store")
+    elif fresh and meta.get("exp"):
         left = int(meta["exp"] - time.time())
         print("master     : cached for %dd %dh %dm more, until %s (all Claude sessions)"
               % (left // 86400, left % 86400 // 3600, left % 3600 // 60,
                  time.strftime("%d/%m/%Y %H:%M", time.localtime(meta["exp"]))))
-    elif vigente:
+    elif fresh:
         try:
             boot = time.strftime("%d/%m %H:%M", time.localtime(float(meta.get("boot") or 0)))
         except ValueError:
@@ -1237,16 +1366,38 @@ def cmd_status(a):
     else:
         print("master     : not available — %s (will be asked for: %s)" % (reason, dialog_backend(PLATFORM, os.environ, shutil.which)))
     print("group      : %s/  (everything Claude writes goes inside)" % GROUP_DEF)
-    print("keyfile    : %s" % (KEYFILE or "none"))
-    print("cli        : %s" % CLI)
+    print("keyfile    : %s%s" % (KEYFILE or "none",
+                                  " (MISSING)" if KEYFILE and not os.path.exists(KEYFILE) else ""))
+    print("cli        : %s (%s backend)" % (CLI, KIND))
     n = len([f for f in os.listdir(BACKUPS) if f.endswith(".kdbx")]) if os.path.isdir(BACKUPS) else 0
     print("backups    : %d in %s" % (n, BACKUPS))
 
 
+def _status_keyfile_only():
+    """keyfile_only() for `status`, which must not die: only asked when there is a key file,
+    a database and a client to ask, and any failure reads as "no"."""
+    if not (KEYFILE and os.path.exists(KEYFILE) and os.path.exists(DB)
+            and (os.path.exists(CLI) or shutil.which(CLI))):
+        return False
+    try:
+        return bool(keyfile_only())
+    except (Exception, SystemExit):
+        return False
+
+
 def cmd_init(a):
-    """Record which database this machine uses, in <state>/kp-config.json (0600). With --create, make
-    a new empty database there first: keepassxc-cli db-create asks for the master on the terminal."""
+    """Record which database this machine uses, and its key file if it has one, in
+    <state>/kp-config.json (0600). Nothing is asked, so a setup script can run it.
+
+    With --create, make a new empty database there first with keepassxc-cli db-create: it asks
+    for the master on the terminal (or reads it twice from stdin). With --keyfile the database
+    also gets that key file, created by db-create when it does not exist yet. With --keyfile and
+    --no-password it gets the key file alone: a keyfile-only store, for a machine where nobody
+    can type a master."""
     path = os.path.abspath(os.path.expanduser(a.db))
+    keyfile = os.path.abspath(os.path.expanduser(a.keyfile)) if a.keyfile else ""
+    if a.no_password and not keyfile:
+        die("--no-password needs --keyfile: without a password the key file is the whole key")
     if a.create and not os.path.exists(path):
         if KIND == "kpcli":
             die("kp_backend: creating a new database (`kp.py init --create`) is not "
@@ -1257,16 +1408,27 @@ def cmd_init(a):
         if not (os.path.exists(CLI) or shutil.which(CLI)):
             die("keepassxc-cli not found", EXIT_NODB)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        p = subprocess.run([CLI, "db-create", "-p", path])
+        new_key = bool(keyfile) and not os.path.exists(keyfile)
+        cmd = [CLI, "db-create"]
+        if keyfile:
+            os.makedirs(os.path.dirname(keyfile), exist_ok=True)
+            cmd += ["--set-key-file", keyfile]
+        if not a.no_password:
+            cmd += ["-p"]
+        p = subprocess.run(cmd + [path])
         if p.returncode != 0 or not os.path.exists(path):
             die("could not create %s" % path, EXIT_NODB)
-        print("created    : %s" % path)
+        print("created    : %s%s" % (path, " (keyfile-only)" if a.no_password else ""))
+        if new_key and os.path.exists(keyfile):
+            print("keyfile    : %s (new: keep a copy somewhere safe, it is part of the key)" % keyfile)
     elif not os.path.exists(path):
-        sys.stderr.write("kp: note — %s does not exist yet (pass --create to make it)\n" % path)
+        sys.stderr.write("kp: note: %s does not exist yet (pass --create to make it)\n" % path)
+    if keyfile and not os.path.exists(keyfile):
+        sys.stderr.write("kp: note: the key file %s does not exist yet\n" % keyfile)
     cfg = load_config()
     wanted = dict(cfg, db=path)
-    if a.keyfile:
-        wanted["keyfile"] = os.path.abspath(os.path.expanduser(a.keyfile))
+    if keyfile:
+        wanted["keyfile"] = keyfile
     if a.group:
         wanted["group"] = a.group
     if wanted == cfg:
@@ -1284,6 +1446,10 @@ def cmd_init(a):
 
 def cmd_unlock(a):
     pw = unlocked()
+    if pw is None:
+        print("nothing to unlock: the keyfile is the whole key of this store, there is no master\n"
+              "to ask for or cache.")
+        return
     cache_put(pw, _TTL[0])
     if _TTL[0]:
         print("armed until %s (%s)." % (
@@ -1715,7 +1881,10 @@ def main():
     sub.add_parser("status").set_defaults(fn=cmd_status)
     i = sub.add_parser("init", help="record (or create) the database this machine uses")
     i.add_argument("--db", required=True); i.add_argument("--keyfile"); i.add_argument("--group")
-    i.add_argument("--create", action="store_true"); i.set_defaults(fn=cmd_init)
+    i.add_argument("--create", action="store_true")
+    i.add_argument("--no-password", action="store_true",
+                   help="with --create and --keyfile: the key file is the whole key, no master")
+    i.set_defaults(fn=cmd_init)
     u = sub.add_parser("unlock")
     u.add_argument("--ttl", dest="ttl_sub", default=None,   # also after the subcommand:
                    help="how long the cache lasts (900, 30m, 8h, 365d; default 365d)")  # that is how it is documented

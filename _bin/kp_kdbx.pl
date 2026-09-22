@@ -22,7 +22,11 @@
 #     edit    --entry ENTRY [--user U] [--url U] [--notes N] [--stdin-secret] [--generate [--length N]]
 #
 # The master password is read from --pwfile (a private 0600 temp file kp_backend.py writes
-# and shreds — never argv, never the environment). --stdin-secret means: read a NEW secret
+# and shreds: never argv, never the environment). A key FILE, when the store has one, is
+# named by BRAIN_KP_KEYFILE in the environment: it is a path, not a secret. The key is then
+# the master and the key file together, or the key file alone when the password file is
+# empty. An empty password next to a key file is NOT the key file alone: File::KDBX treats
+# "" as a real password and the composite fails the header check, so it is dropped. --stdin-secret means: read a NEW secret
 # from stdin. kp_backend.py's split_confirmation() has ALREADY collapsed kp.py's
 # `given\ngiven\n` double-write onto stdin before this runs — this script reads stdin as one
 # value, nothing more, and must never re-implement that fix itself.
@@ -49,7 +53,9 @@ BEGIN {
     if (!defined($extra) || $extra eq '') {
         $extra = ($ENV{HOME} || '') . '/perl5/lib/perl5';
     }
-    unshift @INC, $extra if -d $extra;
+    # `lib` rather than a bare unshift: it also adds the architecture directory, where
+    # cpanm puts the compiled modules File::KDBX needs (CryptX and friends).
+    if (-d $extra) { require lib; lib->import($extra); }
 }
 
 my $HAVE_KDBX = eval { require File::KDBX; File::KDBX->import; 1 };
@@ -120,9 +126,22 @@ my $master = do {
     $pw =~ s/\n\z//;
     $pw;
 };
-fail("empty master password") unless length($master);
+my $keyfile = $ENV{BRAIN_KP_KEYFILE};
+$keyfile = '' unless defined($keyfile);
+fail("empty master password and no key file") unless length($master) || length($keyfile);
 
-my $kdbx = eval { File::KDBX->load_file($db, $master) };
+# File::KDBX takes a bare string (password only), a Key::File (key file only) or an
+# arrayref of both. The same $key opens the store and saves it back.
+my $key = $master;
+if (length($keyfile)) {
+    fail("the key file does not exist: $keyfile") unless -e $keyfile;
+    eval { require File::KDBX::Key::File; 1 }
+        or fail("File::KDBX::Key::File is not installed; it ships with File::KDBX");
+    my $kf = File::KDBX::Key::File->new($keyfile);
+    $key = length($master) ? [$master, $kf] : $kf;
+}
+
+my $kdbx = eval { File::KDBX->load_file($db, $key) };
 if (!$kdbx) {
     my $err = $@ || 'unknown error';
     # Phrased to include "wrong key": kp.py's own _BAD_KEY pattern
@@ -234,7 +253,7 @@ if ($op eq 'show') {
 if ($op eq 'mkdir') {
     fail("--group is required") unless defined($group) && length($group);
     find_group($group, 1);
-    $kdbx->dump_file($db, $master);
+    $kdbx->dump_file($db, $key);
     exit 0;
 }
 
@@ -272,7 +291,7 @@ if ($op eq 'add' || $op eq 'edit') {
         $e->password(generate_password(length => $len));
     }
 
-    $kdbx->dump_file($db, $master);
+    $kdbx->dump_file($db, $key);
     print(($op eq 'add' ? 'created' : 'updated'), ": $entry\n");
     exit 0;
 }

@@ -92,13 +92,30 @@ identity is a separate procedure:
 
 Credentials live in the local KeePass database
 ([[2026-08-20-decision-credentials-in-keepass]]). The new machine needs that `.kdbx`, and the
-keyfile if the database uses one:
+keyfile if the database uses one. The normal way to get them there is the one-time handoff
+([[2026-09-22-decision-one-time-handoff-for-new-machine-credentials]]):
 
-- If your machines already share a synced folder (the first run's `multi_machine` step), keep
-  the `.kdbx` there and point `kp.py init --db PATH` (or `BRAIN_KP_DB`) at it. Otherwise copy
-  the file.
-- Copy a keyfile over SSH, never through a chat, a note or git, and give it mode 600.
-- The master password is typed only where `kp.py` asks for it, outside any conversation.
+```sh
+python3 ~/Brain/_bin/handoff.py issue                # on a machine that already works
+python3 ~/Brain/_bin/handoff.py redeem '<TOKEN>'     # on the new machine, from any directory
+```
+
+`issue` encrypts the keyfile and a few non-secret settings and prints one token with the exact
+redeem command. With a shared directory configured (the first run's `multi_machine` step) the
+payload goes through `<shared>/handoff/` and is deleted when redeemed; without one the token
+carries it. `--to PATH` writes it to a USB stick or any synced folder instead, and `--with-db`
+adds the `.kdbx` when it is not already in a synced folder. `redeem` writes the files mode 600,
+records them with `kp.py init`, and prints what is left.
+
+- The token is as sensitive as the keyfile. Paste it once, into the new machine's terminal,
+  never into a chat, a note, a ticket or git. It expires after 20 minutes; issue a new one
+  rather than keeping an old one.
+- If the machines already share a synced folder, keep the `.kdbx` there; `redeem` finds it and
+  points `kp.py init` at it.
+- The alternative, when there is SSH between the machines: copy the keyfile (and the `.kdbx`)
+  with `scp`, `chmod 600` it, and run `kp.py init --db PATH --keyfile PATH` yourself.
+- The master password is typed only where `kp.py` asks for it, outside any conversation. The
+  handoff never carries or asks for it.
 
 Check with `python3 ~/Brain/_bin/kp.py status`, then prove it by reading one real entry and
 comparing a hash of the value (never the value) with the same entry read on another machine.
@@ -143,12 +160,13 @@ machine with only cron the step is declined, because cron cannot supervise a lon
 Once you say yes, the step:
 
 1. Checks the machine: not root; the `claude` CLI found and logged in with a claude.ai account;
-   a CLI that knows `remote-control --chrome`; none of the four switches from step 1 in the
-   `env` block of `~/.claude/settings.json`. No Chrome is only a warning.
-2. Asks the name the machine shows, proposing its label (the short hostname, from
+   a CLI that knows `remote-control --chrome` (asked of the parser, see below); none of the four
+   switches from step 1 in the `env` block of `~/.claude/settings.json`. No Chrome, or a shell
+   wrapper standing in for `claude`, is only a warning.
+2. Asks the name the sessions carry, proposing the machine's label (the short hostname, from
    `machine_identity.machine_label()`) in lower case.
-3. Asks for the dedicated repository, proposing `~/<name>` (`~/<name>-remote` when that would be
-   the vault or the home directory), and creates it with `git init` if it is missing.
+3. Asks for the working directory, proposing the home directory. Any other folder is created
+   with `git init` if it is missing; the vault is refused.
 4. Offers to start the server once on your terminal, for the one-time prompts below.
 5. Records the directory and the name in `<brain state>/remote-control.json`.
 6. On Linux, turns lingering on (`loginctl enable-linger`) so the unit runs with nobody logged
@@ -158,7 +176,9 @@ Once you say yes, the step:
    `_bin/systemd/second-brain-remote-control.service` on Linux (`Restart=always`, and no timer).
    The guardian keeps it installed like every other job.
 
-Both templates run `_bin/remote_control.py serve`, which starts, from the recorded directory:
+Both templates run `_bin/remote_control.py serve`, which finds the CLI (on `PATH`, then
+`~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, preferring the real CLI over a wrapper) and
+starts, from the recorded directory:
 
 ```sh
 claude remote-control --chrome --name <name>
@@ -170,19 +190,26 @@ exits after roughly ten minutes without network, and only a supervisor brings it
 
 Two flags decide whether it works at all, and `serve` gets both right:
 
-- **`--chrome` is required.** The `claudeInChromeDefaultEnabled` setting does not cover server
+- **`--chrome`, always.** The `claudeInChromeDefaultEnabled` setting does not cover server
   mode. Without the flag every session the server hands out has no browser tools and says,
-  misleadingly, that it runs in a cloud container. An older CLI rejects the flag with
-  `Unknown argument: --chrome`; `claude update` fixes it.
+  misleadingly, that it runs in a cloud container. **Do not look for the flag in
+  `remote-control --help`**: the help text can hide it while the flag works, and a check that
+  greps the help drops it silently. Run it and read the error instead; only
+  `Unknown argument: --chrome` means an older CLI, and `claude update` fixes it.
 - **`--spawn worktree` must not be used.** This repo registers a `WorktreeCreate` hook
   (`seed_worktree.py`) that prepares a worktree, while Claude Code expects that hook to create
   one and return its path. With both in play every session dies at birth and the app hangs on
   "Connecting…".
 
-The working directory is a **small dedicated git repository** (see the label section below),
-never the vault and never the home directory, whose workspace trust has been accepted once,
-interactively. Trust is never saved for the home directory, and without it the server exits
-with `Workspace not trusted`.
+**The working directory is the home directory**, on macOS and Linux alike, so a session started
+from the app opens where you would open a terminal, not inside whichever folder happened to be
+chosen on install day. A dedicated folder or repository still works if you prefer one; the vault
+does not. The home directory is not a git repository, and that is fine **as long as the spawn
+mode stays `same-dir`**: only `--spawn worktree` needs a repository, and it is never used.
+
+The trust dialog still has to be accepted once for that directory, interactively, or the server
+exits with `Workspace not trusted`. Trust is saved per directory, and the home directory is no
+exception: `~/.claude.json` records it as `projects["$HOME"].hasTrustDialogAccepted`.
 
 The first start asks three things a supervised job cannot answer: whether to trust the
 workspace, `Enable Remote Control? (y/n)`, then a spawn mode, `same-dir` or `worktree`.
@@ -191,9 +218,24 @@ persist, so they are given once. That is what step 4 of the first run is for; wh
 Connected, stop it with Ctrl+C and the supervisor takes over. By hand, any time:
 `cd <dir> && claude remote-control --chrome --name <name>`.
 
-Restart the service after any configuration change: `systemctl --user restart
-second-brain-remote-control` on Linux, `launchctl kickstart -k
-gui/$(id -u)/com.secondbrain.remote-control` on macOS.
+**Install Claude Code with the native installer, not Homebrew.** The Homebrew cask can lag
+several releases behind the latest CLI, and an old CLI is exactly what rejects `--chrome`. Use
+`curl -fsSL https://claude.ai/install.sh | bash`, which installs to `~/.local/bin/claude`, first
+on the supervisors' `PATH`. If you keep a wrapper script named `claude` for your own shell (to
+add a flag, say), it must end in `"$@"`, or every flag the caller passes, `--chrome` included,
+vanishes silently:
+
+```sh
+exec "$HOME/.local/bin/claude" --your-flag "$@"
+```
+
+`remote_control.py` prefers the real CLI over such a wrapper and warns when a wrapper is all it
+finds.
+
+**Restart the service after any change** (the login, the CLI, Chrome pairing, this
+configuration): `systemctl --user restart second-brain-remote-control` on Linux,
+`launchctl kickstart -k gui/$(id -u)/com.secondbrain.remote-control` on macOS. The server keeps
+the flags and configuration it started with, so an edit does nothing until the restart.
 
 ## 9. Browser
 
@@ -257,10 +299,47 @@ extension installed and enabled. Then restart the Remote Control service (step 8
 
 **Check.** `systemctl is-enabled vnc-desktop` says `enabled`, `pgrep -a chrome` shows Chrome,
 and from a session `list_connected_browsers` lists a browser with `osPlatform: Linux` and
-`isLocal: true`.
+`isLocal: true`. Pairing is not the end: step 9a is what gives sessions the browser.
 
 The VNC keyboard layout is usually `us`, so symbols are not where a Mac keyboard puts them;
 `xdotool type` enters what the layout cannot.
+
+## 9a. Chrome in sessions, on macOS and Linux
+
+Browser tools are attached **only when the CLI process starts with `--chrome`**. A session that
+started without it cannot acquire them mid-flight. So every entry point passes the flag:
+
+| Entry point | How it gets `--chrome` |
+|---|---|
+| Remote Control (the Claude app, phone, claude.ai/code) | `remote_control.py serve` always passes it |
+| Terminal, by hand | `claude --chrome` |
+| Routine, subprocess, `claude -p` | the caller passes it; routines that allow `mcp__claude-in-chrome` do, on the CLI login |
+
+**Verify, in this order:**
+
+```sh
+# 1. the server runs with the flag
+ps -eo command | grep "[r]emote-control"
+#    want: .../claude remote-control --chrome --name <name>
+
+# 2. in a NEW session opened from the Claude app, the tools are listed
+#    mcp__claude-in-chrome__* present (deferred counts)
+
+# 3. and they answer
+#    list_connected_browsers returns the browsers
+```
+
+Only step 3 proves it; steps 1 and 2 can look right while the extension is unreachable. The
+session start `## This machine` block reports step 1 for you, and whether Chrome runs.
+
+**Restart after any change** (step 8): the server inherits its flags from the moment it started.
+
+Prerequisites that matter: Chrome paired and running on this machine (step 9), a claude.ai
+login (`claude auth login`, a direct plan). Chrome is refused to API keys and
+`claude setup-token` tokens even with `--chrome`. Things that are **not** the mechanism, so do
+not spend time on them: the `claudeInChromeDefaultEnabled` setting, the CLI version by itself
+(beyond knowing the flag), and a permissions-bypass wrapper that passes `"$@"`. Details:
+[[2026-09-21-reference-where-claude-in-chrome-is-available]].
 
 ## 10. Scheduled-task preflight
 
@@ -286,6 +365,20 @@ On the machine: `claude auth status`; `kp.py status` plus one real read; `tasks.
 `Connected · <name>` (`journalctl --user -u second-brain-remote-control` on Linux,
 `~/Library/Application Support/brain/logs/remote-control.log` on macOS).
 
+Then check that the harness is really wired into Claude Code, because a machine can sync and
+register itself while nothing reaches its sessions (step 6 run from the wrong directory fails
+with `can't open file '.../_bin/...'` and installs nothing):
+
+- `~/.claude/settings.json` carries the Brain hooks: `grep -c '_bin/compass.py' ~/.claude/settings.json`
+  is not 0.
+- `~/.claude/skills` and `~/.claude/agents` are not empty.
+- A new session starts with the Brain context block. No block means no hooks, whatever else
+  looks fine.
+- The machine listed by `machines.py` proves only that it registered, not that sessions get
+  the harness.
+
+If any of these fails, run step 6 again, with the absolute paths as written.
+
 Then open the Claude app on the phone, choose **Remote Control** and the machine, start a
 session with **+**, and ask something only that machine can answer (a file in its home, its
 hostname). A session under the machine's name that hangs on "Connecting…" means the server is
@@ -303,14 +396,11 @@ the server log and the environment picker, not the session.
 
 ## The label under Remote Control
 
-**The name a machine shows comes from the git repository of the server's working directory,
-not from `--name`.** With a remote, it is the repository's name; with no remote, the
-directory's name. A server pointed at the vault shows the vault repository's name, the same on
-every machine. `--name` still titles the sessions inside the group.
-
-So each machine serves from a small dedicated repository named the way the machine should
-appear (`~/laptop`, `~/server`), created with `git init` and nothing else in it. The first run
-proposes exactly that, `~/<name>`.
+**The label a machine's sessions are grouped under in the app is the server's environment.**
+The server is assigned it when it registers, and you rename it from the app; no CLI flag,
+configuration key or environment variable sets it. `--name` titles the sessions inside the
+group. The working directory does not name the machine, so the home directory serves as well
+as any dedicated folder.
 The machine's identity in the harness is a separate thing
 ([[2026-09-21-decision-machine-identity-is-a-stable-id-plus-a-human-label]]).
 

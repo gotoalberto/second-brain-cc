@@ -98,11 +98,12 @@ can point at it, and two things start coordinating over it:
   `<shared>/presence/<project>/<machine key>__<sid>`, so `presence.py view` (and anything that
   reads its cache) can tell you someone on ANOTHER machine has the same project open, not just
   this one.
-- **File claims.** `_bin/claims_sync.py` lets a session declare which files it is editing —
-  `claims_sync.py claim <path...> --sid <sid>`, `claims_sync.py release <path...> --sid <sid>` —
-  as a warning for another machine to read (`claims_sync.py view`), the same way `lease.py`
-  warns two sessions on one machine. This is informational only: it is not wired into the
-  write gate or into `claim.py`'s local table, so nothing blocks a write because of it.
+- **File claims.** When `claim.py` records or releases a session's claims, a detached
+  `_bin/claims_sync.py` worker publishes that session's whole claim set to the shared folder, so
+  another machine can see which files are being edited (`claims_sync.py view`). The write gate
+  reads only the local cache that worker leaves and warns when another machine claims the same
+  repo file; it blocks only under `strict_claims`, as it does for a claim on this machine. The CLI
+  (`claims_sync.py claim|release <path...> --sid <sid>`) is still there for a deliberate call.
 
 The machine identity behind both is `_bin/machine_identity.py`: a hostname plus the first 8 hex
 characters of a hardware/boot UUID (`ioreg` on macOS, `/etc/machine-id` or
@@ -150,6 +151,33 @@ BRAIN_KP_BACKEND=kpcli python3 _bin/kp.py ls
   `keepassxc-cli` for those, or `--show`/`--info`/`--pipe` in place of the clipboard.
 - `File::KDBX` is not a Perl core module and is never required for the default backend: only
   install it if `BRAIN_KP_BACKEND=kpcli` is what you actually want.
+- A key file works on this backend too. `kp.py` passes its path to `kp_kdbx.pl` in the
+  environment (`BRAIN_KP_KEYFILE`; it is a path, not a secret), and the helper opens the store
+  with the master and the key file together, or with the key file alone for a keyfile-only store.
+
+## Adding a new machine
+
+A new machine needs the KeePass keyfile (when the database uses one), sometimes the `.kdbx`
+itself, and a few settings. `_bin/handoff.py` moves them once, without SSH and without any
+cloud service:
+
+```bash
+python3 ~/Brain/_bin/handoff.py issue                # on a machine that already works
+python3 ~/Brain/_bin/handoff.py redeem '<TOKEN>'     # on the new machine, from any directory
+```
+
+`issue` prints one token and the exact redeem command. With a shared directory configured the
+encrypted payload goes through `<shared>/handoff/`; without one the token carries it; `--to PATH`
+uses a USB stick or any synced folder, and `--with-db` adds the `.kdbx`. `redeem` writes the
+files mode 600, never over existing ones without `--force`, and records them with `kp.py init`.
+
+The security model, plainly: the handoff is time boxed (20 minutes by default), encrypted with
+a random one-time passphrase (`openssl enc -aes-256-cbc -pbkdf2`, the passphrase never in argv),
+authenticated with an HMAC checked before decrypting, and single use when it goes through a
+file, which redeem deletes. An inline token is the payload itself, so it is as sensitive as the
+keyfile: paste it once into a terminal, never into a chat, a note, a ticket or git. The master
+password never travels; you type it where `kp.py` asks. The whole install is
+`30-Knowledge/2026-09-21-runbook-install-on-a-new-machine.md`.
 
 ## Remote Control: every machine is reachable from the Claude app
 
@@ -211,21 +239,32 @@ repos, programs and paths there. A task's `machine` cell is `*`, the machine's l
 claude remote-control --chrome --name <name>
 ```
 
-from a small git repository dedicated to it. The first run's `remote_control` step checks the
-machine first, creates that repository, starts the server once on your terminal, records the
-directory and name in `<brain state>/remote-control.json`, and installs its supervisor.
+from the home directory, or from a folder of its own if you choose one. The first run's
+`remote_control` step checks the machine first, starts the server once on your terminal from that
+directory, records the directory and name in `<brain state>/remote-control.json`, and installs its
+supervisor.
 
-- **`--chrome` is mandatory.** The `claudeInChromeDefaultEnabled` setting does not cover server
-  mode: without the flag every session has no browser tools, and tends to describe itself as
-  running "in a cloud container".
+- **`--chrome` is mandatory, and always passed.** The `claudeInChromeDefaultEnabled` setting does
+  not cover server mode: without the flag every session has no browser tools, and tends to
+  describe itself as running "in a cloud container". Do not decide whether a CLI supports it
+  from `remote-control --help`, which can hide it; an old CLI answers `Unknown argument`, and
+  `claude update` fixes that.
+- **The CLI itself, not a wrapper.** `remote_control.py` looks on `PATH`, then in `~/.local/bin`
+  (the native installer), `/opt/homebrew/bin` and `/usr/local/bin`, and prefers a real CLI over a
+  shell script standing in for it; it warns when a wrapper is all there is. Install Claude Code
+  with the native installer rather than Homebrew, whose cask can lag several releases behind. A
+  wrapper you keep for your own shell must pass `"$@"` through, or flags like `--chrome` vanish.
 - **A worktree spawn mode is forbidden** (`--spawn worktree`, or answering `worktree` at the
   prompt). Brain's `WorktreeCreate` hook (`seed_worktree.py`) seeds a worktree but does not
   create one, and with both in play every session dies at birth while the app hangs on
   "Connecting...". Use `same-dir`.
-- **The working directory is a dedicated repository, not the vault and not the home
-  directory.** The app lists the machine under that repository's name (its folder name, when it
-  has no remote), so the first run proposes `~/<name>`, named like the machine. Workspace trust
-  is only kept for a repository.
+- **The working directory is the home directory by default**, so a session started from the app
+  opens where you would open a terminal. It needs no git repository, because the spawn mode stays
+  `same-dir`; only a worktree spawn mode would need one, and that is forbidden above. A dedicated
+  folder or repository works too; the vault does not. Workspace trust is kept per directory, the
+  home directory included (`projects["$HOME"].hasTrustDialogAccepted` in `~/.claude.json`).
+- **The label the app groups sessions under is the server's environment**, which the server is
+  assigned and which you rename from the app. `--name` titles the sessions inside it.
 - **Three prompts are answered once, interactively:** trust the workspace, `Enable Remote
   Control? (y/n)`, and the spawn mode (`same-dir`). The first run offers to start the server on
   your terminal for exactly that; stop it with Ctrl+C once it says Connected. Trust and spawn
@@ -321,6 +360,14 @@ python3 _bin/kp.py unlock --ttl 30d                             # arm the master
   asked in a dialog (osascript on macOS, zenity on a Linux desktop) or on the terminal, and
   can be cached in the OS keyring (the Keychain on macOS, libsecret's `secret-tool` on Linux)
   with `kp.py unlock`.
+- A key file is recorded with `kp.py init --db PATH --keyfile PATH` (no prompt, so a setup
+  script can run it) or set with `BRAIN_KP_KEYFILE`. A store can also be **keyfile-only**, with
+  no master at all, for a machine where nobody can type one: create it with
+  `kp.py init --db PATH --keyfile PATH --create --no-password`. With a key file configured,
+  `kp.py` tries once to open the store with the key file alone; when that works it never asks
+  for a master or caches one, and `kp.py status` says the keyfile is the whole key
+  (`BRAIN_KP_NO_PASSWORD=1` skips that probe). The key file is then as sensitive as the database:
+  mode 600, copied only over a channel you trust, never into the vault or git.
 - Scheduled jobs read headless (`BRAIN_KP_NOPROMPT=1`): no prompt, and exit 4 when the master
   is not cached. Exit 5 is a database open elsewhere, 6 a database not configured or found.
 - A secret is never printed unless you pass `--show`: it goes to the clipboard or into another
@@ -470,6 +517,7 @@ The deepest experience today is Claude Code with the plugin; nothing in the vaul
 | `vault_sync.py` | Commit and push over git. |
 | `doctor.py` | Health report. |
 | `kp.py` | Credentials in a local KeePass database. |
+| `handoff.py` | One-time handoff of a new machine's keyfile, database and settings. |
 | `google.py` | Named Google accounts: Gmail, Calendar, Drive. |
 | `files.py` / `files_core.py`, `brain_files.py` | The file store: deliverables, intermediates and material in a local directory, anchored to notes; where that directory is. |
 | `guardian.py` | Keeps hooks, git hooks and scheduled jobs wired, and alerts. |
@@ -477,7 +525,7 @@ The deepest experience today is Claude Code with the plugin; nothing in the vaul
 | `tasks.py` | The periodic task and routine runner. |
 | `machine_identity.py`, `machines.py`, `machine_caps.py` | Which machine this is; the registry of machines and their Claude accounts; the `## This machine` block. |
 | `routine_requires.py` | Preflight: the repos, programs and paths a routine needs on this machine. |
-| `remote_control.py` | Starts the supervised Remote Control server from its dedicated repository. |
+| `remote_control.py` | Starts the supervised Remote Control server from its recorded working directory. |
 | `gen_instructions.py` | Generates `AGENTS.md`, `CLAUDE.md` and `90-Meta/HOOKS-WITHOUT-CLAUDE.md`. |
 | `install_plugin.py`, `claude_settings.py` | Skills and agents sync; recommended Claude Code settings. |
 | `brain_paths.py`, `migrate_state.py`, `pywrap.sh` | Where state lives; moving it out of `~/.claude`; the interpreter picker jobs start through. |

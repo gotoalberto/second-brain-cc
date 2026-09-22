@@ -1204,6 +1204,83 @@ def git_touched_since(ts):
     return {os.path.join(VAULT, k) for k, v in data.items() if v >= ts - 5}
 
 
+# ------------------------------------------- pulling the vault before reading it
+
+PULL_EVERY = 300               # seconds between throttled vault pulls
+PULL_TIMEOUT = 8               # a prompt never blocks longer than this on the network
+_LAST_PULL_MARKER = "last_pull"
+
+
+def _rebase_in_progress():
+    """Two stats: cheap enough to ask on the prompt path without being felt.
+
+    Shared by every caller instead of each importing vault_sync, which would drag the
+    whole of index_vault along with it: too much for a hook on the prompt or startup
+    path, whose own budget is tens or a few hundred milliseconds.
+    """
+    g = os.path.join(VAULT, ".git")
+    return os.path.isdir(os.path.join(g, "rebase-merge")) or os.path.isdir(os.path.join(g, "rebase-apply"))
+
+
+def maybe_pull(force=False, timeout=None):
+    """Fetch the vault before reading it, if it has been a while since the last pull.
+
+    The vault may have changed from another machine or another session: answering, or
+    building the startup context, with stale memory is worse than taking a second longer.
+    It uses the SAME flock as vault_sync, the only process allowed to touch git, and if it
+    does not get the lock or the network is slow it gives up silently. The caller's own
+    work never waits on the network beyond `timeout` (default `PULL_TIMEOUT`).
+
+    `force=True` skips the `PULL_EVERY` throttle. retrieve.py calls this unforced, on
+    every prompt, where a pull every few seconds would be wasteful. compass.py calls it
+    forced, once per session at SessionStart, where a stale first look at the vault is the
+    worse failure and the call happens at most once per session anyway.
+    """
+    if OFFLINE:
+        return                    # the hook probe: no git, no network
+    marker = os.path.join(STATE, _LAST_PULL_MARKER)
+    if not force:
+        try:
+            if time.time() - os.path.getmtime(marker) < PULL_EVERY:
+                return
+        except OSError:
+            pass
+    try:
+        with flock(os.path.join(VAULT, "_index", ".gitlock"), timeout=1) as lk:
+            if not lk.held:
+                return
+            # If a rebase was ALREADY under way on arrival, it is not ours: most likely
+            # the user is resolving a conflict by hand in the vault. Aborting it would wipe
+            # the resolution work already done, and this runs on every prompt and at every
+            # session start. Leave without touching anything.
+            if _rebase_in_progress():
+                log("sync", "pull-skipped-foreign-rebase")
+                return
+            _, head_before, _ = run([GIT, "rev-parse", "HEAD"], cwd=VAULT)
+            code, _, err = run([GIT, "pull", "--rebase", "--autostash", "--quiet"],
+                               cwd=VAULT, timeout=timeout or PULL_TIMEOUT)
+            # Whatever the pull rewrote now has mtime = now. Marked so the memory gate
+            # cannot read someone else's commit as this session having saved.
+            if code == 0 and head_before.strip():
+                rc2, changed, _ = run([GIT, "diff", "--name-only",
+                                       head_before.strip(), "HEAD"], cwd=VAULT)
+                if rc2 == 0 and changed.strip():
+                    mark_git_touched(changed.splitlines())
+            # The result canNOT be ignored. A failed pull (a conflict, or the timeout
+            # cutting the rebase mid-apply) leaves a half-finished .git/rebase-merge, and
+            # from there everything vault_sync commits lands on a detached HEAD: the vault
+            # stops converging and nobody notices. It is aborted here, with the lock still
+            # in hand; a local operation, adding no network and no wait. This one IS ours:
+            # there was no rebase on entry and this pull left it.
+            if code != 0 and _rebase_in_progress():
+                run([GIT, "rebase", "--abort"], cwd=VAULT, timeout=5)
+                log("sync", "pull-hook-rebase-aborted", err=(err or "")[:200])
+        os.makedirs(STATE, exist_ok=True)
+        open(marker, "w").close()
+    except Exception as e:
+        log_error("brainlib.maybe_pull", e)
+
+
 def vault_notes_modified_since(ts, folders=None):
     """Vault notes with an mtime later than `ts`. This is the "it was saved" signal:
     it does not depend on which tool wrote it (Write, Bash, vw.py, a subagent)."""

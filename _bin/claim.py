@@ -51,6 +51,15 @@ def arg_value(name):
     return None
 
 
+def publish(sid):
+    """Tell other machines, detached (claims_sync.publish_async). Never raises, never waits."""
+    try:
+        import claims_sync
+        claims_sync.publish_async(sid)
+    except Exception as e:
+        B.log_error("claim.publish", e)
+
+
 def main():
     if not B.enabled():
         return 0
@@ -79,6 +88,7 @@ def main():
             return 1
         n = con.execute("SELECT COUNT(*) FROM claims WHERE sid=?", (sid,)).fetchone()[0]
         con.execute("DELETE FROM claims WHERE sid=?", (sid,)); con.commit()
+        publish(sid)                      # other machines stop seeing them within seconds
         print("%d claim(s) released for %s (by %s)" % (n, sid, how))
         return 0
 
@@ -95,6 +105,7 @@ def main():
         con.execute("INSERT OR IGNORE INTO claims VALUES(?,?,?)", (sid, path, B.now()))
         n += 1
     con.commit()
+    publish(sid)                          # other machines see them within seconds
     print("%d claim(s) recorded for session %s (by %s)" % (n, sid, how))
     return 0
 

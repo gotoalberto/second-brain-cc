@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """remote_control.py: the Remote Control server this machine keeps running, so the Claude app can reach it.
 
-  remote_control.py serve   start `claude remote-control --chrome --name <name>` from the dedicated
-                            repository; what the launchd agent and the systemd user unit run
+  remote_control.py serve   start `claude remote-control --chrome --name <name>` from the recorded
+                            working directory; what the launchd agent and the systemd user unit run
   remote_control.py show    print the recorded directory, name and command, and anything in the way
 
 Every machine Brain is installed on is a Remote Control machine: it appears in the Claude app under
@@ -14,15 +14,20 @@ The supervisor templates (`com.secondbrain.remote-control.plist`, `systemd/secon
 carry nothing per machine, so the guardian can keep them in step like every other job. What is per
 machine lives in <brain state>/remote-control.json, written by the first run's remote_control step:
 
-  dir    a small dedicated git repository, not the vault and not the home directory: the app lists the
-         machine under that repository's name, and workspace trust is only ever kept for a repository
-  name   passed as --name; it titles the sessions
+  dir    the working directory sessions open in: the home directory by default, so a session started
+         from the app opens where you would open a terminal. A dedicated folder or repository works too.
+         No git repository is needed, because spawn mode stays same-dir (see --spawn below). Workspace
+         trust is kept per directory, the home directory included (projects[<dir>].hasTrustDialogAccepted
+         in ~/.claude.json), and is accepted once, interactively.
+  name   passed as --name; it titles the sessions. The label the app groups them under is the server's
+         environment, which the server is assigned and which is renamed from the app.
 
 Three things are not arbitrary:
   --chrome is always passed. The claudeInChromeDefaultEnabled setting does not cover server mode, and
            without the flag every session has no browser tools.
   --spawn  is never passed. A worktree spawn mode conflicts with Brain's WorktreeCreate hook
-           (seed_worktree.py) and every session dies at birth, hanging on "Connecting...".
+           (seed_worktree.py) and every session dies at birth, hanging on "Connecting...". It is also
+           the only mode that would need the working directory to be a git repository.
   env      DISABLE_TELEMETRY, DO_NOT_TRACK, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC and DISABLE_GROWTHBOOK
            switch off the feature flags Remote Control depends on, and ANTHROPIC_API_KEY or
            CLAUDE_CODE_OAUTH_TOKEN would replace the claude.ai login it needs; serve drops all of them.
@@ -41,6 +46,11 @@ BLOCKING_ENV = ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_GROWTHBOOK"
 # Remote Control takes only the CLI's claude.ai login; either of these in the environment takes precedence over it.
 CREDENTIAL_ENV = ("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
 EX_CONFIG = 78
+# Where the CLI is looked for after PATH: the native installer's ~/.local/bin first, then the Homebrew
+# locations (Apple silicon, Intel). The native installer is preferred: the Homebrew cask can lag
+# several releases behind, and an old CLI rejects --chrome.
+CANDIDATES = ("~/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude")
+SHELLS = ("sh", "bash", "zsh", "dash", "ksh")
 
 
 def config_file(environ=None, home=None, platform=None):
@@ -96,13 +106,59 @@ def server_env(environ):
     return {k: v for k, v in environ.items() if k not in BLOCKING_ENV and k not in CREDENTIAL_ENV}
 
 
-def find_claude(environ, home, which=shutil.which):
-    """The claude CLI: on PATH, or in ~/.local/bin where its installer puts it."""
-    found = which("claude", path=environ.get("PATH"))
-    if found:
-        return found
-    local = os.path.join(home, ".local", "bin", "claude")
-    return local if os.path.isfile(local) and os.access(local, os.X_OK) else None
+def _read_head(path, size=256):
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(size)
+    except OSError:
+        return b""
+
+
+def is_wrapper(path, read=_read_head):
+    """A shell script standing in for the CLI, like a ~/bin/claude that adds its own flags.
+
+    The server must not go through one: whatever it adds (a permissions bypass, say) lands on the
+    server too, and a wrapper that drops "$@" silently drops --chrome. The native binary, and the
+    node script an npm install links, are not wrappers.
+    """
+    head = read(path) or b""
+    if not head.startswith(b"#!"):
+        return False
+    words = head[2:].split(b"\n", 1)[0].decode("utf-8", "replace").split()
+    if not words:
+        return False
+    interpreter = os.path.basename(words[0])
+    if interpreter == "env" and len(words) > 1:
+        interpreter = os.path.basename(words[-1])
+    return interpreter in SHELLS
+
+
+def find_claude(environ, home, which=shutil.which, read=_read_head):
+    """The claude CLI: on PATH, then ~/.local/bin, /opt/homebrew/bin and /usr/local/bin.
+
+    A real CLI wins over a shell wrapper wherever each is found; a wrapper is returned only when
+    nothing else is there, and warnings() then says so.
+    """
+    seen = []
+    first = which("claude", path=environ.get("PATH"))
+    if first:
+        seen.append(first)
+    for candidate in CANDIDATES:
+        path = os.path.join(home, candidate[2:]) if candidate.startswith("~/") else candidate
+        if path not in seen and os.path.isfile(path) and os.access(path, os.X_OK):
+            seen.append(path)
+    for path in seen:
+        if not is_wrapper(path, read):
+            return path
+    return seen[0] if seen else None
+
+
+def warnings(claude, read=_read_head):
+    """What does not stop the server but deserves a look, one line each."""
+    if claude and is_wrapper(claude, read):
+        return ["%s is a shell wrapper, not the CLI: the server gets whatever it adds, and loses --chrome if it "
+                "does not pass \"$@\" through; install Claude Code with its native installer" % claude]
+    return []
 
 
 def problems(config, exists, is_root, claude):
@@ -111,15 +167,13 @@ def problems(config, exists, is_root, claude):
     if is_root:
         out.append("running as root: Claude Code refuses to bypass permissions there; use a normal user")
     if not claude:
-        out.append("no claude CLI on PATH or in ~/.local/bin")
+        out.append("no claude CLI on PATH, in ~/.local/bin, /opt/homebrew/bin or /usr/local/bin")
     if config is None:
         out.append("nothing recorded: run the first run's remote_control step "
                    "(python3 integrations/first-run/first_run.py reset remote_control, then run)")
         return out
     if not exists(config["dir"]):
         out.append("the working directory %s is not there" % config["dir"])
-    elif not exists(os.path.join(config["dir"], ".git")):
-        out.append("%s is not a git repository: workspace trust is only kept for one" % config["dir"])
     return out
 
 
@@ -141,6 +195,8 @@ def main(argv=None):
             print("command:   %s" % " ".join(command(config["name"], claude or "claude")))
         for line in found:
             print("problem:   %s" % line)
+        for line in warnings(claude):
+            print("warning:   %s" % line)
         for name in blocking_env(environ):
             print("note:      %s is set in this shell; serve drops it before starting" % name)
         return 1 if found else 0
@@ -148,6 +204,8 @@ def main(argv=None):
         for line in found:
             print("remote_control.py: %s" % line, file=sys.stderr)
         return EX_CONFIG
+    for line in warnings(claude):
+        print("remote_control.py: warning: %s" % line, file=sys.stderr)
     os.chdir(config["dir"])
     os.execve(claude, command(config["name"], claude), server_env(environ))
 

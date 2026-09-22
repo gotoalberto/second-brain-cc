@@ -21,6 +21,12 @@ reason: a full port of every direct call site in a 1700-line, carefully hardened
 meaningfully riskier than translating the handful that matter (see the plan's open design
 decision on this cut).
 
+**Key files.** A store may be keyed by a master, a key file, or both. keepassxc-cli reads
+`-k <path>` (and `--no-password` for a store whose key file is the whole key) from its own argv.
+kp_kdbx.pl takes its arguments by name, so for the kpcli backend `build()` strips those flags and
+passes the path in the helper's environment as BRAIN_KP_KEYFILE; kp_kdbx.pl then builds the
+File::KDBX composite key, or uses the key file alone when there is no master.
+
 **The kpcli bug this exists to fix.** kp.py's `cmd_put` always sends `given + "\\n" + given +
 "\\n"` on stdin when writing a secret — keepassxc-cli's own protocol reads that as
 password-then-confirmation correctly, but a Perl script that just slurps stdin would store
@@ -247,32 +253,72 @@ def _shred(path):
         pass
 
 
+KEY_FLAGS = ("-k", "--no-password")
+
+
+def take_key_flags(args):
+    """(args without the key flags, the key flags) for a keepassxc-cli-shaped argv.
+
+    `-k <path>` names a key file and `--no-password` says the key file is the whole key.
+    translate() reads positional shapes and would choke on either, so run() lifts them off
+    first and hands them to build() next to the translated tail.
+    """
+    rest, flags = [], []
+    args = list(args)
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "-k":
+            flags += args[i:i + 2]
+            i += 2
+            continue
+        if a == "--no-password":
+            flags.append(a)
+        else:
+            rest.append(a)
+        i += 1
+    return rest, flags
+
+
 def build(kind, path, args, db_path, master, pwfile_dir):
-    """(argv, stdin_prefix, cleanup_fn) for one backend call.
+    """(argv, stdin_prefix, cleanup_fn, env) for one backend call.
 
-    keepassxc-cli: unchanged from today — `args` (already keepassxc-cli-shaped) becomes the
-    argv tail as-is, and `master` is the first line on stdin.
+    keepassxc-cli: `args` (already keepassxc-cli-shaped) becomes the argv tail as-is, `-k`
+    included, since keepassxc-cli reads it there. `master` is the first line on stdin, except
+    with `--no-password`, where nothing is prefixed: not even a newline, which keepassxc-cli
+    would read as the next thing it asks for (a new secret on `add -p`). `env` is None.
 
-    kpcli: `args` is translate()'s OUTPUT (kp_kdbx.pl's own argv tail). The master is written
-    to a private 0600 temp file under `pwfile_dir` instead of stdin, so stdin is free to carry
-    only a NEW secret — kp_kdbx.pl reads the master from `--pwfile`, never from argv or a
-    duplicated stdin payload. `cleanup_fn` shreds that temp file; call it once the process has
-    exited, success or not.
+    kpcli: `args` is translate()'s OUTPUT (kp_kdbx.pl's own argv tail) plus any key flags run()
+    lifted off before translating. build() strips `-k <path>` and `--no-password` here: the
+    path goes to the helper as BRAIN_KP_KEYFILE in `env` (set even when empty, so a value
+    inherited from the caller cannot make the helper try a key file this call did not ask
+    for). A key file path is not a secret, so the environment is fine for it; the master is,
+    and it is written to a private 0600 temp file under `pwfile_dir` instead of stdin, so stdin
+    is free to carry only a NEW secret. With `--no-password` that file is left empty and the
+    helper opens the store with the key file alone. `cleanup_fn` shreds the file; call it once
+    the process has exited, success or not.
     """
     if kind == "keepassxc":
-        return [path] + list(args), master + "\n", (lambda: None)
+        prefix = "" if "--no-password" in args else (master or "") + "\n"
+        return [path] + list(args), prefix, (lambda: None), None
     if kind == "kpcli":
+        rest, flags = take_key_flags(args)
+        keyfile = flags[flags.index("-k") + 1] if "-k" in flags and flags.index("-k") + 1 < len(flags) else ""
+        if "--no-password" in flags:
+            master = ""
         os.makedirs(pwfile_dir, mode=0o700, exist_ok=True)
         fd, pwfile = tempfile.mkstemp(prefix="kp-master-", dir=pwfile_dir)
         try:
             with os.fdopen(fd, "w") as fh:
-                fh.write(master)
+                fh.write(master or "")
             os.chmod(pwfile, 0o600)
         except OSError:
             _shred(pwfile)
             raise
-        argv = [path] + list(args) + ["--db", db_path, "--pwfile", pwfile]
-        return argv, "", (lambda: _shred(pwfile))
+        argv = [path] + rest + ["--db", db_path, "--pwfile", pwfile]
+        env = dict(os.environ)
+        env["BRAIN_KP_KEYFILE"] = keyfile
+        return argv, "", (lambda: _shred(pwfile)), env
     raise Unsupported(kind)
 
 
@@ -295,13 +341,15 @@ def run(kind, path, args, db_path, master, stdin_extra="", timeout=60, pwfile_di
     the completed subprocess. Raises Unsupported for a subcommand the kpcli backend does not
     cover — kp.py's cli() catches that and dies with a clear message."""
     if kind == "kpcli":
-        argv_tail = translate(args, db_path)
+        rest, keyflags = take_key_flags(args)
+        argv_tail = translate(rest, db_path) + keyflags
         stdin_extra = split_confirmation(stdin_extra)
     else:
         argv_tail = args
-    argv, prefix, cleanup = build(kind, path, argv_tail, db_path, master, pwfile_dir)
+    argv, prefix, cleanup, env = build(kind, path, argv_tail, db_path, master, pwfile_dir)
     try:
-        return subprocess.run(argv, input=prefix + stdin_extra, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(argv, input=prefix + stdin_extra, capture_output=True, text=True, timeout=timeout,
+                              env=env)
     finally:
         cleanup()
 

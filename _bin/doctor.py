@@ -4,7 +4,35 @@ import os, sys, time, subprocess, glob, collections
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import brainlib as B
 
+HERE = os.path.dirname(os.path.abspath(__file__))
 PY3 = "/usr/bin/python3"
+
+
+def job_lines(job_control):
+    """What the periodic jobs look like, one line each, from the guardian's job control.
+
+    `job_control` is guardian_core.adapters.build_job_control()'s answer: launchd, systemd
+    user units or cron, whichever the user accepted at first run. A plist on disk says
+    nothing on a machine without launchd, so the supervisor is asked instead.
+    """
+    kind = {"LaunchctlControl": "launchd", "SystemdUserControl": "systemd",
+            "CronControl": "cron"}.get(type(job_control).__name__, type(job_control).__name__)
+    labels = job_control.labels()
+    if not labels:
+        return ["periodic jobs: no supervisor on this machine "
+                "(none accepted at first run: integrations/first-run)"]
+    out = ["periodic jobs (%s):" % kind]
+    for label in labels:
+        out.append("  %-30s installed=%-3s loaded=%s"
+                   % (label, "yes" if job_control.installed(label) else "NO",
+                      "yes" if job_control.is_loaded(label) else "no"))
+    return out
+
+
+def transcript_files(home=None):
+    """Every top-level session transcript under ~/.claude/projects, in every project."""
+    root = os.path.join(home or os.path.expanduser("~"), ".claude", "projects")
+    return sorted(glob.glob(os.path.join(root, "*", "*.jsonl")))
 
 
 def section(t):
@@ -219,8 +247,17 @@ def main():
             print("REBASE IN PROGRESS: the vault is not syncing until it is resolved "
                   "(git -C %s rebase --abort)" % B.VAULT)
             break
-    plist = os.path.expanduser("~/Library/LaunchAgents/com.secondbrain.sync.plist")
-    print("launchd daemon: %s" % ("installed" if os.path.exists(plist) else "NOT installed"))
+    # The plists travel inside the vault and get copied onto machines with no launchd, so
+    # "the plist is on disk" is no answer there. The guardian already knows which
+    # supervisor this machine has; ask it the same way.
+    try:
+        import brain_paths
+        from guardian_core import adapters as _GA
+        for line in job_lines(_GA.build_job_control(B.VAULT, brain_paths.state_dir(),
+                                                    os.path.expanduser("~"))):
+            print(line)
+    except Exception as exc:
+        print("could not read the periodic jobs: %r" % exc)
 
     section("Hook configuration")
     import json
@@ -257,11 +294,10 @@ def main():
     # conversation, and one screenshot is around 1,600 vision tokens that stay there
     # forever. It happened with the portfolio one: 143 screenshots, 101 MB, ~229k tokens
     # of image alone, and the window stopped being able to finish a turn.
-    import glob as _g2
-    tdir = os.path.join(os.path.expanduser("~/.claude/projects"),
-                        "-" + os.path.expanduser("~").strip("/").replace("/", "-"))
+    # Every project directory is walked, not only the one the home directory encodes to:
+    # a fat session opened from a repository lives in that repository's directory.
     fat = []
-    for f in _g2.glob(os.path.join(tdir, "*.jsonl")):
+    for f in transcript_files():
         mb = os.path.getsize(f) / 1048576.0
         if mb < 20:
             continue
@@ -350,13 +386,15 @@ def main():
     # Only when asked, and never from inside a test run: bootstrap.sh runs this doctor, and the
     # suite runs bootstrap.sh, so a doctor that ran the suite by itself would start that loop.
     if "--tests" in sys.argv[1:] and not os.environ.get("SECOND_BRAIN_TEST_RUN"):
-        p = subprocess.run([PY3, os.path.join(B.VAULT, "_bin", "run_all_tests.py")],
+        # The suite beside this file, not the vault's: a doctor run from a worktree grades
+        # its own copy. Installed, the two are the same path.
+        p = subprocess.run([PY3, os.path.join(HERE, "run_all_tests.py")],
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
         tail = p.stdout.decode().strip().splitlines()
         print("\n".join(tail[-6:]) if tail else "(no output)")
     else:
-        print("not run by default; every test, each in a scratch HOME: python3 %s/_bin/run_all_tests.py "
-              "(or doctor.py --tests)" % B.VAULT)
+        print("not run by default; every test, each in a scratch HOME: python3 %s "
+              "(or doctor.py --tests)" % os.path.join(HERE, "run_all_tests.py"))
     con.close()
     return 0
 

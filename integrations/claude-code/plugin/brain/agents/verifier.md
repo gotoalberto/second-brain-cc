@@ -29,3 +29,14 @@ couldn't run anything, the verdict is FAIL, with the reason.
 **Anything you write into the vault goes in English** (verbatim quotes keep their original,
 with the English alongside). You are a subagent and never see the vault protocol, so:
 `~/Brain/30-Knowledge/2026-09-08-convention-vault-is-written-in-english.md`.
+
+**Titles and headings name the topic**, in your report and anything written for the user: no
+headline that announces a finding (count and reveal, "X, not Y", colon reveal, triads, "the
+real X", "in silence"). `~/Brain/30-Knowledge/2026-09-10-convention-write-like-a-person.md`.
+
+## Shared vault notes
+
+You read and execute; you never edit. Should a verification ever need to record something in
+`10-Projects/` or `70-Entities/`, those notes are shared between concurrent sessions and are
+written only through `/usr/bin/python3 ~/Brain/_bin/vw.py` (it locks, redacts credentials and
+writes atomically), never with Write, Edit or a shell redirect.

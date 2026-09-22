@@ -30,17 +30,36 @@ _WRITERS = re.compile(
 # be written, so they must never be denied or the gate blocks its own remedy.
 _ALLOWED = re.compile(r"\b(?:vw\.py|va\.py|files\.py|vault_sync\.py|index_vault\.py|git)\b")
 
+# ...but only for the segment that actually runs them. A single `_ALLOWED` hit anywhere in
+# the command used to waive the whole thing, so `cp /tmp/x 10-Projects/note.md && git add -A`
+# passed: the raw write and the word "git" travelled in one command. Splitting on the
+# shell's sequencing operators and judging each segment on its own keeps the remedy working
+# (a real vw.py call is its own segment) while the raw write beside it is still caught.
+#
+# A plain `|` is deliberately NOT a separator here. It chains one data flow rather than
+# sequencing independent commands, and splitting on it would let
+# `grep foo 10-Projects/a.md | tee out.txt` through: the gate's standing posture is to deny
+# when a protected path and a writer share a command, even though that particular one only
+# writes to out.txt. gate_write_core_test.py pins that case.
+_SEGMENT = re.compile(r"&&|\|\||;|\n")
+
 _SCRATCHPAD = re.compile(r"^/(private/)?tmp/claude-\d+/")
 
 
 def bash_touches_protected(command):
-    """Which protected folder this shell command looks like it writes to, or None."""
-    if not command or _ALLOWED.search(command):
+    """Which protected folder this shell command looks like it writes to, or None.
+
+    Judged per shell segment: a sanctioned writer only exempts the segment it runs in.
+    """
+    if not command:
         return None
-    hit = next((p for p in PROTECTED if p in command), None)
-    if not hit:
-        return None
-    return hit if _WRITERS.search(command) else None
+    for segment in _SEGMENT.split(command):
+        if _ALLOWED.search(segment):
+            continue
+        hit = next((p for p in PROTECTED if p in segment), None)
+        if hit and _WRITERS.search(segment):
+            return hit
+    return None
 
 
 def protected_folder(rel_path):

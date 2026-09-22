@@ -358,7 +358,7 @@ def routine_due(routine: dict, last_run_date, now: dt.datetime, host: str, is_mi
 
 @dataclass(frozen=True)
 class AlertAction:
-    kind: str       # notify-change | notify-digest
+    kind: str       # notify-change | notify-digest | notify-repair | mail
     subject: str
     body: str
 
@@ -474,6 +474,48 @@ def merge_alerts(repair, actions: list) -> list:
         subject += "; " + (a.subject[len(_SUBJECT):] if a.subject.startswith(_SUBJECT) else a.subject)
         body += "\n\n" + a.body
     return [AlertAction(repair.kind, subject, body)]
+
+
+def mail_decide(mail_worthy: list, previous: dict, now: dt.datetime, digest_every=DIGEST_EVERY):
+    """What this run puts in the user's inbox, and the state to remember it by.
+
+    The inbox is only for a problem that needs a person: a FAIL the guardian has already
+    tried and failed to fix. Everything else (a repair that worked, a problem that resolved
+    itself, a warn) is a desktop notification and a line in `guardian.py status`, never a
+    mail. The guardian checks and repairs every 15 minutes on its own, so mailing about its
+    own successful work fills the inbox with messages nobody can act on, and buries the one
+    that matters.
+
+    `mail_worthy` is what `probe_mail_worthy` left after the probe debounce. A key pages
+    once, when it first becomes mail-worthy; while it stays open it is carried by one
+    digest a day and nothing else. A key that resolves drops out of `mailed`, so a fresh
+    occurrence later pages again.
+
+    Returns (actions, state); `state` replaces `previous` under `alerts["mail"]`.
+    """
+    previous = previous or {}
+    mailed = set(previous.get("mailed") or ())
+    last = _parse(previous.get("last_digest"))
+    open_keys = {f.key for f in mail_worthy}
+    fresh = [f for f in mail_worthy if f.key not in mailed]
+    actions = []
+    if fresh:
+        actions.append(AlertAction(
+            "mail", _SUBJECT + "%d problem(s) need you" % len(fresh),
+            "\n".join(["The guardian could not fix these itself:", ""]
+                      + ["          " + _line(f) for f in fresh]
+                      + ["", "Details: guardian.py status"])))
+        last = now
+    elif mail_worthy and (last is None or now - last >= digest_every):
+        actions.append(AlertAction(
+            "mail", _SUBJECT + "%d problem(s) still open" % len(mail_worthy),
+            "\n".join(["Still open, and still needing a person:", ""]
+                      + ["          " + _line(f) for f in mail_worthy]
+                      + ["", "Details: guardian.py status"])))
+        last = now
+    state = {"mailed": sorted((mailed & open_keys) | {f.key for f in fresh}),
+             "last_digest": _iso(last) if last else None}
+    return actions, state
 
 
 # ---------------------------------------------------------------- finding rules
@@ -758,6 +800,64 @@ def duplicate_task_findings(desktop_enabled, agent_rows) -> list:
     return out
 
 
+def app_task_registry_findings(desktop_enabled, registry_rows, host: str, is_mine=None) -> list:
+    """The Claude app's enabled tasks on THIS machine against 90-Meta/scheduled-tasks.md.
+
+    The app's scheduler has no idea which machine it runs on: its tasks live per install and
+    are not synced. So the registry is the only place that says which machine owns a task,
+    and nothing enforced it. Three drifts, each one a way a task silently runs twice or
+    never:
+
+      - an enabled app task with no registry row at all (say `weekly-report-to-chat`):
+        another machine can run the same task and nobody can tell;
+      - an enabled app task whose row names another machine: it runs here AND wherever the
+        registry says, a real duplicate, so it is a failure;
+      - a `claude-app` row owned by this machine whose `enabled` disagrees with the app.
+
+    `desktop_enabled` is [(app task id, account)]; `registry_rows` are tasks.py's parsed
+    rows. A row of any type whose id equals the app task counts as its registration.
+    `host` and `is_mine` are `machine_matches`'s. Never repairable: the app's tasks are
+    changed by hand, in the app.
+    """
+    enabled_here = []
+    for task_id, _account in desktop_enabled or ():
+        if task_id not in enabled_here:
+            enabled_here.append(task_id)
+    by_id = {r.get("id"): r for r in registry_rows or ()}
+    out = []
+    for task_id in enabled_here:
+        row = by_id.get(task_id)
+        if row is None:
+            out.append(Finding(
+                "app-task:unregistered:%s" % task_id, WARN,
+                "Claude app task %s is enabled on this machine but has no row in "
+                "90-Meta/scheduled-tasks.md: add a claude-app row with machine %s, or another "
+                "machine can run the same task without anyone noticing" % (task_id, host)))
+            continue
+        machine = row.get("machine")
+        if not machine_matches(machine, host, is_mine):
+            out.append(Finding(
+                "app-task:wrong-machine:%s" % task_id, FAIL,
+                "Claude app task %s is enabled on this machine (%s), but the registry assigns it "
+                "to %s: it runs twice. Disable it here in the Claude app, or move the row to "
+                "this machine and disable it there" % (task_id, host, machine)))
+        elif not row.get("enabled"):
+            out.append(Finding(
+                "app-task:registry-drift:%s" % task_id, WARN,
+                "Claude app task %s is enabled on this machine but its registry row says "
+                "enabled: no. Fix whichever side is wrong" % task_id))
+    for row in registry_rows or ():
+        if (row.get("type") == "claude-app" and str(row.get("machine") or "").strip() != "*"
+                and machine_matches(row.get("machine"), host, is_mine)
+                and row.get("enabled") and row.get("id") not in enabled_here):
+            out.append(Finding(
+                "app-task:registry-drift:%s" % row["id"], WARN,
+                "the registry says claude-app task %s is enabled on this machine, but the "
+                "Claude app has it disabled or does not have it: set enabled: no in "
+                "90-Meta/scheduled-tasks.md, or enable it in the app" % row["id"]))
+    return out
+
+
 def degraded_routine_ids(rows, bridge_stale: bool) -> list:
     """Enabled routines whose `needs_bridge` names the browser, while the browser bridge is stale."""
     if not bridge_stale:
@@ -844,6 +944,10 @@ class SessionTranscript:
     project_dir: str         # Claude Code's encoded directory name under ~/.claude/projects
     started: float
     mtime: float
+    # Claude Code hook events (`SessionStart`) whose hooks Claude Code itself cancelled in this
+    # session, read from its `hook_cancelled` attachments. Under the SDK an unattended run's
+    # queued prompt can cancel SessionStart, killing compass.py before it leaves a heartbeat.
+    cancelled: frozenset = frozenset()
 
 
 @dataclass(frozen=True)
@@ -954,7 +1058,7 @@ def hook_liveness(transcripts, heartbeats, specs, now: float, since, config: Liv
             continue
         seen = {h.event for h in mine}
         for s in session_events:
-            if s.id not in seen:
+            if s.id not in seen and s.hook_event not in t.cancelled:
                 missing.setdefault(s.id, []).append(t.sid)
 
     silent = set()
@@ -1096,6 +1200,30 @@ def probe_findings(pairs) -> list:
                                "hook %s (%s) fails when run the way Claude Code runs it: %s"
                                % (case.event_id, case.identity, " ".join(why.split()))))
     return out
+
+
+PROBE_KEY_PREFIX = "hooks:probe:"
+
+
+def probe_mail_worthy(findings, prev_active, already_mailed=None) -> list:
+    """FAIL-severity findings worth paging a person, given what was already open last run.
+
+    Every non-probe FAIL pages the first time it appears: nobody but a person renews a dead
+    token or fixes a missing git hook, so the first occurrence is the only chance to tell
+    them promptly. A `hooks:probe:*` FAIL is different: probe timeouts have been seen to
+    appear on one run and be gone on the guardian's very next run, with no code change in
+    between, so paging on the first occurrence would mostly page for something already
+    resolved by the time it is read. It pages once it is still open on the *next* run,
+    i.e. its key was already present in `prev_active` (the previous run's alerts state).
+    Paging a key at most once while it stays open is `mail_decide()`'s job, for every
+    finding, through `state["alerts"]["mail"]["mailed"]`. The optional `already_mailed`
+    argument is for a caller that wants that filter applied here too.
+    """
+    prev_active = prev_active or {}
+    already_mailed = already_mailed or ()
+    return [f for f in findings
+            if f.severity == FAIL and (not f.key.startswith(PROBE_KEY_PREFIX)
+                                        or (f.key in prev_active and f.key not in already_mailed))]
 
 
 # ---------------------------------------------------------------- session-start notice
