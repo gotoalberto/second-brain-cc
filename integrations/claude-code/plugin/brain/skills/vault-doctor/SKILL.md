@@ -23,6 +23,14 @@ Interpret the report above for the user:
 5. **Is the machinery alive?** If the guardian is installed, run
    `python3 ~/Brain/_bin/guardian.py status` and read its hook liveness and hook probe lines:
    hooks that do not fire mean memory is not being queried or saved, with no error anywhere.
+6. **Does retrieval work in the user's language?** When the user writes in Spanish and the
+   report shows words no Spanish question can reach, run
+   `python3 __VAULT__/_bin/bilingual_eval.py --held-out` and read `--from-misses` before
+   proposing any glossary entry: a missed proper noun needs nothing, a missing subject needs
+   a note. Never extend the glossary just to make the held-out set pass.
+7. **Does context reach the code?** To verify the whole agent pipeline end to end, point the
+   user at `python3 __VAULT__/_bin/pipeline_acceptance.py setup`; it runs in a fresh session
+   and is never part of the test suite.
 
 Finish with **three concrete actions**, ordered by impact. If everything is fine, say so
 in one line rather than inventing problems.

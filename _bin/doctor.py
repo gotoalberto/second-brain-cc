@@ -203,6 +203,7 @@ def main():
             print("    " + ", ".join("%s(%d)" % (w, n) for w, n in missing[:14]))
             print("  -> many are proper nouns and need no bridge; check with:")
             print("     python3 %s/_bin/bilingual_eval.py --held-out" % B.VAULT)
+            print("     python3 %s/_bin/bilingual_eval.py --from-misses   (what real questions missed)" % B.VAULT)
     except Exception as exc:
         print("could not compute: %r" % exc)
 

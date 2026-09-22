@@ -530,6 +530,8 @@ The deepest experience today is Claude Code with the plugin; nothing in the vaul
 | `install_plugin.py`, `claude_settings.py` | Skills and agents sync; recommended Claude Code settings. |
 | `brain_paths.py`, `migrate_state.py`, `pywrap.sh` | Where state lives; moving it out of `~/.claude`; the interpreter picker jobs start through. |
 | `run_all_tests.py` | Every test, each in a scratch HOME. |
+| `bilingual_eval.py` | Whether a Spanish question finds what its English twin finds, on a fitted and a held-out set; `--from-misses` lists the words real misses could not reach. |
+| `pipeline_acceptance.py` | By hand, in a fresh Claude Code session: `setup` builds a small repo and plants a convention only in the vault, `check` verifies it reached the generated code, `cleanup` removes both. |
 
 ## Conventions that ship with it
 
