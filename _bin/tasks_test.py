@@ -60,6 +60,7 @@ id: scheduled-tasks
 | app-row | box | 06:00 | * | claude-app | (Claude app scheduler) | yes | inventory only |
 | elsewhere | other-box | 06:00 | * | agent | 90-Meta/routines/routine-a.md | yes | other machine |
 | by-key | box-1a2b3c4d | -- | -- | agent | 90-Meta/routines/routine-a.md | yes | pinned by machine key |
+| hourly | box | every 1h | * | shell | echo hourly | yes | an interval row |
 """
 
 # The registry's own cells as the note writes them: a bare `*`, one in code ticks, and emphasis
@@ -166,6 +167,8 @@ for k in ("VAULT", "REGISTRY", "STATE_DIR", "STATE_FILE", "LOG_DIR", "RUNNER_LOG
     setattr(T, k, cfg[k])
 T.host = lambda: "box"
 T.raise_alert = T.clear_alert = lambda *a, **k: None
+if cfg.get("single"):
+    T.single_instance = lambda task: task["id"] in cfg["single"]
 if cfg.get("now"):
     fixed = dt.datetime.strptime(cfg["now"], "%Y-%m-%dT%H:%M:%S")
     T.now = lambda: fixed
@@ -372,6 +375,78 @@ def _state_tests(T, real_run_task):
               st.get("task-s", {}).get("last_run_at") == "2026-09-14T10:00:00"
               and st.get("task-s", {}).get("last_exit") == 0, (st, results))
 
+    print("\n== a routine's own timeout ==")
+    check("no timeout_minutes means the default", T.routine_timeout("---\nid: r\n---\nbody\n") == T.DEFAULT_TIMEOUT)
+    check("timeout_minutes in the front matter sets it",
+          T.routine_timeout("---\nid: r\ntimeout_minutes: 240\n---\nbody\n") == 240 * 60)
+    check("timeout_minutes in the body does not count",
+          T.routine_timeout("---\nid: r\n---\ntimeout_minutes: 240\n") == T.DEFAULT_TIMEOUT)
+    check("a zero timeout falls back to the default",
+          T.routine_timeout("---\nid: r\ntimeout_minutes: 0\n---\n") == T.DEFAULT_TIMEOUT)
+
+    print("\n== a single_instance task never runs twice at once ==")
+    world = state_world(T)
+    rows = {t["id"]: t for t in T.read_registry()}
+    check("a shell row is not single_instance", not T.single_instance(rows["task-s"]))
+    routine = os.path.join(world["VAULT"], "90-Meta", "routines", "r.md")
+    write(routine, "---\nid: r\nsingle_instance: true\n---\n\nbody\n")
+    check("a routine with single_instance: true is",
+          T.single_instance({"type": "agent", "command": "90-Meta/routines/r.md"}))
+    write(routine, "---\nid: r\n---\n\nsingle_instance: true in the body does not count\n")
+    check("a routine without it in the front matter is not",
+          not T.single_instance({"type": "agent", "command": "90-Meta/routines/r.md"}))
+    cfg = dict(world, task="task-s", w="A", now="2026-09-14T10:00:00", single=["task-s"])
+    first = subprocess.Popen([sys.executable, "-c", CHILD_RUN, json.dumps(cfg)],
+                             env=child_env(world, W="A", RC="0"),
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
+    try:
+        started = wait_until(lambda: os.path.exists(os.path.join(world["VAULT"], "loaded-A")), 30)
+        cfg_b = dict(world, task="task-s", w="B", now="2026-09-14T10:30:00", single=["task-s"])
+        second = subprocess.run([sys.executable, "-c", CHILD_RUN, json.dumps(cfg_b)],
+                                env=child_env(world, W="B", RC="3"), stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, universal_newlines=True, timeout=60)
+        check("a --force of a task still running is refused with exit 75",
+              started and second.returncode == 75 and "already running" in second.stderr,
+              (started, second.returncode, second.stderr[-300:]))
+        check("and never starts the task's command", not os.path.exists(os.path.join(world["VAULT"], "loaded-B")))
+        check("the lock file names the run holding it",
+              "pid %d " % first.pid in read_text(T.task_lock_path("task-s")), read_text(T.task_lock_path("task-s")))
+    finally:
+        write(os.path.join(world["VAULT"], "go-A"), "")
+        out, _ = first.communicate(timeout=60)
+    st = read_json(world["STATE_FILE"]) or {}
+    check("the running one records its own result, untouched by the refused one",
+          first.returncode == 0 and st.get("task-s", {}).get("last_run_at") == "2026-09-14T10:00:00"
+          and st.get("task-s", {}).get("last_exit") == 0, (first.returncode, st, out[-300:]))
+
+    def lock_is_free():
+        with T.task_lock("task-s") as (held, _holder):
+            return held
+    check("once it ends the lock is free again", attempt(lock_is_free)[0] is True)
+
+    world = state_world(T)
+    real_single = T.single_instance
+    T.single_instance = lambda task: task["id"] == "tick-a"
+    lock = T.task_lock_path("tick-a")
+    os.makedirs(os.path.dirname(lock), exist_ok=True)
+    holder = subprocess.Popen([sys.executable, "-c", HOLD_LOCK, lock], stdout=subprocess.PIPE, universal_newlines=True)
+    try:
+        holder.stdout.readline()
+        rc, exc = attempt(T.main, [])
+        st = read_json(T.STATE_FILE) or {}
+        check("a tick that finds a due task still running skips it and leaves its state alone",
+              exc is None and rc == 0 and "tick-a" not in st, (rc, exc, st))
+        check("and says so in the runner log", "skipped tick-a: already running" in read_text(T.RUNNER_LOG),
+              read_text(T.RUNNER_LOG)[-300:])
+    finally:
+        holder.kill()
+        holder.wait()
+    rc, exc = attempt(T.main, [])
+    st = read_json(T.STATE_FILE) or {}
+    check("the next tick after it ends runs it", exc is None and st.get("tick-a", {}).get("last_exit") == 0,
+          (rc, exc, st))
+    T.single_instance = real_single
+
     print("\n== the state lock ==")
     world = state_world(T)
     seed = {"task-a": entry("2026-09-13T06:00:00")}
@@ -468,6 +543,14 @@ def main():
               rows.get("routine-a", {}).get("type") == "agent"
               and rows["routine-a"]["command"] == "90-Meta/routines/routine-a.md", rows.get("routine-a"))
         state = T.load_state()
+        check("an `every Nh` row is read, not dropped as unscheduled",
+              rows.get("hourly", {}).get("time") == "every 1h", rows.get("hourly"))
+        check("an interval row goes by the gap since its last run, not the daily mark",
+              T.due(rows["hourly"], {"hourly": {"last_run_date": "2026-09-14",
+                                                "last_run_at": "2026-09-14T06:30:00"}})
+              == (False, "not yet (every 1h, next 07:30)")
+              and T.due(rows["hourly"], {"hourly": {"last_run_date": "2026-09-14",
+                                                    "last_run_at": "2026-09-14T05:30:00"}}) == (True, ""))
         check("tasks.due is the shared domain rule, row for row",
               all(T.due(t, state) == GD.routine_due(t, None, T.now(), "box") for t in rows.values()),
               [(i, T.due(t, state)) for i, t in rows.items()])

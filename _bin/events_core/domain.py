@@ -25,7 +25,7 @@ MANUAL = ("cli", "mcp")
 APPROVED_HANDLERS = (
     "compass", "skills_index", "retrieve", "gate_write", "vault_ledger", "protocol_guard",
     "log_subagent", "gate_memory", "vault_sync", "session_end", "seed_worktree",
-    "index_vault", "linkfix", "git_pre_commit", "git_post_commit",
+    "index_vault", "linkfix", "git_pre_commit", "git_post_commit", "style_gate",
 )
 WATCH_ACTIONS = ("ledger-update", "index-trigger", "linkfix-trigger", "sync-debounce")
 GIT_HOOKS = ("pre-commit", "post-commit")

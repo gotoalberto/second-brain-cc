@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
-# kp_kdbx.pl — a direct File::KDBX binding for the six operations kp_backend.py's kpcli
-# backend translates: ls, search, show, mkdir, add, edit.
+# kp_kdbx.pl: a direct File::KDBX binding for the operations kp_backend.py's kpcli
+# backend translates: ls, search, show, mkdir, add, edit, mv, rm, rmdir.
 #
 # WHY THIS EXISTS. `kp.py` speaks one protocol, keepassxc-cli's. A machine sharing a `.kdbx`
 # over a synced path (never S3 — see brain_shared.py) may not have KeePassXC installed, but
@@ -19,7 +19,10 @@
 #     show    --entry ENTRY [--attr ATTR] [--reveal]
 #     mkdir   --group GROUP
 #     add     --entry ENTRY [--user U] [--url U] [--notes N] [--stdin-secret] [--generate [--length N]]
-#     edit    --entry ENTRY [--user U] [--url U] [--notes N] [--stdin-secret] [--generate [--length N]]
+#     edit    --entry ENTRY [--title T] [--user U] [--url U] [--notes N] [--stdin-secret] [--generate [--length N]]
+#     mv      --entry ENTRY --group GROUP
+#     rm      --entry ENTRY
+#     rmdir   --group GROUP
 #
 # The master password is read from --pwfile (a private 0600 temp file kp_backend.py writes
 # and shreds: never argv, never the environment). A key FILE, when the store has one, is
@@ -93,7 +96,7 @@ fail("File::KDBX is not installed. Install it with:\n" .
 my $op = shift @ARGV;
 fail("no operation given") unless defined($op) && length($op);
 
-my (%opt, $recursive, $flatten, $group, $text, $entry, $attr, $reveal,
+my (%opt, $recursive, $flatten, $group, $text, $entry, $attr, $reveal, $new_title,
     $user, $url, $notes, $stdin_secret, $generate, $length, $db, $pwfile);
 GetOptions(
     'recursive'    => \$recursive,
@@ -103,6 +106,7 @@ GetOptions(
     'entry=s'      => \$entry,
     'attr=s'       => \$attr,
     'reveal'       => \$reveal,
+    'title=s'      => \$new_title,
     'user=s'       => \$user,
     'url=s'        => \$url,
     'notes=s'      => \$notes,
@@ -273,6 +277,7 @@ if ($op eq 'add' || $op eq 'edit') {
         fail("no such entry: $entry") unless $e;
     }
 
+    $e->title($new_title) if defined($new_title) && length($new_title);
     $e->username($user) if defined($user);
     $e->url($url) if defined($url);
     $e->notes($notes) if defined($notes);
@@ -293,6 +298,51 @@ if ($op eq 'add' || $op eq 'edit') {
 
     $kdbx->dump_file($db, $key);
     print(($op eq 'add' ? 'created' : 'updated'), ": $entry\n");
+    exit 0;
+}
+
+# Every save below uses $key, the exact key the store was opened with, never $master alone:
+# on a keyfile-only store $master is "", and saving with it would re-key the whole store
+# under an EMPTY password and no key file.
+
+# `mv` relocates only, the same shape keepassxc-cli uses. kp.py's cmd_mv renames with a
+# follow-up `edit --title`, so this never has to.
+if ($op eq 'mv') {
+    fail("--entry is required") unless defined($entry) && length($entry);
+    fail("--group is required") unless defined($group);
+    my $e = find_entry($entry);
+    fail("no such entry: $entry") unless $e;
+    my $dst = find_group($group, 1);
+    $e->remove;
+    $dst->add_entry($e);
+    $kdbx->dump_file($db, $key);
+    print "moved: $entry\n";
+    exit 0;
+}
+
+# `rm` detaches the entry from its group. The recycle bin is NOT used: a half-hidden second
+# copy makes "is it gone?" unanswerable. kp.py takes a backup before calling and verifies
+# (or restores) afterwards, so a delete is recoverable there.
+if ($op eq 'rm') {
+    fail("--entry is required") unless defined($entry) && length($entry);
+    my $e = find_entry($entry);
+    fail("no such entry: $entry") unless $e;
+    $e->remove;
+    $kdbx->dump_file($db, $key);
+    print "deleted: $entry\n";
+    exit 0;
+}
+
+# `rmdir` only ever removes an empty group, and never the root. kp.py checks emptiness
+# before calling and this checks again: on a store shared between machines the two checks
+# can be minutes apart.
+if ($op eq 'rmdir') {
+    fail("--group is required") unless defined($group) && length($group);
+    my $g = find_group($group, 0);
+    fail("the root group is never removed") if $g == $kdbx->root;
+    fail("the group is not empty: $group") if @{$g->entries} || @{$g->groups};
+    $g->remove;
+    $kdbx->dump_file($db, $key);
     exit 0;
 }
 

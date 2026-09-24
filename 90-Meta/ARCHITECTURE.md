@@ -27,7 +27,9 @@ supersedes: []
    only its path; the executor reads it in one go and starts with a clean window.
 4. Work happens in an **isolated worktree**; `seed_worktree.py` copies `.env`, assigns a
    port of its own and seeds the pack.
-5. **Stop** → `gate_memory.py` blocks closing without saving (it blocks exactly once).
+5. **Stop** → `gate_memory.py` blocks closing without saving (it blocks exactly once), and
+   `style_gate.py` blocks a reply that reads as written by an AI and asks for it rewritten
+   (once per reply).
 6. **SessionEnd** → releases claims and marks `.dirty`. **No session touches git.**
 7. **The scheduler** (launchd, systemd or cron) every 10 min → `vault_sync.py`: reindexes, scans for
    secrets, commits, pushes. Other jobs run the guardian, the file watch and the routines, with no
@@ -60,7 +62,8 @@ supersedes: []
 |---|---|
 | `_bin/brainlib.py` | core: DB, FTS sanitizing, secret redaction, locks, atomic writes |
 | `_bin/compass.py` `retrieve.py` | the two read hooks (T0, T1) |
-| `_bin/gate_write.py` `gate_memory.py` | the two deliberate gates (the only ones that exit with code 2) |
+| `_bin/gate_write.py` `gate_memory.py` `style_gate.py` | the three deliberate gates (the only ones that exit with code 2) |
+| `_bin/style_check.py` | the writing check behind `style_gate.py`, also run by hand on every document |
 | `_bin/vw.py` | the only write path to shared notes |
 | `_bin/query.py` `claim.py` | CLI for the agents |
 | `_bin/linkfix.py` | finds and repairs broken `[[links]]`; runs on every search |

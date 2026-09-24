@@ -72,6 +72,52 @@ def files_to_commit():
     return unicos
 
 
+# Folders whose changes are the harness maintaining itself (the skill catalogue refreshed
+# from the Claude config). They are real changes and are committed, but they are not work,
+# and a subject line that mixes the two makes `git log --oneline` a wall of identical
+# `vault: N file(s)` lines where routine upkeep cannot be told from a decision.
+_ROUTINE = ("40-Skills/",)
+
+
+def _is_routine(path):
+    return any(path.startswith(p) for p in _ROUTINE)
+
+
+def _folders(paths):
+    """Top-level folders touched, in the order they first appear, deduplicated."""
+    out = []
+    for p in paths:
+        top = p.split("/", 1)[0] if "/" in p else p
+        if top not in out:
+            out.append(top)
+    return out
+
+
+def commit_message(paths, when):
+    """The commit subject and body for this set of paths.
+
+    Says what changed, using only what is already known: no model, no guessing at intent. A
+    daemon that runs unattended every 10 minutes must never write a plausible reason it
+    cannot verify; a plain honest message beats a confident wrong one. The why of a change
+    lives in a note; this only has to make the history navigable enough to find the note.
+    No machine identity either: the commit is pushed.
+    """
+    paths = list(paths)
+    n = len(paths)
+    routine = [p for p in paths if _is_routine(p)]
+    kind = "chore" if routine and len(routine) == n else "vault"
+    if n == 1:
+        what = paths[0]
+    else:
+        folders = _folders(paths)
+        shown = ", ".join(folders[:3]) + (", \u2026" if len(folders) > 3 else "")
+        what = "%s (%d files)" % (shown, n)
+    subject = "%s: %s (%s)" % (kind, what, when)
+    # The full list in the body, so `git show --stat` is not needed to see what moved.
+    body = "\n".join(sorted(paths)) if n > 1 else ""
+    return subject, body
+
+
 def _sha(path):
     h = hashlib.sha256()
     with open(path, "rb") as fh:
@@ -643,12 +689,13 @@ def main():
             print("no effective changes (everything pending was blocked)" if blocked
                   else "no effective changes")
             return 2 if blocked else 0
-        n = len(out.splitlines())
+        # What actually got staged, which is not `paths`: the secret gate may have held some
+        # back, and the message must describe the commit, not the intention.
+        staged = [l.strip().strip('"') for l in out.splitlines() if l.strip()]
         # No machine identity in a message that gets pushed: this commit is public. MACHINE
         # itself stays as it is everywhere else in this file (the non-pushed B.log() calls).
-        msg = "vault: %d file(s) — %s" % (
-            n, time.strftime("%Y-%m-%d %H:%M"))
-        code, out, err = git("commit", "-q", "-m", msg)
+        msg, body = commit_message(staged, time.strftime("%Y-%m-%d %H:%M"))
+        code, out, err = git("commit", "-q", "-m", msg, *(["-m", body] if body else []))
         if code != 0:
             print("commit failed: %s %s" % (out[:200], err[:200]))
             return 1

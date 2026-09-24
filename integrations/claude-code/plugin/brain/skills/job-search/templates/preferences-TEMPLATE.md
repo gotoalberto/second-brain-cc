@@ -11,7 +11,10 @@ local and never pushed.
 ## Remote rules
 
 - Remote only: <yes | no>
-- Hybrid acceptable within: <city or distance, or "never">
+- On-site or hybrid acceptable in: <your city or area, or "never">
+  Roles there qualify in any work mode and share the top tier with fully remote roles; on-site or
+  hybrid anywhere else fails. Each run then searches twice: remote, and this area with no work mode
+  filter.
 - Time zone overlap you can accept: <hours>
 
 ## Money and contract

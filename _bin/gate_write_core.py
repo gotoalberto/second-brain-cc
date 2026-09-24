@@ -46,6 +46,127 @@ _SEGMENT = re.compile(r"&&|\|\||;|\n")
 _SCRATCHPAD = re.compile(r"^/(private/)?tmp/claude-\d+/")
 
 
+# vault_sync.py is the only process that touches git in the vault: sessions write files, and
+# the daemon (and the end-of-turn `--hook` pass) commits and pushes under a flock. That was a
+# docstring and nothing else, so a session ran its own `git add && git commit && git push` in
+# the vault and collided with a daemon pass in flight: `cannot lock ref 'HEAD'`, and the
+# session's files were swept into the daemon's own commit, losing the message that explained
+# them. Both processes did what they were written to do; what was missing was the barrier.
+#
+# Only history-writing verbs are denied. Reads (status, log, diff, show) and `git add` are
+# untouched: staging is harmless on its own, and the daemon commits whatever is staged. `pull`
+# is in because it moves HEAD, which is exactly what collides with the daemon; `fetch` is not.
+#
+# The verb must be git's SUBCOMMAND, not the word anywhere in the line: matching it loosely
+# denied `git log -- <a note whose filename contains "commit">`, a plain read. So git's own
+# options and their values are skipped, the first bare word is the subcommand, and nothing
+# after `--` is looked at.
+_GIT_VERBS = {"commit", "push", "pull", "rebase", "merge", "cherry-pick", "revert", "reset", "stash"}
+_GIT_OPTS_WITH_VALUE = ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path")
+
+# A worktree of the vault is a different checkout with its own HEAD. The daemon never touches
+# it, so committing there is the sanctioned flow (code goes in a worktree) and must not be
+# caught just because its path sits under the vault.
+_WORKTREE = re.compile(r"worktree|/_worktrees/")
+_CD = re.compile(r"^\s*\(?\s*cd\s+([^\s|&;)]+)")
+
+
+def _git_invocation(segment):
+    """(subcommand, the directory it was aimed at with -C/--git-dir/--work-tree or None)
+    for the first `git` in this shell segment, or (None, None)."""
+    words = segment.split()
+    try:
+        i = next(n for n, w in enumerate(words) if w == "git" or w.endswith("/git"))
+    except StopIteration:
+        return None, None
+    i += 1
+    target = None
+    while i < len(words):
+        w = words[i]
+        if w == "--":                       # everything after this is paths, not verbs
+            return None, target
+        if w in _GIT_OPTS_WITH_VALUE:       # `-C <path>`: the value is not the subcommand
+            if w != "-c" and i + 1 < len(words):
+                target = words[i + 1]
+            i += 2
+            continue
+        if w.startswith("--git-dir=") or w.startswith("--work-tree="):
+            target = w.split("=", 1)[1]
+        if w.startswith("-"):               # `--git-dir=x`, `--no-pager`, `--help`, ...
+            i += 1
+            continue
+        return w, target
+    return None, target
+
+
+def _normpath(path):
+    out = []
+    for part in path.split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if out:
+                out.pop()
+            continue
+        out.append(part)
+    return "/" + "/".join(out)
+
+
+def _resolve_dir(path, cwd, home):
+    """An absolute, normalised directory for a `cd` or `-C` argument, or "" if unknowable."""
+    path = (path or "").strip("'\"")
+    for prefix in ("${HOME}", "$HOME", "~"):
+        if path == prefix or path.startswith(prefix + "/"):
+            path = (home or "") + path[len(prefix):]
+            break
+    if not path or "$" in path or path.startswith("~"):
+        return ""
+    if not path.startswith("/"):
+        if not cwd:
+            return ""
+        path = cwd + "/" + path
+    return _normpath(path)
+
+
+def _is_vault(path, vault):
+    """Does this directory sit in the vault checkout itself (not a worktree under it)?"""
+    if not path or not vault or _WORKTREE.search(path):
+        return False
+    if path.endswith("/.git"):
+        path = path[:-len("/.git")]
+    return path == vault or path.startswith(vault + "/")
+
+
+def bash_rewrites_vault_history(command, cwd="", vault="", home=""):
+    """True if this shell command would write the VAULT's own git history.
+
+    `cwd` is the session's working directory, `vault` the vault root and `home` what `~` and
+    `$HOME` expand to. A `cd` is not judged per segment: it sets the directory for everything
+    after it, so `cd <vault> && git commit` and `cd <other repo> && git commit` are read as a
+    whole. Anything aimed elsewhere (another repo, a worktree) is never denied.
+    """
+    if not command or not vault:
+        return False
+    vault = _normpath(vault)
+    here = _resolve_dir(cwd, "", home)
+    for segment in _SEGMENT.split(command):
+        cd = _CD.search(segment)
+        if cd:
+            here = _resolve_dir(cd.group(1), here, home)
+        verb, target = _git_invocation(segment)
+        if verb not in _GIT_VERBS or _WORKTREE.search(segment):
+            continue
+        # A fast-forward of a branch finished in a worktree is how /task integrates work into
+        # the vault. Its commits already exist with their own messages, so nothing can be
+        # swept into the daemon's commit; if it meets the daemon's lock it fails and is retried.
+        if verb == "merge" and "--ff-only" in segment.split():
+            continue
+        where = _resolve_dir(target, here, home) if target else here
+        if _is_vault(where, vault):
+            return True
+    return False
+
+
 def bash_touches_protected(command):
     """Which protected folder this shell command looks like it writes to, or None.
 

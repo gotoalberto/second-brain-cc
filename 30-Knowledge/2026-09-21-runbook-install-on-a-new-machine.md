@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real installs on a macOS laptop and a Linux server in a working vault; names and numbers are illustrative"
-updated: 2026-09-21
+updated: 2026-09-24
 supersedes: []
 ---
 
@@ -287,10 +287,15 @@ crashes or is closed, started by the desktop's autostart
 ```sh
 #!/bin/sh
 while true; do
-  /usr/bin/google-chrome --no-first-run --no-default-browser-check >>"$HOME/.cache/chrome-keepalive.log" 2>&1
+  /usr/bin/google-chrome --profile-directory=Default --no-first-run --no-default-browser-check >>"$HOME/.cache/chrome-keepalive.log" 2>&1
   sleep 5
 done
 ```
+
+`--profile-directory=Default` matters once the machine has more than one Chrome profile. Without
+it Chrome opens the "Who's using Chrome?" picker, no profile loads, the extension never starts,
+and the machine's browser vanishes from `list_connected_browsers`. Adding a second profile later
+is enough to trigger it; the `## This machine` block warns when the picker would block.
 
 **Extension and sign-ins, once, by hand through VNC.** Install the Claude in Chrome extension,
 sign it in with the machine's Claude account, and sign in to the sites your routines need; the
@@ -333,6 +338,36 @@ Only step 3 proves it; steps 1 and 2 can look right while the extension is unrea
 session start `## This machine` block reports step 1 for you, and whether Chrome runs.
 
 **Restart after any change** (step 8): the server inherits its flags from the moment it started.
+
+## 9b. Record this machine's own Chrome
+
+Do not leave the install without this step. Browsers are discovered per account, not per
+machine, so every session here sees the other machines' Chromes next to its own, and
+`list_connected_browsers` has no field that settles which is which: `isLocal` only means "same
+OS as this computer", so two macOS machines look alike, and `onThisComputer` is often missing.
+Guessing drives another machine's browser.
+
+**Confirm by evidence from a page, never by the `Browser N` name**, which the extension
+reassigns:
+
+```sh
+# 1. list_connected_browsers, and note the candidates whose osPlatform matches this machine
+# 2. select_browser { deviceId: <candidate> }, open a site only this machine's profile is signed
+#    in to, and check it lands signed in. Close the tab.
+# 3. record it
+python3 ~/Brain/_bin/machine_caps.py learn-chrome <deviceId> '<which profile it is>'
+```
+
+Pick the probe site so that **only this machine's profile can open it** signed in; a site every
+profile is signed in to proves nothing. Never log in to the probe site: if it asks for a login,
+it is the wrong browser, stop.
+
+`learn-chrome` writes `<brain state>/chrome-devices.json`, local to the machine and never in the
+vault. `machine_caps.py` reads it, so from the next session the `## This machine` block names
+this machine's own Chrome and tells sessions to `select_browser` it directly. **Verify** by
+running `python3 ~/Brain/_bin/machine_caps.py` and reading the `Own Chrome` line: it must carry
+the deviceId, not "not recorded". Reinstalling the extension gives a new deviceId; record
+it again.
 
 Prerequisites that matter: Chrome paired and running on this machine (step 9), a claude.ai
 login (`claude auth login`, a direct plan). Chrome is refused to API keys and
@@ -459,5 +494,6 @@ together:
 - [[2026-09-21-convention-scheduled-task-resources-checked-per-machine]]
 - [[2026-09-21-reference-where-claude-in-chrome-is-available]]
 - [[2026-09-21-runbook-github-cli-and-git-identity-on-a-linux-machine]]
+- [[2026-09-24-runbook-update-claude-on-each-machine]]
 - [[2026-09-15-runbook-brain-guardian]]
 - [[2026-09-15-decision-brain-machinery-independent-of-claude-app-and-account]]

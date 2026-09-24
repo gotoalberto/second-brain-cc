@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse on Bash|Edit|Write|NotebookEdit. Three jobs, strict scope.
+"""PreToolUse on Bash|Edit|Write|NotebookEdit. Four jobs, strict scope.
 
   1. Denies direct writes to 10-Projects/ and 70-Entities/ (forces vw.py).
      Bash counts. Until 2026-09-08 the matcher was `Edit|Write|NotebookEdit`, so
@@ -11,6 +11,8 @@
   2. Warns/blocks if another live session holds a claim on that path, on this machine or,
      through claims_sync's local cache, on another one.
   3. Context Pack gate (strict mode, off by default).
+  4. Denies a Bash command that commits, pushes or otherwise moves the vault's own git
+     history: vault_sync.py is the only process that does that (gate_write_core has why).
 
 Deliberate exemptions so as not to self-block: subagents, the vault itself,
 ~/.claude, the scratchpad, and anything not inside a git repo.
@@ -24,7 +26,8 @@ CONFIG = os.path.join(B.VAULT, "_index", "config.json")
 # The rules themselves live in gate_write_core, shared with the git pre-commit adapter.
 # This file is the Claude Code PreToolUse adapter: it reads the hook input, asks the
 # core, and answers in Claude Code's JSON.
-from gate_write_core import (PROTECTED, bash_touches_protected, claim_conflict,  # noqa: E402,F401
+from gate_write_core import (PROTECTED, bash_rewrites_vault_history,  # noqa: E402,F401
+                             bash_touches_protected, claim_conflict,
                              is_exempt_path, protected_folder)
 
 
@@ -75,7 +78,20 @@ def main():
 
     # Bash arrives with a command, not a file_path.
     if data.get("tool_name") == "Bash":
-        folder = bash_touches_protected(ti.get("command") or "")
+        command = ti.get("command") or ""
+        if bash_rewrites_vault_history(command, data.get("cwd") or os.getcwd(), B.VAULT,
+                                       os.path.expanduser("~")):
+            deny("Sessions do not commit or push the vault: `vault_sync.py` is the only "
+                 "process that touches git here, serialised with a flock, so your commit "
+                 "races its pass (`cannot lock ref 'HEAD'`) and your files get swept into "
+                 "its commit.\n"
+                 "Just write the files and leave them. The end-of-turn hook commits them and "
+                 "the daemon pushes and retries every 10 minutes.\n"
+                 "If it has to happen NOW, run the daemon's own pass instead:\n"
+                 "  /usr/bin/python3 %s/_bin/vault_sync.py\n"
+                 "(a worktree of the vault is not affected, and `git merge --ff-only` of a "
+                 "branch finished in one is allowed.)" % B.VAULT)
+        folder = bash_touches_protected(command)
         if folder:
             deny("`%s/` is shared between sessions and this looks like a shell write "
                  "to it. Use:\n"

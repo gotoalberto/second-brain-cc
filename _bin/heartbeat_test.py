@@ -233,7 +233,7 @@ def test_registry_hooks_carry_heartbeat():
     with open(os.path.join(os.path.dirname(HERE), "90-Meta", "events.json"), encoding="utf-8") as fh:
         reg = ED.load_registry(fh.read())
     hooks = reg.triggers("claude-hook")
-    check("the registry wires eleven Claude Code hooks", len(hooks) == 11, [e.id for e, _ in hooks])
+    check("the registry wires twelve Claude Code hooks", len(hooks) == 12, [e.id for e, _ in hooks])
     missing = []
     for e, t in hooks:
         script = t.spec["command"].split()[0]

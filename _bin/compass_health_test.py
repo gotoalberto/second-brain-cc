@@ -128,7 +128,9 @@ def main():
     check("it names this machine by its key", "## This machine" in machine and "test-box-12345678" in machine, machine)
     check("the budget measures it, and the budget report sees it too",
           "machine" in [s[0] for s in PB.assess(secs)["sections"]] and "machine" in [s[0] for s in plain])
-    check("the section stays a small part of the startup budget", B.est_tokens(machine) <= 250, B.est_tokens(machine))
+    # 320: the Own Chrome line (which connected Chrome is this machine's) added about 50 tokens on a
+    # machine with Chrome and no recorded deviceId, the longest case.
+    check("the section stays a small part of the startup budget", B.est_tokens(machine) <= 320, B.est_tokens(machine))
 
     write_state(active=OPEN)
     p, out, ctx = run_compass("aaaa1111-0000-4000-8000-000000000001")

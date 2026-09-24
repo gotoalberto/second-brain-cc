@@ -97,6 +97,15 @@ do not end a session that changed things without saving a note
 - Without Claude Code: `brain hook stop-memory-gate`
 - Handler command: `python3 _bin/gate_memory.py`, stdin: the hook JSON object
 
+### `stop-style-gate`
+
+block a reply that reads as written by an AI and ask for it rewritten
+
+- Claude Code hook: `Stop`
+- Liveness: `session`
+- Without Claude Code: `brain hook stop-style-gate`
+- Handler command: `python3 _bin/style_gate.py`, stdin: the hook JSON object
+
 ### `sync`
 
 commit and push the vault

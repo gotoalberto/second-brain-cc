@@ -9,8 +9,10 @@ OAuth desktop client and its own refresh token, both kept in the KeePass databas
 The two leaves share no prefix on purpose: `kp.py set` resolves a name by similarity, and a
 refresh token must never land on the client's entry.
 
-The registry of accounts (names, login hints, scopes, loopback ports) holds no secret and lives
-in <brain state>/google-accounts.json.
+The registry of accounts (names, login hints, scopes, loopback ports, the instant of the last
+consent) holds no secret and lives in <brain state>/google-accounts.json. The consent instant is
+what google_token_watch.py counts from: an OAuth app left in Testing publishing status gets
+refresh tokens that die 7 days after consent.
 """
 
 from __future__ import annotations
@@ -88,6 +90,7 @@ class Account:
     login_hint: str = ""
     scopes: tuple = DEFAULT_SCOPES
     port: int = DEFAULT_PORT
+    authorized_at: str = ""         # ISO instant of the last consent; "" when never stamped
 
 
 def parse_registry(text: str) -> dict:
@@ -115,15 +118,19 @@ def parse_registry(text: str) -> dict:
         port = spec.get("port", DEFAULT_PORT)
         if isinstance(port, bool) or not isinstance(port, int) or not 0 < port < 65536:
             raise AccountError("account %s: `port` must be a TCP port number" % name)
-        out[name] = Account(name, str(spec.get("login_hint") or ""), tuple(scopes) or DEFAULT_SCOPES, port)
+        out[name] = Account(name, str(spec.get("login_hint") or ""), tuple(scopes) or DEFAULT_SCOPES, port,
+                            str(spec.get("authorized_at") or ""))
     return out
 
 
 def render_registry(accounts: dict) -> str:
     import json
 
-    body = {name: {"login_hint": a.login_hint, "scopes": list(a.scopes), "port": a.port}
-            for name, a in sorted(accounts.items())}
+    body = {}
+    for name, a in sorted(accounts.items()):
+        body[name] = {"login_hint": a.login_hint, "scopes": list(a.scopes), "port": a.port}
+        if a.authorized_at:
+            body[name]["authorized_at"] = a.authorized_at
     return json.dumps({"accounts": body}, indent=2, ensure_ascii=False) + "\n"
 
 

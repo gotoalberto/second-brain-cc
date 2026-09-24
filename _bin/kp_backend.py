@@ -10,10 +10,10 @@ this machine speaks, `translate()` turns the small, fixed set of keepassxc-cli-s
 kp.py's own `cli()` builds into what `kp_kdbx.pl` (the kpcli-backed helper, new to this repo)
 expects, and `run()` carries out one call end to end.
 
-**Scope, on purpose.** Only the six subcommands `kp.py` actually issues through its central
-`cli()` function are translated: `ls`, `search`, `show`, `mkdir`, `add`, `edit` (checked
-against every `cli([...])` call site in kp.py). Everything else — `mv`, `rmdir`, and whatever
-else reaches `cli()` — raises `Unsupported`, which kp.py's `cli()` turns into a clear `die()`
+**Scope, on purpose.** Only the subcommands `kp.py` actually issues through its central
+`cli()` function are translated: `ls`, `search`, `show`, `mkdir`, `add`, `edit`, and the
+reorganisation set `mv`, `rm`, `rmdir` (checked against every `cli([...])` call site in
+kp.py). Everything else that reaches `cli()` raises `Unsupported`, which kp.py's `cli()` turns into a clear `die()`
 naming the operation, never a silent no-op or a bare traceback. `clip`, `db-create` and the
 `.lock`-file probing in `guard_lock`/`lock_state` never reach this module at all — they call
 `CLI` directly in kp.py and get their own explicit `KIND == "kpcli"` guard there, for the same
@@ -42,7 +42,7 @@ import tempfile
 
 
 class Unsupported(Exception):
-    """Raised by translate() for anything outside the six subcommands the kpcli backend
+    """Raised by translate() for anything outside the subcommands the kpcli backend
     covers, and by build()/run() for a backend kind neither "keepassxc" nor "kpcli"."""
 
 
@@ -92,16 +92,25 @@ def _find(kind, which, fallback_paths):
     return binary_name(kind)
 
 
-def _resolve(environ, which, fallback_paths):
+def _resolve(environ, which, fallback_paths, helper=KP_KDBX_PL):
     """(KIND, PATH). `BRAIN_KP_BACKEND` ("keepassxc" or "kpcli"), when set, wins outright and
     names which protocol this machine speaks — kpcli is for a machine keepassxc-cli cannot be
     installed on. Without it, keepassxc-cli is preferred (today's only backend, unchanged
     default) and kpcli is used only if nothing finds keepassxc-cli at all. Either way the
     binary itself is found with shutil.which() first, then the fallback list.
+
+    A forced kpcli that nothing finds on PATH runs the checkout's own kp_kdbx.pl (`helper`).
+    Before, it got the bare name, which exists nowhere, and db_ok() died with "keepassxc-cli
+    not found" unless the helper had been put on PATH by hand. The forced setting is the real
+    signal the default_fallback_paths() docstring asks for, so this does not let kpcli win on
+    its own.
     """
     forced = (environ.get("BRAIN_KP_BACKEND") or "").strip().lower()
     if forced in BACKENDS:
-        return forced, _find(forced, which, fallback_paths)
+        found = _find(forced, which, fallback_paths)
+        if forced == "kpcli" and found == binary_name("kpcli") and helper and os.path.exists(helper):
+            return forced, helper
+        return forced, found
     for kind in BACKENDS:
         found = which(binary_name(kind))
         if found:
@@ -116,7 +125,7 @@ KIND, PATH = _resolve(os.environ, shutil.which, default_fallback_paths)
 
 
 # ------------------------------------------------------------------ argv translation
-TRANSLATED = ("ls", "search", "show", "mkdir", "add", "edit")
+TRANSLATED = ("ls", "search", "show", "mkdir", "add", "edit", "mv", "rm", "rmdir")
 
 
 def _pop_flag(rest, flag):
@@ -176,6 +185,27 @@ def _translate_mkdir(rest):
     return ["mkdir", "--group", rest[0]]
 
 
+def _translate_rm(rest):
+    if len(rest) != 1:
+        raise Unsupported("rm")
+    return ["rm", "--entry", rest[0]]
+
+
+def _translate_mv(rest):
+    # keepassxc-cli's `mv <entry> <group>` relocates only; kp.py's cmd_mv renames with a
+    # separate `edit -t`. Both operands are required: a one-operand `mv` would read as a move
+    # to the root, silently.
+    if len(rest) != 2:
+        raise Unsupported("mv")
+    return ["mv", "--entry", rest[0], "--group", rest[1]]
+
+
+def _translate_rmdir(rest):
+    if len(rest) != 1:
+        raise Unsupported("rmdir")
+    return ["rmdir", "--group", rest[0]]
+
+
 def _translate_add_edit(op, rest):
     if not rest:
         raise Unsupported(op)
@@ -183,6 +213,7 @@ def _translate_add_edit(op, rest):
     user = _pop_value(rest, "-u")
     url = _pop_value(rest, "--url")
     notes = _pop_value(rest, "--notes")
+    title = _pop_value(rest, "-t")          # after the valued flags: a note may read "-t"
     stdin_secret = _pop_flag(rest, "-p")
     generate = _pop_flag(rest, "-g")
     length = _pop_value(rest, "-L")
@@ -194,6 +225,8 @@ def _translate_add_edit(op, rest):
     if rest:
         raise Unsupported(op)
     out = [op, "--entry", entry]
+    if title:
+        out += ["--title", title]
     if user:
         out += ["--user", user]
     if url:
@@ -212,7 +245,7 @@ def _translate_add_edit(op, rest):
 def translate(args, db_path):
     """The keepassxc-cli-shaped argv kp.py's `cli()` builds -> kp_kdbx.pl's own argv tail.
 
-    Only the six subcommands kp.py actually issues through `cli()` are covered (see the module
+    Only the subcommands kp.py actually issues through `cli()` are covered (see the module
     docstring). `db_path` is skipped wherever it appears in `args` rather than assumed to sit
     at a fixed position: kp.py's own argv shapes do not all put it in the same place (`ls`'s DB
     argument moves depending on which of `-R`/`-f` precede it).
@@ -231,6 +264,12 @@ def translate(args, db_path):
         return _translate_show(rest)
     if op == "mkdir":
         return _translate_mkdir(rest)
+    if op == "rm":
+        return _translate_rm(rest)
+    if op == "mv":
+        return _translate_mv(rest)
+    if op == "rmdir":
+        return _translate_rmdir(rest)
     return _translate_add_edit(op, rest)
 
 

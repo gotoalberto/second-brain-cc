@@ -61,6 +61,7 @@ right category and sort it then, without asking each time:
 
 ```
 kp.py mv <source> <target>     move or rename (rewrites the kp:// references in the vault's notes)
+kp.py rm <entry> --yes         delete an entry
 kp.py rmdir <group>            remove a group left empty
 ```
 
@@ -72,10 +73,16 @@ moved and where.
 **Only inside the agent group.** The rest of the database is the user's own hierarchy and is never
 touched, not even to tidy it.
 
-`mv` and `rmdir` need the keepassxc-cli backend. On the kpcli backend (`kp_kdbx.pl`) they stop with
-the reason instead of guessing; so do the clipboard and `locks`. `kp.py status` says which backend is
-live on its `cli` line. On kpcli, say what could not be tidied and leave it for a machine with
-KeePassXC.
+`mv`, `rm` and `rmdir` work on both backends. On the kpcli backend (`kp_kdbx.pl`) the clipboard and
+`locks` stop with the reason instead of guessing. `kp.py status` says which backend is live on its
+`cli` line.
+
+**`rm` is the one destructive command, so it asks.** Without `--yes` it deletes nothing: it prints
+what it would delete and which vault notes point at it, and exits 5. That listing is the point. A
+credential is not a file: if the entry is the only copy of a key nobody wrote down, deleting it loses
+the access itself. Read the notes it names before passing `--yes`, and tell the user
+which ones are now broken. The backup under `<STATE>/kp-backups/` is taken before the write, as with
+every other write, so a mistake is recoverable until those rotate out.
 
 ## Keyfile-only stores
 
@@ -145,6 +152,7 @@ kp.py set <entry> -g               rotate the password
 kp.py set <entry> -u new           change metadata without touching the password
 kp.py ref <entry>                  the kp:// reference to paste into a note
 kp.py mv <src> <dst>  /  rmdir     reorganize inside the agent group
+kp.py rm <entry> --yes             delete an entry (without --yes it only shows what would go)
 kp.py locks [--clear]              lock diagnosis, and clearing with permission
 kp.py unlock [--ttl 30m]           arm the master password cache
 kp.py lock                         forget the master password
@@ -162,6 +170,21 @@ kp.py lock                         forget the master password
 - **Exit code 6**: no database at the configured path (a cloud sandbox, an unmounted drive, a first
   run not done). Say so; do not improvise another store. The first run sets the path:
   `integrations/first-run/setup.sh`.
+
+**"Cannot open the database", invalid credentials or an HMAC mismatch, with the store reachable.**
+Do not assume the key file is the problem. There are two causes and the likelier one is the store:
+
+1. **The store was written with the wrong key.** If it fails on two machines that share one key
+   file, it is the store. Compare the key file's sha256 across machines (print only the first 16
+   hex characters, never the file) and look at which machine wrote last (the newest entry in its
+   `kp-backups/`). `kp.py` names the worst case itself: "opens with an EMPTY password and no key
+   file". The fix, on a copy, from a machine with keepassxc-cli and while nothing else writes to
+   the store: `keepassxc-cli db-edit --set-key-file <keyfile> --unset-password <copy>`, check it
+   opens with `-k <keyfile> --no-password` and NOT with an empty password, compare its entry list
+   with the newest backup, then put it back.
+2. **The key file here really is wrong or missing** (its hash differs from the other machines').
+   There is no recovery from inside: the user restores it from their own backup. Never generate a
+   new key file: a new key makes the store unreadable everywhere else.
 
 Exit codes: `4` master password missing · `5` database open in another client · `6` no database ·
 `1` everything else.

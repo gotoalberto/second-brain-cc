@@ -704,28 +704,38 @@ class HookLivenessSource:
                     continue
                 if not stat.S_ISREG(st.st_mode) or st.st_mtime < since:
                     continue
-                started = getattr(st, "st_birthtime", None) or st.st_mtime
+                # Linux has no st_birthtime, so a long session touched now (Claude Code appends
+                # metadata when its process exits, with no turn and no hook) would look born now
+                # and have its earlier heartbeats cut off: its first record's timestamp says better.
+                first, cancelled = self._head(os.path.join(folder, name))
+                started = min(getattr(st, "st_birthtime", None) or st.st_mtime, first or st.st_mtime)
                 out.append(D.SessionTranscript(D.session_sid(name[:-len(".jsonl")]), d,
-                                               min(started, st.st_mtime), st.st_mtime,
-                                               self._cancelled(os.path.join(folder, name))))
+                                               min(started, st.st_mtime), st.st_mtime, cancelled))
         return out
 
     HEAD_BYTES = 64 * 1024
 
     @classmethod
-    def _cancelled(cls, path):
-        """Hook events Claude Code cancelled at the start of a session, from its transcript.
+    def _head(cls, path):
+        """(first record's timestamp or None, hook events Claude Code cancelled) from a transcript.
 
-        Only the head is read: a SessionStart cancellation is written before the first turn,
-        and a transcript can run to megabytes. Lines that cannot mention one are not parsed.
+        Only the head is read: both are written before the first turn, and a transcript can run
+        to megabytes. Lines that cannot mention a cancellation are parsed only until a timestamp
+        turns up.
         """
-        out = set()
+        first, out = None, set()
         try:
             with open(path, "rb") as fh:
                 head = fh.read(cls.HEAD_BYTES)
         except OSError:
-            return frozenset()
+            return None, frozenset()
         for line in head.splitlines():
+            if first is None and b'"timestamp"' in line:
+                try:
+                    ts = json.loads(line).get("timestamp")
+                    first = dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00")).timestamp()
+                except (ValueError, AttributeError, TypeError):
+                    pass
             if b"hook_cancelled" not in line:
                 continue
             try:
@@ -736,7 +746,7 @@ class HookLivenessSource:
                 event = att.get("hookEvent") or str(att.get("hookName") or "").split(":")[0]
                 if event:
                     out.add(str(event))
-        return frozenset(out)
+        return first, frozenset(out)
 
     def heartbeats(self, since):
         out = []

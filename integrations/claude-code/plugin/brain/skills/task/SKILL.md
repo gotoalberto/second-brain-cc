@@ -80,7 +80,10 @@ leave it for the periodic sync job to pick up later:
 /usr/bin/git -C <base-checkout> merge <branch> --ff-only
 /usr/bin/git -C <base-checkout> push origin <base-branch>
 ```
-A change isn't done until it's pushed. If the push fails, say so. Detail:
+A change isn't done until it's pushed. If the push fails, say so. When the base checkout is the
+vault itself, the push is the sync daemon's own pass, `/usr/bin/python3 ~/Brain/_bin/vault_sync.py`:
+sessions never commit or push the vault by hand, and the pre-write gate denies it (the
+fast-forward merge above is allowed). Detail:
 `~/Brain/30-Knowledge/2026-09-16-convention-push-vault-changes-immediately.md`.
 
 ### 7. Memory (mandatory)

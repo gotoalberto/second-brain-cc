@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-16
+updated: 2026-09-24
 supersedes: []
 ---
 
@@ -17,13 +17,19 @@ supersedes: []
 
 A change to the vault is not done when it is committed, and not done when it is merged into the
 main branch. It is done when it is pushed to `origin`. Push right away, in the same session, as
-part of the merge step:
+part of the merge step, by running the sync daemon's own pass:
 
 ```sh
-git push origin main
+/usr/bin/python3 ~/Brain/_bin/vault_sync.py
 ```
 
-Do not leave it for the periodic sync job to pick up later.
+It commits whatever is pending and pushes every commit the remote does not have yet, under the
+same lock its scheduled runs take. Do not leave it for the next scheduled pass.
+
+A hand `git commit` or `git push` in the vault's checkout is denied by the pre-write gate since
+2026-09-22: it races the daemon and loses its own commit message
+([[2026-09-22-failure-session-git-commit-in-the-vault-races-vault-sync]]). A fast-forward merge of
+a branch finished in a worktree is still allowed.
 
 ## Why
 

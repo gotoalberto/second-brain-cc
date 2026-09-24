@@ -73,7 +73,7 @@ folder included.
 ### 6. The hooks (optional, Claude Code only)
 
 `_bin/compass.py` (startup), `retrieve.py` (per prompt), `gate_write.py`, `gate_memory.py`,
-`vault_sync.py`. They read JSON on stdin and write JSON on stdout.
+`style_gate.py`, `vault_sync.py`. They read JSON on stdin and write JSON on stdout.
 
 With no hook system, the manual equivalent is:
 
@@ -83,6 +83,7 @@ With no hook system, the manual equivalent is:
 | `retrieve.py` per prompt | `python3 _bin/query.py "<the prompt>"` before answering |
 | `gate_write.py` | respect the rule: `10-Projects/` and `70-Entities/` only via `vw.py` |
 | `gate_memory.py` on close | remember to save before you finish |
+| `style_gate.py` on close | `python3 _bin/style_check.py -` on the reply before sending it |
 | `vault_sync.py` | `git add -A && git commit && git push` |
 
 ### 7. The machinery (optional)

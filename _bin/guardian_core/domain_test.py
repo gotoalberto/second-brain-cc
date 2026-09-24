@@ -260,6 +260,28 @@ def test_schedule(D):
           and D.machine_matches("box-1a2b3c4d", "box", mine)
           and not D.machine_matches("", "box", lambda m: True))
 
+    # `every Nh`: repeats through the day instead of firing once
+    check("a plain HH:MM is not an interval", D.parse_every_hours("06:00") is None)
+    check("every 1h parses", D.parse_every_hours("every 1h") == 1)
+    check("spacing and case do not matter", D.parse_every_hours("EVERY 6H") == 6)
+    check("every 0h is not an interval", D.parse_every_hours("every 0h") is None)
+    h = dict(r, time="every 1h")
+    check("an interval routine that never ran is due",
+          D.routine_due(h, None, mon_0700, "box") == (True, ""))
+    check("an interval routine is due once the gap has passed",
+          D.routine_due(h, "2026-09-14", mon_0700, "box", last_run_at="2026-09-14T05:59:00")[0] is True)
+    check("an interval routine is not due inside the gap",
+          D.routine_due(h, "2026-09-14", mon_0700, "box", last_run_at="2026-09-14T06:30:00")
+          == (False, "not yet (every 1h, next 07:30)"))
+    check("an interval routine ignores the daily mark",
+          D.routine_due(h, "2026-09-14", mon_0700, "box", last_run_at="2026-09-14T04:00:00")[0] is True)
+    check("an unreadable last_run_at does not wedge an interval routine",
+          D.routine_due(h, "2026-09-14", mon_0700, "box", last_run_at="not a date")[0] is True)
+    check("an interval routine still obeys its days",
+          D.routine_due(dict(h, days="2-5"), None, mon_0700, "box") == (False, "not scheduled today"))
+    check("and its machine",
+          D.routine_due(dict(h, machine="other"), None, mon_0700, "box") == (False, "belongs to other"))
+
 
 def F(D, key, sev="fail", summary=None):
     return D.Finding(key=key, severity=sev, summary=summary or ("problem " + key))
@@ -696,6 +718,12 @@ def test_hook_liveness(D):
                                                   hb("aaaa1111", "stop-memory-gate", 30)], specs, now, young)
     check("nor is one whose first turn ended moments ago (async hooks may still be running)",
           rep.findings == [], rep.findings)
+    # A long session whose last turn ended a day ago, touched now only because Claude Code appended
+    # metadata as its process exited: hooks installed since then never had a turn to fire in.
+    stale = [hb("aaaa1111", "session-start", 90000), hb("aaaa1111", "stop-memory-gate", 86400)]
+    rep = D.hook_liveness([tr("aaaa1111", 90000)], stale, specs, now, young - 86400)
+    check("a session with no turn inside the window is not held to the per-turn hooks", rep.findings == [],
+          rep.findings)
 
     # Unattended runs go through the SDK, and there Claude Code itself can cancel the
     # SessionStart hooks as the queued prompt starts: compass.py is killed before its

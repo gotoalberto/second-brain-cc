@@ -27,7 +27,9 @@ that knows the difference.
 `BRAIN_KP_BACKEND=keepassxc|kpcli` forces one. Without it `keepassxc-cli` is preferred, and the
 kpcli backend is picked only when `kp_kdbx.pl` is found on `PATH` and `keepassxc-cli` is not. The
 helper sitting in the checkout is not a signal on its own: that made kpcli win on every machine
-without KeePassXC, including a bare CI checkout. `kp.py status` prints the live backend on its
+without KeePassXC, including a bare CI checkout. A forced `kpcli` that finds no `kp_kdbx.pl`
+on `PATH` runs the checkout's own `_bin/kp_kdbx.pl`, so nothing has to be put on `PATH` by hand.
+`kp.py status` prints the live backend on its
 `cli` line.
 
 ## Why the kpcli backend does not drive kpcli
@@ -91,9 +93,15 @@ created by keepassxc-cli opens on the kpcli backend and the other way round; bot
 ## What the kpcli backend does not do
 
 It refuses with the reason instead of improvising, because a wrong guess corrupts the credential
-store: `mv`, `rmdir` and anything else outside `ls`, `search`, `show`, `mkdir`, `add`, `edit`;
-the clipboard (use `--pipe` or `--show`); `kp.py locks`; and `kp.py init --create`. Run those on a
-machine with `keepassxc-cli`.
+store: anything outside `ls`, `search`, `show`, `mkdir`, `add`, `edit`, `mv`, `rm`, `rmdir`
+(attachments, for one); the clipboard (use `--pipe` or `--show`); `kp.py locks`; and
+`kp.py init --create`. Run those on a machine with `keepassxc-cli`.
+
+`mv`, `rm` and `rmdir` were on that list until 2026-09-22. In `kp_kdbx.pl`, `mv` only relocates
+the entry and `kp.py cmd_mv` renames it with a follow-up `edit -t` (translated to `--title`); `rm`
+detaches the entry with no recycle bin; `rmdir` checks again that the group is empty, because on a
+shared store the check in `kp.py` and the delete can be minutes apart. `kp.py rm` itself asks first:
+[[2026-09-22-decision-kp-rm-refuses-without-yes-and-reports-refs]].
 
 ## Things that must stay fixed
 
@@ -104,6 +112,10 @@ machine with `keepassxc-cli`.
   confirmation, which keepassxc-cli expects. `kp_backend.split_confirmation()` collapses the pair
   for the kpcli helper, and only when both halves are identical, so a secret with newlines in it
   survives. See [[2026-09-17-failure-kpcli-backend-stored-every-secret-twice]].
+- **A write saves with the key it opened with.** `kp_kdbx.pl` saves with the composite key, never
+  the bare master: on a keyfile-only store the master is "" and saving with it re-keys the store
+  under an empty password. `kp.py` also refuses to put back any file that opens without its key
+  (`keyed_as_expected`). See [[2026-09-22-failure-kpcli-write-saved-store-without-keyfile]].
 - **Nothing on stdin ahead of the call on a keyfile-only store.** Not even a newline: keepassxc-cli
   reads it as the next thing it asks for, which on `add -p` is the new secret.
 

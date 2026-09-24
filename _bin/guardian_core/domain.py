@@ -327,13 +327,32 @@ def machine_matches(machine, host: str, is_mine=None) -> bool:
     return bool(is_mine is not None and is_mine(machine))
 
 
-def routine_due(routine: dict, last_run_date, now: dt.datetime, host: str, is_mine=None):
+EVERY_RE = re.compile(r"^every\s+(\d+)\s*h$", re.I)
+
+
+def parse_every_hours(spec):
+    """`every 1h`, `every 6h` in the time column, or None when it is a plain `HH:MM`.
+
+    An interval row repeats through the day instead of firing once. The runner already polls
+    every 10 minutes, so the cadence needs no second scheduler: only the due-ness rule has to
+    know the difference.
+    """
+    m = EVERY_RE.match(str(spec or "").strip())
+    return int(m.group(1)) if m and int(m.group(1)) > 0 else None
+
+
+def routine_due(routine: dict, last_run_date, now: dt.datetime, host: str, is_mine=None,
+                last_run_at=None):
     """Returns (should_run, reason_if_not). The one due-ness rule tasks.py runs by.
 
     A routine fires when it is enabled, belongs to this machine (`machine_matches`), has a
     schedule, is of a type the runner executes, today is one of its days, its time has passed,
     and it has not already run today. That is what lets a 10-minute poll run a 06:00
     routine once, and a machine asleep at 06:00 still run it when it wakes.
+
+    A `time` of `every Nh` instead of `HH:MM` repeats through the day: the daily mark is not
+    used, the gap since `last_run_at` is. A machine asleep over an interval does not catch it
+    up when it wakes; it runs at the next poll and the clock restarts from there.
     """
     if not routine.get("enabled"):
         return False, "disabled"
@@ -345,6 +364,18 @@ def routine_due(routine: dict, last_run_date, now: dt.datetime, host: str, is_mi
         return False, "type '%s' is not run by this runner" % routine.get("type")
     if now.isoweekday() not in parse_days(routine.get("days", "*")):
         return False, "not scheduled today"
+    every = parse_every_hours(routine.get("time"))
+    if every:
+        if not last_run_at:
+            return True, ""
+        try:
+            last = dt.datetime.fromisoformat(str(last_run_at))
+        except (TypeError, ValueError):
+            return True, ""
+        due_at = last + dt.timedelta(hours=every)
+        if now < due_at:
+            return False, "not yet (every %dh, next %s)" % (every, due_at.strftime("%H:%M"))
+        return True, ""
     hh, mm = (int(x) for x in routine["time"].split(":"))
     if now < now.replace(hour=hh, minute=mm, second=0, microsecond=0):
         return False, "not yet (%s)" % routine["time"]
@@ -1054,7 +1085,9 @@ def hook_liveness(transcripts, heartbeats, specs, now: float, since, config: Liv
     for t in active:
         mine = by_sid.get(t.sid) or []
         stops = [h.ts for h in mine if h.hook_event == "Stop"]
-        if not stops or min(stops) > now - config.grace_s:
+        # No turn inside the window (a long session touched only as its process exited) says
+        # nothing about hooks installed since its last turn.
+        if not stops or min(stops) > now - config.grace_s or max(stops) < now - config.window_s:
             continue
         seen = {h.event for h in mine}
         for s in session_events:

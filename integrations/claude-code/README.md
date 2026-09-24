@@ -10,7 +10,7 @@ with no tool calls to remember. On top of the MCP server and the CLI it adds:
 - **Agents**: `context-scout`, `planner`, `implementer`, `verifier`, `librarian`, `skill-forge`, a
   pipeline that gathers context, plans, implements in an isolated worktree, verifies and writes back.
 - **Skills**: `/task`, `/ctx`, `/recall`, `/save`, `/vault-doctor`, `/kp` (KeePass credentials),
-  `/dev` (the development pipeline) and `/job-search`.
+  `/dev` (the development pipeline), `/job-search` and `/machine-update`.
 
 Everything here is a convenience layer over the same `_bin/` engine the MCP server and the CLI use.
 The knowledge, the index and the write path are identical.
@@ -59,7 +59,7 @@ plugin/
   brain/
     .claude-plugin/plugin.json
     agents/          context-scout, planner, implementer, verifier, librarian, skill-forge
-    skills/          task, ctx, recall, save, vault-doctor, kp, dev, job-search
+    skills/          task, ctx, recall, save, vault-doctor, kp, dev, job-search, machine-update
     hooks/hooks.json generated from 90-Meta/events.json (brain_watch.py generate)
 settings.example.json   recommended settings, merged with claude_settings.py
 install.sh

@@ -25,11 +25,12 @@ import subprocess
 import sys
 import urllib.error
 import urllib.request
-from email.message import EmailMessage
 
 from .adapters import read_json
 from .ports import MailUnavailable
 
+# mail_body lives one level up, in _bin/, shared by every account and transport.
+BIN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 ADAPTERS = ("gmail-api", "smtp")
@@ -39,10 +40,14 @@ DEFAULT_CONFIG = {"enabled": False, "adapter": "gmail-api", "account": "", "from
 
 
 def _message(sender, to, subject, body, html=False):
-    msg = EmailMessage()
-    msg["From"], msg["To"], msg["Subject"] = sender, to, subject
-    msg.set_content(body, subtype="html" if html else "plain")
-    return msg
+    """A bare text/plain part is re-wrapped by the reading client at its own fixed width, which
+    turns a paragraph into a narrow column, so every message carries an HTML part
+    (mail_body.build_message). With html=True the body already is markup and goes through as is."""
+    if BIN not in sys.path:
+        sys.path.insert(0, BIN)
+    from mail_body import build_message
+
+    return build_message(to, subject, body, sender=sender, html=body if html else None)
 
 
 class GmailApiMailer:

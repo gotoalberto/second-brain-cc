@@ -170,6 +170,36 @@ def main():
         check("a CONFLICT note in 00-Inbox names the file and the command to look",
               len(notes) == 1 and notes[0].startswith("CONFLICT-sync-") and "`30-Knowledge/n.md`" in body
               and "git status" in body, (notes, body))
+
+    print("\n== commit_message ==")
+    msg = lambda paths: V.commit_message(paths, "2026-09-22 20:24")
+
+    # One file: name it outright. `vault: 1 file(s)` said strictly less than the path.
+    s, b = msg(["30-Knowledge/note.md"])
+    check("a single file is named in the subject", s == "vault: 30-Knowledge/note.md (2026-09-22 20:24)", s)
+    check("and needs no body", b == "", b)
+
+    # Several: the folders are what make a line scannable.
+    s, b = msg(["30-Knowledge/a.md", "_bin/x.py", "_bin/y.py"])
+    check("several files are summarised by folder",
+          s == "vault: 30-Knowledge, _bin (3 files) (2026-09-22 20:24)", s)
+    check("the body lists every path, so --stat is not needed",
+          b == "30-Knowledge/a.md\n_bin/x.py\n_bin/y.py", b)
+
+    # The distinction the history was missing: routine upkeep against work.
+    s, _ = msg(["40-Skills/a.md", "40-Skills/b.md"])
+    check("pure harness upkeep is chore:", s.startswith("chore: "), s)
+    # One real file among the noise makes the whole commit real: `git log | grep -v chore:`
+    # must never hide a decision just because it travelled with a catalogue refresh.
+    s, _ = msg(["40-Skills/a.md", "30-Knowledge/decision.md"])
+    check("one real file among routine ones keeps it vault:", s.startswith("vault: "), s)
+
+    s, _ = msg(["a/1", "b/2", "c/3", "d/4"])
+    check("more than three folders are elided", "\u2026" in s and "(4 files)" in s, s)
+    check("a file at the vault root is its own folder",
+          msg(["README.md", "x/y.md"])[0].startswith("vault: README.md, x"), msg(["README.md", "x/y.md"])[0])
+    check("the message names no machine: the commit is pushed",
+          V.commit_message.__code__.co_argcount == 2)
     print()
     print("RESULT: %d passed, %d failed" % (len(ok), len(fail)))
     return 1 if fail else 0

@@ -95,6 +95,16 @@
       ]
     },
     {
+      "id": "stop-style-gate",
+      "description": "block a reply that reads as written by an AI and ask for it rewritten",
+      "handler": "style_gate",
+      "liveness": "session",
+      "triggers": [
+        {"kind": "claude-hook", "event": "Stop", "command": "style_gate.py", "timeout": 10},
+        {"kind": "cli", "command": "brain hook stop-style-gate"}
+      ]
+    },
+    {
       "id": "sync",
       "description": "commit and push the vault",
       "handler": "vault_sync",

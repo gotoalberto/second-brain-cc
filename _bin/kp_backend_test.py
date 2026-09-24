@@ -7,6 +7,7 @@ this never touches a real keepassxc-cli or kpcli install. Run standalone:
     python3 _bin/kp_backend_test.py
 """
 import os
+import re
 import stat
 import sys
 import tempfile
@@ -68,8 +69,24 @@ def test_resolve():
           == ("keepassxc", "/opt/x/keepassxc-cli"))
     check("nothing found anywhere: the bare binary name is the last resort, keepassxc-cli by default",
           K._resolve({}, which_none, fallback_none) == ("keepassxc", "keepassxc-cli"))
-    check("forced with nothing found anywhere: the bare name of the FORCED backend",
-          K._resolve({"BRAIN_KP_BACKEND": "kpcli"}, which_none, fallback_none) == ("kpcli", "kp_kdbx.pl"))
+    check("forced with nothing found anywhere and no helper in the checkout: the bare name of the FORCED backend",
+          K._resolve({"BRAIN_KP_BACKEND": "kpcli"}, which_none, fallback_none, helper="/missing/kp_kdbx.pl")
+          == ("kpcli", "kp_kdbx.pl"))
+
+    with tempfile.TemporaryDirectory() as d:
+        helper = os.path.join(d, "kp_kdbx.pl")
+        with open(helper, "w") as fh:
+            fh.write("#!/usr/bin/env perl\n")
+        check("forced kpcli, kp_kdbx.pl not on PATH: the checkout's own helper is used",
+              K._resolve({"BRAIN_KP_BACKEND": "kpcli"}, which_none, fallback_none, helper=helper)
+              == ("kpcli", helper))
+        check("forced kpcli, kp_kdbx.pl on PATH: PATH still wins over the checkout's helper",
+              K._resolve({"BRAIN_KP_BACKEND": "kpcli"}, which_kpcli_only, fallback_none, helper=helper)
+              == ("kpcli", "/found/bin/kp_kdbx.pl"))
+        check("unforced, nothing found: the checkout's helper does not make kpcli win",
+              K._resolve({}, which_none, fallback_none, helper=helper) == ("keepassxc", "keepassxc-cli"))
+    check("forced kpcli with the real defaults resolves to a file that exists (the checkout's helper)",
+          os.path.exists(K._resolve({"BRAIN_KP_BACKEND": "kpcli"}, which_none, fallback_none)[1]))
 
 
 def test_default_fallback_paths_never_silently_picks_kpcli():
@@ -139,11 +156,32 @@ def test_translate_add_edit():
           K.translate(["add", db, "Brain/example"], db) == ["add", "--entry", "Brain/example"])
 
 
-def test_translate_unsupported():
-    print("\n== translate: everything outside the six ==")
+def test_translate_rm_mv_rmdir():
+    print("\n== translate: rm, mv, rmdir, and the rename half of mv ==")
     db = "/db/path.kdbx"
-    for args in (["clip", db, "Brain/example", "Password", "20"], ["db-create", db], ["mv", db, "a", "b"],
-                ["rmdir", db, "Brain/old"], [], ["rm", db, "x"]):
+    check("rm", K.translate(["rm", db, "Brain/apis/old"], db) == ["rm", "--entry", "Brain/apis/old"])
+    check("mv relocates only: entry and target group",
+          K.translate(["mv", db, "Brain/apis/x", "Brain/infra"], db)
+          == ["mv", "--entry", "Brain/apis/x", "--group", "Brain/infra"])
+    check("rmdir", K.translate(["rmdir", db, "Brain/old"], db) == ["rmdir", "--group", "Brain/old"])
+    check("edit -t renames (the second half of kp.py's cmd_mv)",
+          K.translate(["edit", db, "Brain/infra/x", "-t", "y"], db)
+          == ["edit", "--entry", "Brain/infra/x", "--title", "y"])
+    # A one-operand mv would read as "move to the root", silently. It must refuse instead.
+    for args in (["mv", db, "Brain/apis/x"], ["rm", db], ["rmdir", db]):
+        bad = None
+        try:
+            K.translate(args, db)
+        except K.Unsupported as exc:
+            bad = exc
+        check("translate(%r) with a missing operand raises Unsupported" % (args[0],), bad is not None, bad)
+
+
+def test_translate_unsupported():
+    print("\n== translate: everything outside the covered set ==")
+    db = "/db/path.kdbx"
+    for args in (["clip", db, "Brain/example", "Password", "20"], ["db-create", db],
+                ["attachment-import", db, "Brain/example", "a", "/tmp/f"], []):
         bad = None
         try:
             K.translate(args, db)
@@ -264,11 +302,21 @@ def test_split_confirmation():
     check("three genuinely different lines are unchanged", K.split_confirmation("a\nb\nc\n") == "a\nb\nc\n")
 
 
+def test_helper_saves_with_its_key():
+    print("\n== a write keeps the key the store was opened with ==")
+    # Saving with the bare master instead of the composite key turns a keyfile-only store
+    # (master "") into one keyed by an EMPTY password and no key file: unreadable on every
+    # other machine, readable by anyone holding the file.
+    src = open(K.KP_KDBX_PL, encoding="utf-8").read()
+    saves = re.findall(r"dump_file\(\s*\$db\s*,\s*(\$\w+)\s*\)", src)
+    check("every save in the helper uses the composite key", saves and set(saves) == {"$key"}, saves)
+
+
 def main():
     for t in (test_resolve, test_default_fallback_paths_never_silently_picks_kpcli, test_translate_ls,
               test_translate_search, test_translate_show, test_translate_mkdir,
-              test_translate_add_edit, test_translate_unsupported, test_build, test_keyfile,
-              test_split_confirmation):
+              test_translate_add_edit, test_translate_rm_mv_rmdir, test_translate_unsupported,
+              test_build, test_keyfile, test_split_confirmation, test_helper_saves_with_its_key):
         try:
             t()
         except Exception as exc:

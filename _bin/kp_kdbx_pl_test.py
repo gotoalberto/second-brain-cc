@@ -117,6 +117,12 @@ def test_keyfile():
         p = kp(only_db, empty, only_key, "show", "--entry", "second", "--attr", "Password", "--reveal")
         check("the store still opens with the key file alone after the write",
               p.returncode == 0 and p.stdout.strip() == "n-secret", (p.stdout, p.stderr))
+        # Asked of File::KDBX directly: the helper itself refuses to try an empty password with
+        # no key file, so only a direct load can prove the write did not drop the key.
+        p = run(["perl", "-MFile::KDBX", "-e", 'exit(eval { File::KDBX->load_file($ARGV[0], ""); 1 } ? 0 : 1)',
+                 only_db])
+        check("and after the write it does NOT open with an empty password and no key file",
+              p.returncode != 0, (p.stdout, p.stderr))
         p = kp(only_db, empty, "", "ls")
         check("with neither a master nor a key file it refuses", p.returncode != 0, (p.stdout, p.stderr))
 
@@ -210,6 +216,30 @@ def test_functional():
 
         p = kp("show", "--entry", "no/such/entry")
         check("showing an entry that does not exist is refused, not a crash", p.returncode != 0, (p.stdout, p.stderr))
+
+        # ---- reorganising: mv relocates, edit --title renames, rm deletes, rmdir drops an empty group
+        p = kp("mv", "--entry", "Brain/apis/new-one", "--group", "Brain/infra")
+        check("mv relocates an entry into another group, creating it", p.returncode == 0, (p.stdout, p.stderr))
+        p = kp("ls", "--recursive")
+        check("after mv the entry lists under the new group and not the old one",
+              "Brain/infra/new-one" in p.stdout and "Brain/apis/new-one" not in p.stdout, p.stdout)
+        p = kp("edit", "--entry", "Brain/infra/new-one", "--title", "renamed")
+        check("edit --title renames in place", p.returncode == 0, (p.stdout, p.stderr))
+        p = kp("show", "--entry", "Brain/infra/renamed", "--attr", "UserName")
+        check("the renamed entry keeps its fields", p.returncode == 0 and p.stdout.strip() == "svc",
+              (p.stdout, p.stderr))
+        p = kp("rmdir", "--group", "Brain/infra")
+        check("rmdir refuses a group that still holds an entry", p.returncode != 0, (p.stdout, p.stderr))
+        p = kp("rm", "--entry", "Brain/infra/renamed")
+        check("rm deletes the entry", p.returncode == 0, (p.stdout, p.stderr))
+        p = kp("show", "--entry", "Brain/infra/renamed")
+        check("and it is gone", p.returncode != 0, (p.stdout, p.stderr))
+        p = kp("rmdir", "--group", "Brain/infra")
+        check("rmdir drops the group once it is empty", p.returncode == 0, (p.stdout, p.stderr))
+        p = kp("rm", "--entry", "Brain/infra/renamed")
+        check("rm of an entry that is not there is refused", p.returncode != 0, (p.stdout, p.stderr))
+        p = kp("rmdir", "--group", "")
+        check("rmdir never removes the root", p.returncode != 0, (p.stdout, p.stderr))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

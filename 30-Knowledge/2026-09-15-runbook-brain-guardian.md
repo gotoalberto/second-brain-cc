@@ -97,6 +97,14 @@ model in the loop.
   SessionStart is not held to the session-start heartbeat: an unattended SDK run can have Claude Code
   cancel SessionStart as the queued prompt starts, which kills the hook before it writes its line.
   [[2026-09-17-analysis-cancelled-session-start-hooks-in-unattended-runs]]
+- **Start time on Linux.** Linux `os.stat` has no `st_birthtime`, so a session's start used to fall
+  back to its last write. A long session that Claude Code touches only as its process exits (it
+  appends metadata, with no turn and no hook) then looked born just now, its earlier heartbeats were
+  cut off and the file watch raised a false `hooks:not-firing`. The start is now the earliest of the
+  birth time, the transcript's first record `timestamp` (read from the same 64 KB head as the
+  cancellations) and the last write. The per-session rule also skips a session whose last `Stop`
+  heartbeat is older than the window: with no turn in it, a hook installed since its last turn never
+  had a chance to fire.
 - **The epoch.** Liveness starts at the first `check` or `repair` after install; sessions that started
   earlier are never judged.
 - **The rules.** A session active in the last 30 minutes, past a short grace period, with no heartbeat

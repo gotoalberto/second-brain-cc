@@ -69,6 +69,12 @@ def test_registry(D):
                      ("a bad port", json.dumps({"accounts": {"x": {"port": "eighty"}}})),
                      ("scopes not a list", json.dumps({"accounts": {"x": {"scopes": "all"}}}))):
         check("a registry with %s is refused" % why, raises(D.parse_registry, D.AccountError, bad) is not None)
+    stamped = D.Account("work", authorized_at="2026-09-15T07:30:00+00:00")
+    text = D.render_registry({"work": stamped})
+    check("the consent instant round-trips when there is one",
+          D.parse_registry(text) == {"work": stamped} and "authorized_at" in json.loads(text)["accounts"]["work"], text)
+    check("a registry written before the stamp existed parses with no instant",
+          D.parse_registry(json.dumps({"accounts": {"x": {}}}))["x"].authorized_at == "")
     defaults = D.parse_registry(json.dumps({"accounts": {"x": {}}}))["x"]
     check("an account with no scopes or port gets the defaults",
           defaults.scopes == D.scopes_for(D.DEFAULT_SCOPE_SETS) and defaults.port == D.DEFAULT_PORT, defaults)

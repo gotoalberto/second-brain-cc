@@ -9,7 +9,7 @@ status: active
 confidence: medium
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-22
+updated: 2026-09-24
 supersedes: []
 ---
 
@@ -45,7 +45,35 @@ needs a signed-in session that only exists on the other. This matters more when 
 permissions bypassed.
 
 The "Browser 1 / Browser 2" names are not stable across machines or reinstalls. Go by
-`osPlatform`, `isLocal` and the device id, never by the name.
+`osPlatform`, `isLocal` and the device id, never by the name. And even those are not enough:
+`isLocal` only means "same OS as this computer", so two macOS machines on one account look
+alike, and `onThisComputer` is often missing from the reply. Only a page test settles it (see
+below).
+
+## Each machine's own Chrome, in the session block
+
+Every session gets an `Own Chrome` line in `## This machine`, built by `_bin/machine_caps.py`
+from `<brain state>/chrome-devices.json`. It names this machine's deviceIds and, when the probe
+finds Chrome stopped, how to bring it back.
+
+**The rule:** each machine drives its own Chrome. When a browser tool reports several connected
+browsers, the session `select_browser`s its own deviceId directly instead of asking, and never
+falls back to another machine's Chrome without asking. A session that did not see its own
+machine's Chrome, asked, got "no preference" and drove another machine's browser is what this
+rule came from.
+
+**Why a machine's Chrome goes missing.** On Linux, a second Chrome profile makes Chrome stop at
+the "Who's using Chrome?" picker: no profile loads and the extension never starts. The keepalive
+passes `--profile-directory=Default` for that reason, and the block warns when the picker would
+block. To bring Chrome back on Linux, `pkill -x chrome` and the keepalive relaunches it 5 s later;
+look at the desktop through the VNC tunnel if it still does not show. On macOS,
+`open -a "Google Chrome"` and open the missing profile from the profile menu.
+
+**A machine with no deviceId recorded:** find it with `list_connected_browsers` (its
+`osPlatform` matches), confirm it with a page only that machine's profile is signed in to, then
+`python3 ~/Brain/_bin/machine_caps.py learn-chrome <deviceId> '<what it is>'`. No code edit is
+needed, and every later session on that machine sees it in its block. The install runbook makes
+this a step: [[2026-09-21-runbook-install-on-a-new-machine]].
 
 ## The machine and the session are two questions
 
@@ -123,7 +151,7 @@ Do not decide from the OS or the hostname. Probe:
    cheap call such as `tabs_context_mcp`. If it times out twice, stop and tell the user in an
    interactive session, or record "browser not reachable" in a routine and move on.
 4. On a Linux machine with no local browser listed, something on the machine is down: check the
-   desktop unit's status and the keepalive log.
+   desktop unit's status, the keepalive log, and whether the block flags the profile picker.
 
 Never skip a browser source silently: the output says which source was skipped and why.
 

@@ -383,13 +383,26 @@ python3 _bin/google.py add --account personal --client-id <id> --login-hint me@e
 python3 _bin/google.py auth --account personal        # browser consent on 127.0.0.1
 python3 _bin/google.py api --account personal "https://www.googleapis.com/calendar/v3/users/me/calendarList"
 python3 _bin/google.py send --account personal --to me@example.com --subject "Digest" --body-file digest.txt
+python3 _bin/google.py slots --account personal --start 2030-01-07T16:30:00+01:00 --minutes 45 --with b@example.com
 ```
+
+Creating or moving a Calendar event through `api` is checked for conflicts first
+(`_bin/google_core/calendar_guard.py`): when the slot overlaps an event or a busy attendee,
+nothing is written, the conflicts and free alternatives are printed and the exit status is 3.
+Show them to the user and rerun with the chosen slot, or with `--force` once the overlap is
+accepted. `slots` runs the same check without writing. The rule it enforces:
+[`30-Knowledge/2026-09-24-convention-check-calendar-conflicts-before-booking.md`](30-Knowledge/2026-09-24-convention-check-calendar-conflicts-before-booking.md).
 
 Each account has its own OAuth client ("Desktop app" client in a Google Cloud project with the
 Gmail, Calendar and Drive APIs enabled) and refresh token, both in KeePass under
 `google/<account>/`. `api` prints Google's reply and exits 1 on an HTTP error; `token`, `api`
 and `send` never prompt. Every delivered message is logged (never its body) to
 `<brain state>/logs/mail-sent.jsonl`, which the routine runner checks.
+
+An OAuth app left in Testing publishing status gets refresh tokens that die 7 days after
+consent. `auth` stamps the consent instant, and `_bin/google_token_watch.py` (run daily) mails
+a warning three days before the deadline, through another account when you give it one
+(`--via`): [`30-Knowledge/2026-09-23-reference-google-oauth-testing-mode-7-day-refresh-token-expiry.md`](30-Knowledge/2026-09-23-reference-google-oauth-testing-mode-7-day-refresh-token-expiry.md).
 
 ## Guardian and scheduled jobs
 
@@ -438,7 +451,8 @@ which the installer replaces with yours.
 | `vault-doctor` | Diagnoses the vault and the memory system | The vault; reads `guardian.py status` when the guardian is installed |
 | `kp` | Reads and files credentials in your KeePass database | KeePassXC (`keepassxc-cli`) and a database connected in the first run |
 | `dev` | The development pipeline: hexagonal architecture, tests first, design and review gates for anything with an interface | The third-party skills below, and a browser or preview tool for the rendered checks |
-| `job-search` | Finds openings and prepares applications from your own profile | A Google account connected with the send scope; your own `profile.md`, `preferences.md` (recipient address, account name) and `search-queries.md` created from the skill's `templates/` under `80-Private/job-search/` (local, never pushed); `curl` and `jq` |
+| `job-search` | Finds and ranks openings against your own profile (remote, plus on-site or hybrid in an area you name) and LinkedIn posts from people who are hiring; report only | A Google account connected with the send scope; your own `profile.md`, `preferences.md` (recipient address, account name) and `search-queries.md` created from the skill's `templates/` under `80-Private/job-search/` (local, never pushed); `curl` and `jq`; for the LinkedIn posts step, Claude in Chrome with a browser signed in to LinkedIn (without it the report says the step was skipped) |
+| `machine-update` | Updates Claude Code on this machine and says what is stale: the CLI, the Remote Control server still running an old binary, the desktop app's copy | `_bin/machine_update.py`; restarts the server by itself only on macOS and only when no session is open |
 
 ### Third-party skills used by `dev`
 
@@ -500,7 +514,7 @@ described above, so they run with no desktop app open and on no particular logge
   CLI; `kp.py`, `google.py` and `files.py`; the event registry, git hooks and the file watch; the
   guardian's scheduled jobs and alerts; the task runner (any CLI agent through
   `agent-command.txt`); the first run; `AGENTS.md`.
-- **Claude Code only:** automatic recall on every prompt, the stop gate and the other hooks; the
+- **Claude Code only:** automatic recall on every prompt, the stop gates (memory and style) and the other hooks; the
   subagent roster and skills; the guardian's hook liveness probe, which reads Claude Code's
   transcripts. Other agents get the manual equivalents listed in `AGENTS.md` and
   `90-Meta/HOOKS-WITHOUT-CLAUDE.md`.
@@ -519,16 +533,20 @@ The deepest experience today is Claude Code with the plugin; nothing in the vaul
 | `kp.py` | Credentials in a local KeePass database. |
 | `handoff.py` | One-time handoff of a new machine's keyfile, database and settings. |
 | `google.py` | Named Google accounts: Gmail, Calendar, Drive. |
+| `google_token_watch.py` | Warns before a Testing-mode Google refresh token expires. |
 | `files.py` / `files_core.py`, `brain_files.py` | The file store: deliverables, intermediates and material in a local directory, anchored to notes; where that directory is. |
 | `guardian.py` | Keeps hooks, git hooks and scheduled jobs wired, and alerts. |
 | `brain_watch.py` | The file watch and the generated hooks. |
 | `tasks.py` | The periodic task and routine runner. |
-| `machine_identity.py`, `machines.py`, `machine_caps.py` | Which machine this is; the registry of machines and their Claude accounts; the `## This machine` block. |
+| `machine_identity.py`, `machines.py`, `machine_caps.py` | Which machine this is; the registry of machines and their Claude accounts; the `## This machine` block, including which connected Chrome is this machine's own (`machine_caps.py learn-chrome`). |
+| `machine_update.py` | What needs updating for Claude on this machine (CLI, Remote Control server, desktop app) and the safe part of doing it (`/machine-update`). |
 | `routine_requires.py` | Preflight: the repos, programs and paths a routine needs on this machine. |
 | `remote_control.py` | Starts the supervised Remote Control server from its recorded working directory. |
 | `gen_instructions.py` | Generates `AGENTS.md`, `CLAUDE.md` and `90-Meta/HOOKS-WITHOUT-CLAUDE.md`. |
 | `install_plugin.py`, `claude_settings.py` | Skills and agents sync; recommended Claude Code settings. |
 | `brain_paths.py`, `migrate_state.py`, `pywrap.sh` | Where state lives; moving it out of `~/.claude`; the interpreter picker jobs start through. |
+| `style_check.py`, `style_gate.py` | The writing check: finds dashes and AI-sounding shapes (English and Spanish) in a file, stdin or a Google Doc; the Stop hook runs it on every reply and asks for a rewrite. |
+| `mail_body.py` | Composes every outgoing mail as HTML with a plain text fallback, so paragraphs flow instead of arriving as a narrow column. |
 | `run_all_tests.py` | Every test, each in a scratch HOME. |
 | `bilingual_eval.py` | Whether a Spanish question finds what its English twin finds, on a fitted and a held-out set; `--from-misses` lists the words real misses could not reach. |
 | `pipeline_acceptance.py` | By hand, in a fresh Claude Code session: `setup` builds a small repo and plants a convention only in the vault, `check` verifies it reached the generated code, `cleanup` removes both. |
@@ -537,7 +555,7 @@ The deepest experience today is Claude Code with the plugin; nothing in the vaul
 
 `30-Knowledge/` carries working conventions the protocol links to. They are generic and meant to
 be edited to your taste: the vault is written in one language because search is lexical; replies
-and documents read like a person wrote them; a change is done when it is verified; one worktree
+and documents read like a person wrote them (checked mechanically by `style_check.py` and the `style_gate.py` Stop hook); a change is done when it is verified; one worktree
 per deliverable; smoke checks isolate all state; a headless agent prompt is framed as an order; a
 routine's success is checked in its log, not in the model's last words; scheduled jobs exit
 non-zero for a crash, not for findings; no hosted connectors, only mechanisms you control.

@@ -116,6 +116,61 @@ def main():
     check("an exact path claim conflicts",
           G.claim_conflict("/repo/docs/readme.md", "mine", claims, live) == ("exact", None))
     check("no claims, no conflict", G.claim_conflict("/repo/a.py", "mine", [], live) is None)
+
+    print("\n== bash_rewrites_vault_history ==")
+    # Only vault_sync.py commits the vault. A session doing it races the daemon's flock:
+    # `cannot lock ref 'HEAD'`, and its files land in the daemon's own commit instead.
+    H = "/opt/people/u"
+    V = H + "/Brain"
+    rewrites = lambda cmd, cwd="/somewhere/else": G.bash_rewrites_vault_history(cmd, cwd, V, H)
+
+    check("committing from inside the vault is denied", rewrites("git commit -m 'x'", V) is True)
+    check("from a folder inside the vault too", rewrites("git commit -m 'x'", V + "/30-Knowledge") is True)
+    check("the add && commit && push chain is denied",
+          rewrites("git add -A && git commit -m 'x' && git push", V) is True)
+    check("naming the vault with -C from outside is denied", rewrites("git -C ~/Brain commit -m 'x'") is True)
+    check("so is naming it by its absolute path", rewrites("git -C %s commit -m 'x'" % V) is True)
+    check("and with --git-dir", rewrites("git --git-dir=%s/.git commit -m x" % V) is True)
+    check("cd'ing into the vault to commit is denied", rewrites("cd ~/Brain && git commit -m 'x'") is True)
+    check("inside a subshell too", rewrites("(cd ~/Brain && git commit -m 'x')") is True)
+    check("cd'ing into it by $HOME too", rewrites("cd $HOME/Brain; git commit -m 'x'") is True)
+    check("a relative cd that stays in the vault still counts",
+          rewrites("cd _bin && git commit -m 'x'", V) is True)
+    check("push from inside the vault is denied", rewrites("git push -u origin main", V) is True)
+    check("a pull moves HEAD and is denied", rewrites("git pull --rebase origin main", V) is True)
+    check("so is a reset", rewrites("git reset --hard HEAD~1", V) is True)
+    check("so is a merge that may create a commit", rewrites("git merge feat/x", V) is True)
+    check("a fast-forward of a worktree branch is the /task integration step and is fine",
+          rewrites("git -C ~/Brain merge feat/x --ff-only") is False)
+
+    # ...and everything that is NOT the vault's own history stays allowed.
+    check("committing another repo is fine", rewrites("git commit -m 'x'", "/opt/people/u/git/repo") is False)
+    check("a sibling whose name starts like the vault is not the vault",
+          rewrites("git commit -m 'x'", V + "-old") is False)
+    check("cd'ing OUT of the vault to commit is fine", rewrites("cd ~/git/app && git commit -m 'x'", V) is False)
+    check("a relative cd out of the vault is fine too", rewrites("cd .. && cd git/app && git commit -m x", V) is False)
+    check("-C at another repo from inside the vault is fine", rewrites("git -C ~/git/app commit -m x", V) is False)
+    check("a vault worktree has its own HEAD and is fine",
+          rewrites("cd ~/Brain/_worktrees/x && git commit -m 'x'", V) is False)
+    check("reading the vault's history is fine", rewrites("git log --oneline -5", V) is False)
+    check("git status is fine", rewrites("git status --short", V) is False)
+    check("git diff is fine", rewrites("git diff HEAD", V) is False)
+    check("git fetch only moves remote refs and is fine", rewrites("git fetch origin", V) is False)
+    check("staging alone is fine, the daemon commits what is staged", rewrites("git add -A", V) is False)
+    check("the daemon's own pass is not a git command", rewrites("python3 _bin/vault_sync.py", V) is False)
+    check("no command, no denial", rewrites("", V) is False)
+    check("no vault known, no denial", G.bash_rewrites_vault_history("git commit -m x", V, "", H) is False)
+
+    # The verb has to be git's subcommand. Matching the bare word anywhere denied reading a
+    # note whose FILENAME contains "commit", including the note about this very incident.
+    check("a filename containing 'commit' does not make a read a write",
+          rewrites("git log --oneline -1 -- 30-Knowledge/2026-09-22-failure-session-"
+                   "git-commit-in-the-vault-races-vault-sync.md", V) is False)
+    check("a filename containing 'push' does not either", rewrites("git diff -- docs/how-to-push.md", V) is False)
+    check("grepping for the word commit is not committing",
+          rewrites("git log --oneline | grep commit", V) is False)
+    check("-C's value is not mistaken for the subcommand", rewrites("git -C ~/Brain status") is False)
+    check("-c's value is not either", rewrites("git -c user.name=x log", V) is False)
     return finish()
 
 

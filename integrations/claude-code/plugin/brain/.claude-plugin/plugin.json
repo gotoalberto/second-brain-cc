@@ -1,6 +1,6 @@
 {
   "name": "brain",
-  "description": "Persistent memory and context with an Obsidian vault: automatic recall, agents that run in isolated worktrees, and a write-back to the vault before closing. Skills: task, ctx, recall, save, vault-doctor, kp (KeePass credentials), dev (development pipeline) and job-search.",
+  "description": "Persistent memory and context with an Obsidian vault: automatic recall, agents that run in isolated worktrees, and a write-back to the vault before closing. Skills: task, ctx, recall, save, vault-doctor, kp (KeePass credentials), dev (development pipeline), job-search and machine-update (update Claude on this machine).",
   "version": "1.1.0",
   "author": {
     "name": "second-brain-cc"

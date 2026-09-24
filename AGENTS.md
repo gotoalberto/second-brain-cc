@@ -19,7 +19,7 @@ The one-screen version. Full protocol: `~/Brain/90-Meta/AGENT-PROTOCOL.md`.
 - **Never write credentials in a note.** They go to the local kdbx with `kp.py` (`/kp`); the note keeps `kp://<group>/<entry>`.
 - Notes go in **English**: body, `title:`, tags, filename. Quotes stay verbatim. A note in another language is unreachable by search.
 - Titles and headings name the topic, never a headline: no teaser phrasing, no "X, not Y", no triads.
-- Text for the user: plain and short, like a person. No dashes as punctuation, no AI tells, no internal labels. Detail: `30-Knowledge/2026-09-10-convention-write-like-a-person.md`
+- Text for the user, any language: like a person, no dashes, no AI tells. `style_gate.py` checks replies; run `_bin/style_check.py` on documents. Detail: `30-Knowledge/2026-09-10-convention-write-like-a-person.md`
 - Heavy files go to the local files directory with `_bin/files.py`, cited from their note by key, never into the repo.
 - **Talk to the user in their language, always**, whatever language the question, code or note is in. Notes, commits, code and identifiers stay English; shared tools get theirs. Never assess anyone's workload.
 - Decisions as plain-text lettered lists (A, B, C, then "explain more") plus your recommendation; one at a time; never widgets.
@@ -28,7 +28,7 @@ The one-screen version. Full protocol: `~/Brain/90-Meta/AGENT-PROTOCOL.md`.
 - Deliverables are stored with their project; a published page also goes as an HTML file and is archived. Pitches: web page, one infographic per slide, subtle motion, house style.
 - Integrations only through what the vault controls (scripts with kdbx tokens such as `google.py`, a generic MCP server). Never vendor connectors.
 - A procedure or correction repeated twice → a skill (`skill-forge`). Skills are self-contained and canonical in the vault; `install_plugin.py sync` after editing.
-- A vault change is done when pushed: `git push origin main` in the same session, never left for the sync job.
+- A vault change is done when pushed, in the same session: run `_bin/vault_sync.py` (it commits and pushes under its lock). Never `git commit`/`push` in the vault by hand: the gate denies it.
 - Project repos live in one code directory (e.g. `~/git/<repo>`); a short name matches a repo suffix. Look there before scanning home.
 - Writing code or files → ALWAYS a git worktree, one per DELIVERABLE, never the main checkout (read-only exempt). Parallel agents split files (`claim.py`).
 - Code: tests committed red before the implementation, hexagonal, verified in the real system. Check the effect, not the exit code. Protocol §9.
@@ -57,6 +57,7 @@ Check whether this machine has had its first run: `python3 integrations/first-ru
 | `protocol-guard` | warn when the startup context outgrows its budget | nothing: call it by hand |
 | `subagent-log` | log which subagents finished | nothing: call it by hand |
 | `stop-memory-gate` | do not end a session that changed things without saving a note | nothing: call it by hand |
+| `stop-style-gate` | block a reply that reads as written by an AI and ask for it rewritten | nothing: call it by hand |
 | `sync` | commit and push the vault | file-watch, launchd |
 | `session-end` | release the session's claims and mark the vault dirty | nothing: call it by hand |
 | `worktree-seed` | prepare a new git worktree | nothing: call it by hand |
@@ -76,5 +77,6 @@ No adapter wires these events into the agent reading this, so they do not fire o
 | `protocol-guard` | warn when the startup context outgrows its budget | `brain hook protocol-guard` |
 | `subagent-log` | log which subagents finished | `brain hook subagent-log` |
 | `stop-memory-gate` | do not end a session that changed things without saving a note | `brain hook stop-memory-gate` |
+| `stop-style-gate` | block a reply that reads as written by an AI and ask for it rewritten | `brain hook stop-style-gate` |
 | `session-end` | release the session's claims and mark the vault dirty | `brain session-end` or MCP tool `session_end` |
 | `worktree-seed` | prepare a new git worktree | `python3 ~/Brain/_bin/seed_worktree.py` |

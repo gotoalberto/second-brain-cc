@@ -805,7 +805,48 @@ def write_over_db(src, why):
             "    nor one of our backups. The credential store is only ever overwritten\n"
             "    by its own copy or its own backup, whatever the file looks like."
             % (DB, src, why), EXIT_NODB)
+    keyed_as_expected(src, why)
     shutil.copy2(src, DB)
+
+
+def _opens_bare(path):
+    """Does `path` open with an EMPTY password and no key file at all?
+
+    Only keepassxc-cli can be asked: the kpcli helper refuses to even try without a master
+    or a key file, so under kpcli this answers no. That backend writes the real file in
+    place and never comes through write_over_db anyway; what keeps it honest is that
+    kp_kdbx.pl saves with the key it opened with (kp_backend_test checks the source)."""
+    if KIND == "kpcli":
+        return False
+    try:
+        p = subprocess.run([CLI, "ls", "-q", path], timeout=CLI_TIMEOUT, input="\n",
+                           capture_output=True, text=True)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return p.returncode == 0
+
+
+def keyed_as_expected(src, why):
+    """Is `src` still locked with the SAME key as the store? Checked before it is written.
+
+    The two guards above ask what the file is and where it came from; neither asks how it
+    is keyed. A writer that saves with the bare master instead of the composite key turns a
+    keyfile-only store (master "") into one keyed by an empty password and no key file. It
+    is a perfectly valid database from a sanctioned working copy, so it would go through;
+    every other machine then fails with an HMAC mismatch, someone blames their own key file,
+    and for as long as it lasts the store opens for anyone who can read the file.
+
+    So, whatever wrote it: a store protected by a key file must NOT open without one, and a
+    keyfile-only store MUST open with the key file alone."""
+    if not KEYFILE:
+        return
+    if _opens_bare(src):
+        die("refusing to write over %s with %s (%s): it opens with an EMPTY password\n"
+            "    and no key file, so it was saved without its key. The store is untouched."
+            % (DB, src, why), EXIT_NODB)
+    if _NOPW[0] and _probe("", src, no_password=True).returncode != 0:
+        die("refusing to write over %s with %s (%s): it no longer opens with the key\n"
+            "    file %s alone. The store is untouched." % (DB, src, why, KEYFILE), EXIT_NODB)
 
 
 def work_copy():
@@ -865,7 +906,7 @@ def refresh_work_copy():
 def _probe(pw, path, no_password=None):
     """Does the master open this file at all? `unlocked()` calls this directly, ahead of
     every command, so it has to speak whichever backend is in use — the "ls" translation is
-    always available (one of the six), so this doubles as the kpcli backend's master check.
+    always available (one of the translated set), so this doubles as the kpcli backend's master check.
     """
     if KIND == "kpcli":
         return KPB.run(KIND, CLI, ["ls"] + _key_args(no_password) + [path], path, pw or "",
@@ -918,6 +959,15 @@ def keyfile_only():
             if local_copy:
                 p = _probe("", local_copy, no_password=True)
         _NOPW[0] = p.returncode == 0
+        # The key file did not open it. Before this falls through to asking for a master
+        # the store never had, rule out the failure that has actually happened: a writer
+        # saved it WITHOUT its key. Said plainly, because the other reading of "invalid
+        # credentials" sends whoever reads it to blame a perfectly good key file.
+        if not _NOPW[0] and _opens_bare(DBF[0]):
+            die("%s opens with an EMPTY password and no key file: something wrote it\n"
+                "    without its key. The keyfile here is not the problem. Re-key it with\n"
+                "    keepassxc-cli (db-edit --set-key-file <keyfile> --unset-password) while\n"
+                "    nothing else writes to it; see the kp skill." % DB, EXIT_NODB)
     return _NOPW[0]
 
 
@@ -1006,7 +1056,7 @@ def _cli_kpcli(args, master, extra_stdin, check):
     """The kpcli branch of cli(): kp_backend.run() straight against the real database — the
     working-copy trick above the module (`DBF`, `work_copy()`) exists only for keepassxc-cli's
     own smbfs quirk; File::KDBX has no such limitation, so there is no copy to make here.
-    Only the six subcommands kp_backend.translate() covers succeed; anything else dies with a
+    Only the subcommands kp_backend.translate() covers succeed; anything else dies with a
     clear message naming the operation, per the plan's scope cut for this backend.
     """
     _t0 = time.time()
@@ -1016,7 +1066,7 @@ def _cli_kpcli(args, master, extra_stdin, check):
                     pwfile_dir=os.path.join(STATE, "kp-pwfiles"))
     except KPB.Unsupported as exc:
         die("kp_backend: \"%s\" is not one of the operations available with the kpcli "
-            "backend (only ls, search, show, mkdir, add, edit are). Switch to keepassxc-cli "
+            "backend (only ls, search, show, mkdir, add, edit, mv, rm, rmdir are). Switch to keepassxc-cli "
             "for this, or run it by hand on a machine where KeePassXC is installed."
             % exc, EXIT_NODB)
     except subprocess.TimeoutExpired:
@@ -1045,7 +1095,7 @@ def cli_clip(entry, attr, seconds, master):
     see whether it fails outright. If it is still alive past that margin, it copied fine
     and is counting down: it is left there and the clipboard clears itself.
 
-    keepassxc-cli only: `clip` is outside the six subcommands kp_backend.translate() covers,
+    keepassxc-cli only: `clip` is outside the subcommands kp_backend.translate() covers,
     and there is no equivalent to shell out to for kpcli. Called directly (cmd_get's default),
     this dies with a clear message. cmd_put's own internal call (after generating a NEW
     password) checks KIND itself first and skips this instead of dying mid-write — see there.
@@ -1401,7 +1451,7 @@ def cmd_init(a):
     if a.create and not os.path.exists(path):
         if KIND == "kpcli":
             die("kp_backend: creating a new database (`kp.py init --create`) is not "
-                "available with the kpcli backend — db-create is outside the six operations "
+                "available with the kpcli backend: db-create is outside the operations "
                 "it covers. Create the .kdbx some other way first (KeePassXC on another "
                 "machine, or keepassxc-cli directly), then point this machine at it with "
                 "`kp.py init --db PATH` (no --create).", EXIT_NODB)
@@ -1662,6 +1712,59 @@ def cmd_mv(a):
     print("backup: %s" % os.path.basename(backup_path))
 
 
+def find_refs(entry):
+    """Which vault notes point at this entry. `rewrite_refs` fixes references after a
+    move; a delete has nothing to repoint them at, so they are only reported, and reported
+    BEFORE the deletion, because afterwards the note is the only remaining record of what
+    the credential was for."""
+    if B is None or not os.path.isdir(getattr(B, "VAULT", "")):
+        return []
+    rx = re.compile(r"kp://" + re.escape(entry) + r"(?![\w./-])")
+    found = []
+    for raiz, dirs, files_ in os.walk(B.VAULT):
+        dirs[:] = [d for d in dirs if d not in (".git", "_index", "integrations", "_bin")]
+        for f in sorted(files_):
+            if not f.endswith(".md"):
+                continue
+            path = os.path.join(raiz, f)
+            try:
+                if rx.search(open(path, errors="replace").read()):
+                    found.append(os.path.relpath(path, B.VAULT))
+            except Exception:
+                continue
+    return found
+
+
+def cmd_rm(a):
+    """Delete an entry, always inside Claude's group.
+
+    The one destructive command here, so it is the one that asks. A credential is not a
+    file: if the entry is the only copy of a key nobody wrote down, deleting it loses the
+    access, not just the record. So nothing is deleted without `--yes`, and the vault notes
+    that would be left pointing at nothing are named first. The backup and the
+    verify-or-restore behind every write apply here too: the entry is recoverable from
+    `<STATE>/kp-backups/` until those rotate out."""
+    pw = unlocked()
+    entry = resolve(pw, a.entry)
+    if not inside_group(entry):
+        die("\"%s\" is outside %s/ and nothing gets deleted there." % (entry, GROUP_DEF), EXIT_LOCKED)
+    refs = find_refs(entry)
+    if not a.yes:
+        print("about to delete: %s" % entry)
+        for r in refs:
+            print("  a vault note points at it: %s" % r)
+        die("nothing was deleted. Pass --yes to confirm.", EXIT_LOCKED)
+    guard_lock(a.force)
+    backup_path = backup()
+    with write_lock():
+        cli(["rm", DB, entry], pw)
+        verify_or_restore(backup_path, pw)
+    print("deleted: %s" % entry)
+    for r in refs:
+        print("still points at it, now broken: %s" % r)
+    print("backup: %s" % os.path.basename(backup_path))
+
+
 def cmd_rmdir(a):
     """Remove an empty group left behind after reorganising."""
     pw = unlocked()
@@ -1757,8 +1860,6 @@ def cmd_put(a):
     if already_there and not a.force:
         die("\"%s\" already exists. Use `set` to edit it, or --force." % entry)
     backup_path = backup()
-    if group:
-        ensure_group(pw, group)
     args = ["edit" if already_there else "add", DB, entry]
     if a.user:
         args += ["-u", a.user]
@@ -1778,6 +1879,11 @@ def cmd_put(a):
     elif generate_it:
         args += ["-g", "-L", str(a.length), "-l", "-U", "-n", "-s"]
     with write_lock():                   # nobody else writes while this lasts
+        # Inside the lock, not before it: `mkdir` is a write too (the kpcli helper re-saves
+        # the file even for a group that exists). Outside the lock it went to the store
+        # unserialised and unverified.
+        if group:
+            ensure_group(pw, group)
         cli(args, pw, extra_stdin=extra)
         verify_or_restore(backup_path, pw)
     if cleanup:                          # the original is deleted only once the kdbx is written
@@ -1789,7 +1895,7 @@ def cmd_put(a):
         print("source     : %s%s" % (source, ", original deleted" if cleanup else ""))
     if generate_it:
         if KIND == "kpcli":
-            # cli_clip() itself would die() here (clip is not one of the six kpcli covers),
+            # cli_clip() itself would die() here (clip is not one of those kpcli covers),
             # and the entry has already been written successfully by this point: dying mid-
             # print would hide that from the caller instead of pointing at how to read it.
             print("generated password not copied to the clipboard (clipboard copying is not "
@@ -1935,6 +2041,12 @@ def main():
     mv.add_argument("source"); mv.add_argument("target")
     mv.add_argument("--force", action="store_true")
     mv.set_defaults(fn=cmd_mv)
+
+    rm = sub.add_parser("rm"); rm.add_argument("entry")
+    rm.add_argument("--yes", action="store_true",
+                    help="confirm the deletion (without it nothing is deleted)")
+    rm.add_argument("--force", action="store_true")
+    rm.set_defaults(fn=cmd_rm)
 
     rd = sub.add_parser("rmdir"); rd.add_argument("group")
     rd.add_argument("--force", action="store_true"); rd.set_defaults(fn=cmd_rmdir)

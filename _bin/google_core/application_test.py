@@ -162,6 +162,8 @@ def test_authorize():
           and http.posts[0][1]["redirect_uri"] == "http://127.0.0.1:8767", http.posts)
     check("the refresh token is stored in the account's refresh entry",
           entry == D.refresh_entry("work") and (D.refresh_entry("work"), "rt-new", None) in p.secrets.writes, p.secrets.writes)
+    check("and the consent instant is stamped in the registry, so an expiry can be foreseen",
+          p.accounts.accounts["work"].authorized_at == "2026-09-15T07:30:00+00:00", p.accounts.accounts)
 
     p = configured(D, http=FakeHttp(form=lambda url, fields: {"access_token": "at"}),
                    receiver=FakeReceiver({"code": "c-1", "state": "<same>"}))

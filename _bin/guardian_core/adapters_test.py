@@ -589,10 +589,24 @@ def test_gmail_mailer():
     check("bounded by the timeout", seen.get("timeout") == 11)
     raw = json.loads(req.data.decode())["raw"]
     msg = email.message_from_bytes(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
+    parts = {part.get_content_type(): part.get_payload(decode=True).decode()
+             for part in msg.walk() if not part.is_multipart()}
     check("the message carries sender, recipient, subject and body",
           msg["From"] == "me@example.com" and msg["To"] == "me@example.com"
-          and msg["Subject"] == "Brain guardian: 1 new" and "NEW [fail] x" in msg.get_payload(decode=True).decode(),
+          and msg["Subject"] == "Brain guardian: 1 new" and "NEW [fail] x" in parts.get("text/plain", ""),
           dict(msg.items()))
+    check("composed by mail_body: an HTML part people see, the plain text as the fallback",
+          msg.get_content_type() == "multipart/alternative" and "<p>NEW [fail] x</p>" in parts.get("text/html", ""),
+          (msg.get_content_type(), parts))
+    html_sent = []
+    m_html = ML.GmailApiMailer(sender="me@example.com", token_provider=lambda: "tok-1",
+                               urlopen=lambda req, timeout=None: (html_sent.append(req), FakeResponse(b"{}"))[1])
+    outcome(m_html.send, "me@example.com", "Report", "<h1>Report</h1>", html=True)
+    raw_h = json.loads(html_sent[0].data.decode())["raw"] if html_sent else ""
+    msg_h = email.message_from_bytes(base64.urlsafe_b64decode(raw_h + "=" * (-len(raw_h) % 4)))
+    html_part = [part.get_payload(decode=True).decode() for part in msg_h.walk() if part.get_content_type() == "text/html"]
+    check("html=True passes the caller's markup through verbatim", html_part and "<h1>Report</h1>" in html_part[0],
+          html_part)
 
     calls = []
 
@@ -783,6 +797,15 @@ def test_hook_liveness_source():
           [x.cancelled for x in ss] == [frozenset({"SessionStart"}), frozenset()], ss)
     ss = [x for x in ss if x.sid == "3ac18522"]
     check("with a start time no later than their last write", ss and ss[0].started <= ss[0].mtime, ss)
+    # Linux has no st_birthtime: a long session touched now (Claude Code appends metadata when its
+    # process exits, with no turn and no hook) keeps its real start, read from the transcript.
+    born = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(now - 7200))
+    long_lived = write(os.path.join(app, "0000aaaa-0000-4000-8000-000000000003.jsonl"),
+                       'not json\n{"type": "attachment", "timestamp": "%s"}\n{"type": "user"}\n' % born)
+    ll = [x for x in src.sessions(now - 3600) if x.sid == "0000aaaa"]
+    check("a session starts at its transcript's first timestamp when that is earlier than its birth time",
+          ll and abs(ll[0].started - (now - 7200)) < 2 and ll[0].mtime >= now - 5, ll)
+    os.remove(long_lived)
     check("a missing projects directory is no sessions",
           A_.HookLivenessSource(os.path.join(d, "nope"), log, registry, os.path.join(d, "e")).sessions(0) == [])
 
@@ -905,8 +928,8 @@ def test_hook_probe():
                                    os.path.join(vault, "90-Meta", "events.json"), os.path.join(d, "epoch.json"))
     pairs = A_.HookProbe(canonical, events).results()
     bad = [(c.event_id, D_.probe_verdict(c, r), r.stderr[-300:]) for c, r in pairs if D_.probe_verdict(c, r)]
-    check("this checkout's eleven hooks, run the way Claude Code runs them in a scratch state, all pass",
-          len(pairs) == 11 and bad == [], (len(pairs), bad))
+    check("this checkout's twelve hooks, run the way Claude Code runs them in a scratch state, all pass",
+          len(pairs) == 12 and bad == [], (len(pairs), bad))
 
 
 FAKE_SYSTEMCTL = r"""#!/bin/sh

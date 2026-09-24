@@ -109,6 +109,23 @@ messages, documents) is written **the way a person would, as simply as possible*
 - Say what a thing is or does, never an internal label only the source document explains
   ("wave B", item ids, unexplained jargon).
 - Messages in the user's name sound like them: direct, friendly, brief.
+- **In body text too, in every language the user reads:** no "X, not Y" or «no es X, es Y»
+  contrasts, no label and colon before the point ("The ask: ...", «El riesgo: ...»), no
+  aphoristic openers ("Two questions travel together"), no announced counts
+  ("Three things decide...", «Dos cosas a tener en cuenta»), no personified abstractions
+  ("the plan leans on"), no stock phrases ("That is the whole idea", "on purpose",
+  «dicho de otra forma»).
+- **Checked by code, since memory has not been enough.** The Stop hook `style_gate.py` scans
+  every reply and makes you send it again rewritten. Every document (docx, md, html, Google Doc) goes through
+  `python3 ~/Brain/_bin/style_check.py <file>` (or `--gdoc <id> --account <name>`) before it is
+  delivered, and every finding is fixed.
+- Mail goes out as HTML with a plain text fallback (`_bin/mail_body.py`, used by `google.py
+  send`): write the body as plain paragraphs separated by blank lines, never hard-wrapped.
+  `30-Knowledge/2026-09-23-convention-email-bodies-go-out-as-html-not-plain-text.md`
+- In a document someone else owns, add only what was asked, back it up first, and report
+  anything else you noticed instead of fixing it. A monthly figure the user states is a run rate
+  from that month on, never a fill over earlier months.
+  `30-Knowledge/2026-09-22-feedback-add-only-what-was-asked-report-dont-fix.md`
 - Never assess anyone's workload: describe the work and the facts, never how much a person
   carries. `30-Knowledge/2026-09-15-convention-never-assess-peoples-workload.md`
 - Language per audience: the user's language for everything handed to the user, the working
@@ -285,7 +302,10 @@ Detail and reasoning: `30-Knowledge/2026-08-21-convention-worktree-isolation-per
 - **A vault change is done when it is pushed to `origin`**, not at the commit and not at the merge.
   Push in the same session, as part of the merge step, and never leave it for the periodic sync
   job: every other machine reads the vault from the remote. If the push cannot happen, say so.
-  `30-Knowledge/2026-09-16-convention-push-vault-changes-immediately.md`
+  In the vault's own checkout the push is `_bin/vault_sync.py`, the only process that commits
+  and pushes there; a hand `git commit` or `git push` races it and the gate denies it.
+  `30-Knowledge/2026-09-16-convention-push-vault-changes-immediately.md`,
+  `30-Knowledge/2026-09-22-failure-session-git-commit-in-the-vault-races-vault-sync.md`
 - **Verify a plan's claims about semantics before writing them** (what a construct does on
   failure, who calls whom). A grep or a throwaway test is cheaper than a wrong plan. If a
   comment in the repo contradicts the plan, the comment wins.

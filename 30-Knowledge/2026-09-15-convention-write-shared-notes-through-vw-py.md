@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-15
+updated: 2026-09-23
 supersedes: []
 ---
 
@@ -46,6 +46,13 @@ frontmatter.
   the target file does not exist yet, killing is safe. If it does exist, a kill mid-write can
   leave a stub with empty frontmatter: check `type`, `area`, `projects`, `tags` and `title`
   before trusting or appending to it.
+- **`new` also hangs when nothing is fed to its stdin.** Same symptom as the lock wait, different
+  cause: from an agent's shell, stdin is not a terminal, so `new` waits for a body that never comes.
+  Tell them apart before assuming the lock case (on Linux, `/proc/<pid>/wchan` shows a read wait and fd
+  0 points at a socket). Killing it has the same side effect: a later `append` on that path creates a
+  stub with `type: project`, empty `area`, `projects` and `tags`, and the filename as title, with no
+  error. Always feed `new` something: a heredoc, `< /dev/null`, or `input=""` (or the real body) when
+  calling it through `subprocess`.
 
 ## Why
 

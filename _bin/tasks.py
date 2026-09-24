@@ -18,6 +18,21 @@ That last condition is what makes a 10-minute poll safe: a task scheduled at 06:
 once, not six times an hour. It also means a machine that was asleep at 06:00 still runs
 the task when it wakes — late is better than skipped. Use `catchup=no` to opt out.
 
+A `time` of `every Nh` (`every 1h`, `every 6h`) instead of `HH:MM` repeats through the day:
+the daily mark is ignored and the gap since the last run decides, so the same 10-minute poll
+gives it its cadence. An interval missed while the machine slept is not caught up; the next
+poll runs it and the clock restarts.
+
+An agent routine whose front matter says `single_instance: true` never runs twice at once:
+each run holds an exclusive lock on <state>/task-locks/<id>.lock for as long as it lasts, so a
+tick that finds it still running (an hourly routine that overruns its hour, or a `--force`
+started by hand) skips it and leaves its state alone; the next tick after it ends decides
+again. `--force` on a running one is refused with exit 75. Other tasks are not locked.
+
+A routine is killed after DEFAULT_TIMEOUT (30 min) unless its front matter sets
+`timeout_minutes: <n>`, for a routine whose job has no fixed size (a backlog to work
+through). Pair it with `single_instance: true` so an overrun never overlaps the next tick.
+
 Usage:
   tasks.py            run whatever is due on this machine
   tasks.py --list     show the registry as this machine sees it
@@ -94,6 +109,7 @@ CLI_HEALTH_CACHE: dict = {}          # template -> CliResolver: the CLI is check
 MAX_LOG_BYTES = 1_000_000
 LOG_KEEP = 3
 DEFAULT_TIMEOUT = 1800  # 30 min; a periodic task that runs longer is a bug, not a feature
+ALREADY_RUNNING = 75  # EX_TEMPFAIL: the task is running in another process; nothing was done
 STATE_LOCK_TIMEOUT = 30  # seconds a save waits for another run's save before giving up
 
 
@@ -179,6 +195,35 @@ def _lock(fh, timeout: float) -> bool:
         if time.monotonic() >= deadline:
             return False
         time.sleep(0.05)
+
+
+def task_lock_path(task_id: str) -> str:
+    return os.path.join(str(STATE_DIR), "task-locks", f"{task_id}.lock")
+
+
+@contextlib.contextmanager
+def task_lock(task_id: str):
+    """Hold the task's run lock for the block: yields (True, "") or (False, who holds it).
+
+    flock dies with the process that holds it, so a killed run never leaves a stale lock.
+    The file carries the holder's pid and start time, only to say who is running.
+    """
+    path = task_lock_path(task_id)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a+") as fh:
+        if not _lock(fh, 0):
+            fh.seek(0)
+            yield False, fh.read().strip()
+            return
+        fh.seek(0)
+        fh.truncate()
+        fh.write(f"pid {os.getpid()} since {now().isoformat(timespec='seconds')}\n")
+        fh.flush()
+        try:
+            yield True, ""
+        finally:
+            fh.seek(0)
+            fh.truncate()
 
 
 def _write_atomically(path, text: str) -> None:
@@ -275,7 +320,9 @@ def read_registry() -> list[dict]:
         cells = [clean_cell(c) for c in cells]
         # `--` marks a row with no schedule (ad-hoc, started by hand). It is kept so the
         # registry stays the complete inventory, but it is never due.
-        if not re.match(r"^(\d{1,2}:\d{2}|--)$", cells[2]):
+        # `every Nh` repeats through the day instead of firing once; the rule is in
+        # guardian_core.domain.routine_due, which reads the gap since last_run_at.
+        if not (re.match(r"^(\d{1,2}:\d{2}|--)$", cells[2]) or GD.parse_every_hours(cells[2])):
             continue
         tasks.append(
             {
@@ -332,8 +379,9 @@ def mine(task: dict) -> bool:
 
 def due(task: dict, state: dict) -> tuple[bool, str]:
     """Returns (should_run, reason_if_not). The rule lives in guardian_core.domain.routine_due."""
-    return GD.routine_due(task, state.get(task["id"], {}).get("last_run_date"), now(), host(),
-                          machine_is_mine)
+    entry = state.get(task["id"], {})
+    return GD.routine_due(task, entry.get("last_run_date"), now(), host(), machine_is_mine,
+                          entry.get("last_run_at"))
 
 
 # ---------------------------------------------------------------- running
@@ -442,7 +490,7 @@ def run_agent(task: dict) -> tuple[int, str, str, str]:
         run_env={RD.SEND_LOG_ENV: str(MAIL_SENT_LOG)},
     )
     res = RA.run_routine(ports, RA.Routine(task["id"], path, args, problem, contract, contract_problem, text=text),
-                         DEFAULT_TIMEOUT)
+                         routine_timeout(text))
     summary = res.summary
     for a in res.attempts:
         log(RUNNER_LOG, f"{task['id']}: token {a.label}: {a.kind}" + (f" (run {a.run_id})" if a.run_id else ""))
@@ -455,8 +503,48 @@ def run_agent(task: dict) -> tuple[int, str, str, str]:
     return res.rc, res.stdout, res.stderr, summary
 
 
+def _front_matter(text: str) -> str:
+    m = re.match(r"---\n(.*?)\n---", text or "", re.S)
+    return m.group(1) if m else ""
+
+
+def single_instance(task: dict) -> bool:
+    """True when the task's routine file asks, in its front matter, never to run twice at once."""
+    if task.get("type") != "agent":
+        return False
+    path = task["command"]
+    if not os.path.isabs(path):
+        path = os.path.join(str(VAULT), path)
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return bool(re.search(r"^single_instance:\s*(true|yes)\s*$", _front_matter(text), re.M | re.I))
+
+
+def routine_timeout(text: str) -> int:
+    """Seconds a routine may run: its front matter's `timeout_minutes`, else DEFAULT_TIMEOUT."""
+    t = re.search(r"^timeout_minutes:\s*(\d+)\s*$", _front_matter(text), re.M)
+    return int(t.group(1)) * 60 if t and int(t.group(1)) > 0 else DEFAULT_TIMEOUT
+
+
 def run_task(task: dict, state: dict, changed: set | None = None) -> int:
-    """Run one task and record it in `state`; its id is added to `changed` for save_state."""
+    """Run one task and record it in `state`; its id is added to `changed` for save_state.
+
+    A single_instance task already running in another process is not run again:
+    ALREADY_RUNNING is returned and `state` is left untouched, so the running one's own
+    result is what gets recorded.
+    """
+    if not single_instance(task):
+        return _run_task(task, state, changed)
+    with task_lock(task["id"]) as (held, holder):
+        if not held:
+            log(RUNNER_LOG, f"skipped {task['id']}: already running ({holder or 'holder unknown'})")
+            return ALREADY_RUNNING
+        return _run_task(task, state, changed)
+
+
+def _run_task(task: dict, state: dict, changed: set | None) -> int:
     task_log = Path(LOG_DIR) / f"{task['id']}.log"
     started = now()
     log(task_log, f"START  {task['id']}  (scheduled {task['time']}, host {host()})")
@@ -565,6 +653,10 @@ def main(argv=None) -> int:
                           f"you really mean to run it here.", file=sys.stderr)
                     return 3
                 rc = run_task(t, state, changed)
+                if rc == ALREADY_RUNNING and t["id"] not in changed:
+                    print(f"{t['id']} is already running in another process; not started again "
+                          f"(lock: {task_lock_path(t['id'])})", file=sys.stderr)
+                    return rc
                 save_state(state, changed)
                 print(f"{t['id']}: exit={rc}  (log: {Path(LOG_DIR) / (t['id'] + '.log')})")
                 return rc
@@ -583,7 +675,7 @@ def main(argv=None) -> int:
         run_task(t, state, changed)
         ran += 1
 
-    if ran and not args.dry_run:
+    if changed and not args.dry_run:
         save_state(state, changed)
     return 0
 

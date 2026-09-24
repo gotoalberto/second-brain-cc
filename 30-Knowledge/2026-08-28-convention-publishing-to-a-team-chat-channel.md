@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-15
+updated: 2026-09-24
 supersedes: []
 ---
 
@@ -17,6 +17,11 @@ supersedes: []
 
 Publishing is an action taken on the user's behalf: it happens when the user asks for it in that exchange,
 never on the agent's initiative, and a standing schedule the user removed takes its authorization with it.
+
+Never run or force anything that can publish (a posting routine, its script, a forced run of a scheduled
+task that posts) as a side effect of fixing, testing or clearing something else. A post reaches the whole
+channel and cannot be quietly undone. To clear an alert on such a routine, wait for its next scheduled run
+or use its dry run; if a real run is the only way, ask first.
 
 ## Where
 
@@ -39,9 +44,11 @@ guess and never fall back to a channel that seems close.
 
 ## Content taken from meetings
 
-- Take the content from the meeting record the user named (the recording tool's outline or transcript) and
-  nothing else. If it is not there, say so instead of reconstructing it from another source.
-- Prefer the structured outline; use the full transcript only for an exact quote or who said what.
+- Take the content from the meeting record the user named and nothing else. If it is not there, say so
+  instead of reconstructing it from another source.
+- Read the full transcript and write the summary yourself. Never use the recording tool's generated
+  outline, notes or key points: they fail silently.
+  [[2026-09-23-decision-meeting-outlines-dropped-for-transcripts]]
 - Fix names the transcription got wrong when the reading is certain, leave them or generalize the sentence
   when it is not, and tell the user which names were corrected. Never print unidentified speaker labels as
   owners.

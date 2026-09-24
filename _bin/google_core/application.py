@@ -6,6 +6,7 @@ decided in domain.py.
 
 from __future__ import annotations
 
+import dataclasses
 import secrets as _secrets
 from dataclasses import dataclass
 
@@ -79,6 +80,12 @@ def authorize(ports, name, timeout=300) -> str:
     refresh = D.refresh_token_from(payload)
     entry = D.refresh_entry(name)
     ports.secrets.write(entry, refresh)
+    if ports.clock:                 # the instant google_token_watch.py counts an expiry from
+        accounts = ports.accounts.load()
+        if name in accounts:
+            accounts[name] = dataclasses.replace(accounts[name],
+                                                 authorized_at=ports.clock.now().isoformat(timespec="seconds"))
+            ports.accounts.save(accounts)
     return entry
 
 

@@ -7,8 +7,11 @@ process list, Chrome, hostname or registry is consulted. Every name below is inv
 
     python3 _bin/machine_caps_test.py
 """
+import json
 import os
+import shutil
 import sys
+import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -30,7 +33,8 @@ CAPS = {
     "scheduler": "systemd",
     "tools": [("git", True), ("gh", False), ("python3", True)],
     "chrome": {"installed": True, "paired": True, "running": True, "remote_control": "with",
-               "desktop": ("vnc-desktop", "active"), "login": "present"},
+               "desktop": ("vnc-desktop", "active"), "login": "present",
+               "own": [("dev-1111", "the work profile")], "picker_blocks": False},
     "tasks_here": ["daily-digest", "weekly-review"],
 }
 
@@ -91,9 +95,84 @@ def test_render():
     check("no scheduler found says so", "- Scheduler: none found" in text, text)
     text = M.render(dict(CAPS, tools=[("git", True)]))
     check("nothing absent adds no absent list", "- Tools: present `git`\n" in text + "\n", text)
-    check("the block stays short", len(M.render(CAPS)) < 900, len(M.render(CAPS)))
-    worst = dict(CAPS, key="x" * 24, chrome=dict(CAPS["chrome"], paired=False, login="absent", remote_control="without"))
-    check("even with every browser problem at once", len(M.render(worst)) < 1100, len(M.render(worst)))
+    check("the block stays short", len(M.render(CAPS)) < 1200, len(M.render(CAPS)))
+    worst = dict(CAPS, key="x" * 24, chrome=dict(CAPS["chrome"], paired=False, login="absent", remote_control="without",
+                                                 own=[], picker_blocks=True))
+    check("even with every browser problem at once", len(M.render(worst)) < 1700, len(M.render(worst)))
+
+
+def test_own_chrome():
+    text = M.render(CAPS)
+    check("a recorded deviceId is named as this machine's own Chrome, with what it is",
+          "- Own Chrome: `dev-1111` (the work profile);" in text, text)
+    check("and sessions are told to select it, never another machine's",
+          "`select_browser` it when several are listed, never another machine's" in text, text)
+    check("a running Chrome gets no restart advice", "pkill" not in text and "open -a" not in text, text)
+    stopped = dict(CAPS["chrome"], running=False)
+    text = M.render(dict(CAPS, chrome=stopped))
+    check("on Linux a stopped Chrome is brought back through the keepalive", "`pkill -x chrome`" in text, text)
+    text = M.render(dict(CAPS, os="macOS", scheduler="launchd", chrome=stopped))
+    check("on macOS by opening it", 'open -a "Google Chrome"' in text and "pkill" not in text, text)
+    text = M.render(dict(CAPS, chrome=dict(CAPS["chrome"], own=[("a", "first"), ("b", "")])))
+    check("two recorded ids are both named", "`a` (first); `b`;" in text, text)
+    text = M.render(dict(CAPS, chrome=dict(CAPS["chrome"], own=[])))
+    check("with nothing recorded it says how to confirm and record the id",
+          "not recorded" in text and "machine_caps.py learn-chrome <deviceId>" in text
+          and "ask before driving" in text, text)
+    text = M.render(dict(CAPS, chrome=dict(CAPS["chrome"], picker_blocks=True)))
+    check("a profile picker that would block the extension is flagged",
+          "Chrome would stop at the profile picker" in text and "--profile-directory=Default" in text, text)
+    text = M.render(dict(CAPS, chrome={"installed": False, "paired": False}))
+    check("no local Chrome adds no Own Chrome line", "Own Chrome" not in text, text)
+
+
+def test_devices_file():
+    check("parse: a well formed file", M.parse_devices('{"devices": [["d1", "one"], ["d2", ""]]}')
+          == [("d1", "one"), ("d2", "")])
+    check("parse: missing, empty, corrupt or wrongly shaped files are empty lists",
+          M.parse_devices(None) == [] and M.parse_devices("") == [] and M.parse_devices("{ nope") == []
+          and M.parse_devices('{"devices": {"x": 1}}') == [] and M.parse_devices('[1]') == []
+          and M.parse_devices('{"devices": [[""], [3], "x"]}') == [])
+    check("add: the same id is replaced in place of duplicated",
+          M.add_device([("d1", "old"), ("d2", "two")], "d1", "new") == [("d2", "two"), ("d1", "new")])
+    root = tempfile.mkdtemp(prefix="caps-")
+    try:
+        path = os.path.join(root, "state", M.CHROME_DEVICES)
+        M.learn_chrome("d1", "first", path=path)
+        M.learn_chrome("d1", "corrected", path=path)
+        out = M.learn_chrome("d2", "second", path=path)
+        with open(path) as fh:
+            data = json.load(fh)
+        check("learn_chrome writes, then replaces the same id", data == {"devices": [["d1", "corrected"],
+                                                                                     ["d2", "second"]]}, data)
+        check("and says what it recorded", "recorded d2" in out, out)
+        with open(path, "w") as fh:
+            fh.write("{ not json")
+        M.learn_chrome("d3", "after corruption", path=path)
+        with open(path) as fh:
+            check("a corrupt file is overwritten, not fatal", json.load(fh) == {"devices": [["d3", "after corruption"]]})
+        check("an empty id records nothing", "nothing recorded" in M.learn_chrome("  ", "x", path=path))
+        check("main: learn-chrome without a description is a usage error", M.main(["learn-chrome", "d9"]) == 2)
+        check("main: an unknown argument is a usage error", M.main(["nope"]) == 2)
+        env = {"BRAIN_STATE": os.path.join(root, "bs")}
+        check("the file lives in the brain state directory",
+              M.devices_path(env, "/h", "linux") == os.path.join(root, "bs", M.CHROME_DEVICES))
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_picker():
+    two = json.dumps({"profile": {"info_cache": {"Default": {}, "Profile 1": {}}}})
+    one = json.dumps({"profile": {"info_cache": {"Default": {}}}})
+    off = json.dumps({"profile": {"info_cache": {"Default": {}, "Profile 1": {}}, "show_picker_on_startup": False}})
+    check("two profiles and an unpinned keepalive stop at the picker",
+          M.picker_blocks(two, "google-chrome --no-first-run\n") is True)
+    check("a keepalive pinned with --profile-directory is fine",
+          M.picker_blocks(two, "google-chrome --profile-directory=Default\n") is False)
+    check("one profile is fine", M.picker_blocks(one, "google-chrome\n") is False)
+    check("a picker switched off is fine", M.picker_blocks(off, None) is False)
+    check("no Local State, or one that does not parse, is not flagged",
+          M.picker_blocks(None, None) is False and M.picker_blocks("{", "") is False)
 
 
 def fs(paths):
@@ -130,9 +209,13 @@ def test_probe_linux():
              "google-chrome-stable": "/usr/bin/google-chrome-stable"}
     creds = home + "/.claude/.credentials.json"
     run = runner(LINUX_PS, units={"vnc-desktop": "active"})
+    files = {"/state/" + M.CHROME_DEVICES: '{"devices": [["dev-9", "its profile"]]}',
+             home + "/.config/google-chrome/Local State": json.dumps({"profile": {"info_cache": {"a": {}, "b": {}}}}),
+             home + "/.local/bin/chrome-keepalive.sh": "google-chrome\n"}
     caps = M.probe(which=which.get, exists=fs({paired, creds}), platform="linux", home=home,
-                   environ={"USER": "someone"}, key=lambda: "box-aaaaaaaa",
-                   here=lambda: {"claude_account": "someone@example.com"}, tasks_here=lambda: ["t1"], run=run)
+                   environ={"USER": "someone", "BRAIN_STATE": "/state"}, key=lambda: "box-aaaaaaaa",
+                   here=lambda: {"claude_account": "someone@example.com"}, tasks_here=lambda: ["t1"], run=run,
+                   read=files.get)
     check("Linux: the key, OS and user come from the injected probes",
           caps["key"] == "box-aaaaaaaa" and caps["os"] == "Linux" and caps["user"] == "someone", caps)
     check("Linux: a registry record means registered, with its account",
@@ -147,6 +230,8 @@ def test_probe_linux():
     check("Linux: the X desktop unit defaults to vnc-desktop and reports its state",
           chrome["desktop"] == ("vnc-desktop", "active"), chrome)
     check("Linux: the CLI login is the credentials file", chrome["login"] == "present", chrome)
+    check("Linux: the recorded deviceIds come from the state file", chrome["own"] == [("dev-9", "its profile")], chrome)
+    check("Linux: two profiles and an unpinned keepalive are flagged", chrome["picker_blocks"] is True, chrome)
     other = M.probe(which=which.get, exists=fs({paired}), platform="linux", home=home,
                    environ={"USER": "someone", "BRAIN_DESKTOP_UNIT": "my-desktop"}, key=lambda: "k",
                    here=lambda: None, tasks_here=lambda: [], run=runner("COMMAND\n/usr/bin/sleep 5"))
@@ -205,7 +290,17 @@ def test_section():
 
     def boom():
         raise RuntimeError("x")
-    check("a probe that raises gives no section, never an exception", M.section(probe_fn=boom) is None)
+    sec = M.section(probe_fn=boom)
+    check("a probe that raises still gives the block, saying the probe failed",
+          sec and sec[0] == "machine" and "## This machine" in sec[1] and "probe failed (RuntimeError: x)" in sec[1],
+          sec)
+    text = M.fallback(ValueError("bad"), node="box", system="Linux")
+    check("the fallback names the machine from the hostname and says never to decide from the OS",
+          "- **box** (Linux)" in text and "Never decide from the OS alone" in text, text)
+    bad = dict(CAPS, tools=[("git",)])
+    text = M.render(bad)
+    check("one line that raises costs that line only, not the block",
+          "- Tools: probe failed" in text and "- Browser (the user's" in text and "Own Chrome" in text, text)
 
 
 def test_real_probe_is_fast():
@@ -218,7 +313,7 @@ def test_real_probe_is_fast():
 
 
 def main():
-    for t in (test_render, test_probe_linux, test_probe_macos, test_probe_never_raises, test_section,
+    for t in (test_render, test_own_chrome, test_devices_file, test_picker, test_probe_linux, test_probe_macos, test_probe_never_raises, test_section,
               test_real_probe_is_fast):
         print("\n== %s ==" % t.__name__)
         try:

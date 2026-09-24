@@ -64,7 +64,7 @@ def main():
 
         rc, out, err = run("--help")
         check("--help exits 0 and names every subcommand",
-              rc == 0 and all(c in out for c in ("accounts", "add", "auth", "token", "api", "send")), (rc, out, err))
+              rc == 0 and all(c in out for c in ("accounts", "add", "auth", "token", "api", "send", "slots")), (rc, out, err))
         src = open(G, encoding="utf-8").read()
         check("no account, address, client id or project is baked into the script",
               "@gmail.com" not in src and ".apps.googleusercontent.com" not in src and "CLIENT_ID =" not in src)
@@ -101,6 +101,20 @@ def main():
         rc, out, err = run("send", "--account", "work", "--to", "a@b.co", "--subject", "s", stdin="body")
         check("send that cannot get a token exits 1 with one line on stderr",
               rc == 1 and len(err.strip().splitlines()) == 1, (rc, err))
+        body = os.path.join(root, "event.json")
+        with open(body, "w") as fh:
+            json.dump({"start": {"dateTime": "2030-01-07T16:30:00+01:00"},
+                       "end": {"dateTime": "2030-01-07T17:00:00+01:00"}}, fh)
+        rc, out, err = run("api", "--account", "work", "--method", "POST", "--body-file", body,
+                           "https://www.googleapis.com/calendar/v3/calendars/primary/events")
+        check("creating an event when the conflict check cannot look exits 1, nothing written",
+              rc == 1 and out == "", (rc, out, err))
+        rc, out, err = run("slots", "--account", "work", "--start", "2030-01-07T16:30:00+01:00", "--hours", "20-9")
+        check("slots with a backwards window is a usage error, exit 2", rc == 2 and "--hours" in err, (rc, err))
+        rc, out, err = run("slots", "--account", "work", "--start", "tomorrow")
+        check("slots with a start that is not ISO is a usage error, exit 2", rc == 2 and "--start" in err, (rc, err))
+        rc, out, err = run("slots", "--account", "work", "--start", "2030-01-07T16:30:00+01:00", "--tz", "UTC")
+        check("slots that cannot get a token exits 1", rc == 1, (rc, out, err))
     finally:
         shutil.rmtree(root, ignore_errors=True)
     print("\nRESULT: %d passed, %d failed" % (len(ok), len(fail)))

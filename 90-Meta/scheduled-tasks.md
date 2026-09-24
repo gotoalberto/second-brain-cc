@@ -41,7 +41,11 @@ once.
 - **machine**: `*` for every machine, or the machine that owns it: its label (`hostname -s`), its
   key (`python3 _bin/machine_identity.py` prints it) or a key it had before a rename. A row written
   with a bare hostname keeps working
-- **time**: `HH:MM`, 24h, local time of that machine
+- **time**: `HH:MM`, 24h, local time of that machine; `--` for manual only; or `every Nh`
+  (`every 1h`, `every 6h`) for a row that repeats through the day instead of firing once. An
+  interval row ignores the once-a-day mark and goes by the gap since its last run, so the same
+  10-minute poll gives it its cadence: never a second scheduler of its own. An interval missed
+  while the machine slept is not caught up; the next poll runs it and the clock restarts
 - **days**: ISO weekdays, `1`=Mon … `7`=Sun. Accepts `*`, `1-5`, `1,3,5`
 - **type**: `shell` (the runner executes `command`), `agent` (the runner hands the routine file
   named in `command` to the CLI agent configured in `90-Meta/agent-command.txt`) or `claude-app`
@@ -63,6 +67,15 @@ app open and no chat session. Each run:
 - receives a prompt that frames the routine body as an order to run it now, unattended
 - succeeds only if its `success_contract` is met: a required send is proved by the send log
   `google.py send` writes, not by what the model says at the end
+
+Two optional front matter keys shape how a run is held:
+
+- `single_instance: true` makes the runner hold a lock on `<brain state>/task-locks/<id>.lock` for
+  the whole run. A tick that finds it still running skips it and leaves its state alone, and
+  `tasks.py --force <id>` on a running one is refused with exit 75. Opt in only for a routine where
+  two overlapping runs would do the same work twice (an hourly routine that may overrun its hour).
+- `timeout_minutes: <n>` raises the 30-minute limit for a routine whose job has no fixed size. Pair
+  it with `single_instance: true` so an overrun never overlaps the next tick.
 
 Before any of that, the runner checks that this machine has what the routine needs
 (`_bin/routine_requires.py`). What its `agent_args` already name is checked on its own: every

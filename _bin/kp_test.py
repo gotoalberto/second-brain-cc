@@ -118,11 +118,13 @@ def test_keyfile_only(root):
           K.keyfile_only() is True and not os.path.exists(argv_all))
 
     env_both, db2, kf2 = keyfile_world(os.path.join(root, "kf2"), FAKE_CLI)
-    # This fake opens with anything, so make it refuse --no-password: a password + key file store.
+    # This fake opens with anything, so make it refuse --no-password, and refuse a call with no
+    # key file at all, as the real one does: a password + key file store.
     fake2 = os.path.join(root, "kf2", "keepassxc-cli")
     with open(fake2, "w") as fh:
         fh.write(FAKE_CLI.replace("{dir}", os.path.join(root, "kf2")).replace(
-            "exit 0", 'for a in "$@"; do [ "$a" = "--no-password" ] && exit 1; done\nexit 0'))
+            "exit 0", 'for a in "$@"; do [ "$a" = "--no-password" ] && exit 1; done\n'
+                      'for a in "$@"; do [ "$a" = "-k" ] && exit 0; done\nexit 1'))
     K = import_kp(env_both)
     check("a store that also has a password is not taken for keyfile-only", K.keyfile_only() is False)
     rc, out, err = run(env_both, "ls")
@@ -148,6 +150,115 @@ def test_keyfile_only(root):
     rc, out, err = run(env_init, "init", "--db", db3, "--no-password")
     check("init --no-password without a key file is refused (nothing would open the store)",
           rc != 0 and "--keyfile" in err, (rc, err))
+
+
+# A store saved WITHOUT its key: it refuses the key file and opens with an empty password.
+FAKE_KEYLESS_CLI = """#!/bin/sh
+printf '%s\\n' "$@" > "{dir}/argv"
+cat > "{dir}/stdin"
+for a in "$@"; do
+  if [ "$a" = "-k" ]; then echo "Error: Invalid credentials were provided" >&2; exit 1; fi
+done
+exit 0
+"""
+
+
+def expect_exit(fn, *args):
+    try:
+        fn(*args)
+    except SystemExit as e:
+        return e.code
+    return None
+
+
+def test_keyed_as_expected(root):
+    print("\n== a file saved without its key never lands on the store ==")
+    env, db, keyfile = keyfile_world(os.path.join(root, "kx"), FAKE_CLI)
+    K = import_kp(env)
+    src = os.path.join(root, "kx", "copy.kdbx")
+    shutil.copy2(db, src)
+    before = open(db, "rb").read()
+    check("a file that opens with an EMPTY password and no key file is refused",
+          expect_exit(K.keyed_as_expected, src, "test") == K.EXIT_NODB)
+    check("and the store is untouched", open(db, "rb").read() == before)
+    check("write_over_db runs the key check before it writes",
+          "keyed_as_expected(src, why)" in open(KP, encoding="utf-8").read().split("def write_over_db", 1)[1]
+          .split("\ndef ", 1)[0])
+
+    env, db, keyfile = keyfile_world(os.path.join(root, "ky"), FAKE_KEYFILE_ONLY_CLI)
+    K = import_kp(env)
+    K._NOPW[0] = True
+    check("a keyfile-only file that still opens with the key file alone passes",
+          expect_exit(K.keyed_as_expected, db, "test") is None)
+
+    env, db, keyfile = keyfile_world(os.path.join(root, "kz"), FAKE_KEYLESS_CLI)
+    K = import_kp(env)
+    K._NOPW[0] = True
+    check("a keyfile-only file that no longer opens with the key file is refused",
+          expect_exit(K.keyed_as_expected, db, "test") == K.EXIT_NODB)
+
+    env, state = world(os.path.join(root, "knk"))
+    K = import_kp(env)
+    check("with no key file configured there is nothing to compare, so nothing is refused",
+          expect_exit(K.keyed_as_expected, db, "test") is None)
+
+
+def test_keyless_store_is_named(root):
+    print("\n== a store written without its key is named as such ==")
+    env, db, keyfile = keyfile_world(os.path.join(root, "kl"), FAKE_KEYLESS_CLI)
+    rc, out, err = run(env, "ls")
+    check("the key file is refused but the store opens keyless: it says so, and does not ask for a master",
+          rc == 6 and "EMPTY password" in err and "keyfile here is not the problem" in err, (rc, err))
+
+
+def test_rm(root):
+    print("\n== rm asks before it deletes and names the notes that point at the entry ==")
+    import contextlib
+    import types
+    env, state = world(os.path.join(root, "rm"))
+    K = import_kp(env)
+    vault = os.path.join(root, "rm", "vault")
+    os.makedirs(os.path.join(vault, "30-Knowledge"))
+    with open(os.path.join(vault, "30-Knowledge", "uses-it.md"), "w") as fh:
+        fh.write("token: kp://Brain/apis/old#password\n")
+    with open(os.path.join(vault, "30-Knowledge", "near-miss.md"), "w") as fh:
+        fh.write("token: kp://Brain/apis/old-two\n")
+    K.B = types.SimpleNamespace(VAULT=vault)
+    check("find_refs finds the note pointing at the entry, not the one with a longer name",
+          K.find_refs("Brain/apis/old") == [os.path.join("30-Knowledge", "uses-it.md")],
+          K.find_refs("Brain/apis/old"))
+
+    calls = []
+    K.unlocked = lambda interactive=True: "pw"
+    K.resolve = lambda pw, raw: raw if raw.startswith("Brain/") or raw.startswith("Personal/") else "Brain/" + raw
+    K.cli = lambda args, pw, **kw: calls.append(list(args))
+    K.backup = lambda: os.path.join(state, "b.kdbx")
+    K.verify_or_restore = lambda b, pw: None
+    K.guard_lock = lambda force: None
+    K.write_lock = contextlib.nullcontext
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = expect_exit(K.cmd_rm, types.SimpleNamespace(entry="apis/old", yes=False, force=False))
+    check("without --yes nothing is deleted and it exits 5", rc == K.EXIT_LOCKED and calls == [], (rc, calls))
+    check("and it names the note that would be left pointing at nothing",
+          "uses-it.md" in buf.getvalue() and "near-miss.md" not in buf.getvalue(), buf.getvalue())
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = expect_exit(K.cmd_rm, types.SimpleNamespace(entry="apis/old", yes=True, force=False))
+    check("with --yes it deletes through the backend", rc is None and calls == [["rm", K.DB, "Brain/apis/old"]],
+          (rc, calls))
+    check("and reports the reference it left broken", "now broken: 30-Knowledge/uses-it.md" in buf.getvalue(),
+          buf.getvalue())
+
+    del calls[:]
+    rc = expect_exit(K.cmd_rm, types.SimpleNamespace(entry="Personal/bank", yes=True, force=False))
+    check("outside the agent group nothing is deleted, even with --yes", rc == K.EXIT_LOCKED and calls == [],
+          (rc, calls))
+
+    rc, out, err = run(env, "rm", "--help")
+    check("rm is a real subcommand with --yes", rc == 0 and "--yes" in out, (rc, out, err))
 
 
 def test_keyfile_real_cli(root):
@@ -357,6 +468,9 @@ def main():
               "1500" in mac and "2" in lin and "1500" not in lin, (mac, lin))
 
         test_keyfile_only(root)
+        test_keyed_as_expected(root)
+        test_keyless_store_is_named(root)
+        test_rm(root)
         test_keyfile_real_cli(root)
     finally:
         shutil.rmtree(root, ignore_errors=True)
