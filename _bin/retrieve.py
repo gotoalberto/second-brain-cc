@@ -16,7 +16,7 @@ import brainlib as B
 # file is the Claude Code UserPromptSubmit adapter: session budget, dedupe, threshold
 # escalation, pulls and heartbeats.
 from retrieve_core import (HARNESS_TAGS, TASK_VERBS, THRESHOLD_BASE, coverage,  # noqa: E402,F401
-                           is_harness, is_task, neighbours, rank, render_block)
+                           is_harness, is_task, neighbours, person_lines, rank, render_block)
 
 MAX_TOKENS_PROMPT   = 250     # cap per injection on an ordinary prompt
 MAX_TOKENS_TASK     = 460     # cap when the prompt asks to EXECUTE something
@@ -166,6 +166,33 @@ def bail(con, notice):
     sys.exit(0)
 
 
+def person_key(line):
+    """The `injected` key for a `· Person:` line: one person is told once per session."""
+    return "person:" + line[len("· Person: "):].split(" \u2014 ")[0]
+
+
+def new_people(con, sid, lines):
+    """people_core's lines minus the people this session was already told about.
+
+    A person's block is its `· Person:` line and the indented lines under it; the command that
+    lists everything stays, under the first person left, only if one is left."""
+    if not lines:
+        return []
+    already = already_paths(con, sid)
+    out, keep, command = [], False, None
+    for line in lines:
+        if line.startswith("· Person: "):
+            keep = person_key(line) not in already
+        elif line.lstrip().startswith("all, without repeats"):
+            command = line
+            continue
+        if keep:
+            out.append(line)
+    if out and command:
+        out.insert(1, command)
+    return out
+
+
 def search(con, terms, query, project, sid, limit):
     # An already injected note is not repeated... until enough injections have gone
     # by: by then it may well have fallen out of the context window.
@@ -265,7 +292,10 @@ def main():
     measured = [(coverage(con, h[1], terms), h) for h in hits]
     hits = [h for cob, h in measured if cob >= threshold]
     best = max([c for c, _ in measured], default=0.0)
-    if not hits:
+    # A person the prompt names comes with their entity note and notes, once per session
+    # per person, whether or not any note clears the bar (people_core).
+    people = new_people(con, sid, person_lines(con, prompt, hits))
+    if not hits and not people:
         # Nothing clears the bar: the vault does not cover this topic. The threshold
         # rises so the session stops trying and stops adding noise. Only on prompts
         # new ones: an already injected topic is no proof of missing coverage.
@@ -296,7 +326,7 @@ def main():
         for path, title in neighbours(con, [h[1] for h in hits[:2]], 3, terms):
             if path not in ya and path not in already_paths(con, sid):
                 rel.append(("related", path, title))
-    if not hits:
+    if not hits and not people:
         B.metric(con, sid, "no-hits", latency_ms=(time.time() - t0) * 1000,
                  extra="field=%s%s terms=%s"
                        % (prompt_key, " continuation" if continuation else "",
@@ -304,11 +334,15 @@ def main():
         bail(con, link_notice)
 
     first_time = con.execute("SELECT COUNT(*) FROM injected WHERE sid=?", (sid,)).fetchone()[0] == 0
-    block, kept = render_block(hits, rel, cap, pointer_only, link_notice, first_time)
+    block, kept = render_block(hits, rel, cap, pointer_only, link_notice, first_time, people)
 
     tokens = B.est_tokens(block)
-    for _, path, _, _ in hits[:kept]:
-        con.execute("INSERT OR IGNORE INTO injected VALUES(?,?,?)", (sid, path, B.now()))
+    for _, path, _, _ in hits:
+        if "`%s`" % path in block:
+            con.execute("INSERT OR IGNORE INTO injected VALUES(?,?,?)", (sid, path, B.now()))
+    for line in people:
+        if line.startswith("· Person: ") and line in block:
+            con.execute("INSERT OR IGNORE INTO injected VALUES(?,?,?)", (sid, person_key(line), B.now()))
     con.execute("UPDATE sessions SET tokens = tokens + ? WHERE sid=?", (tokens, sid))
     B.metric(con, sid, "inject", tokens=tokens, hits=len(hits),
              latency_ms=(time.time() - t0) * 1000,

@@ -22,7 +22,13 @@ that carries a url and nothing else: a missing program is for a person to instal
 
 Usage:
     routine_requires.py check <routine.md>...   each routine, ✓ or ✗ with its gaps; exit 2 on any gap
-    routine_requires.py here [--fix]            every enabled agent task this machine runs
+    routine_requires.py here [--fix]            every enabled agent task this machine runs, and the
+                                                runner itself (below)
+
+The runner itself, on `here` where systemd runs it: second-brain-tasks.service must not kill what
+a task detaches. Under the default KillMode=control-group, a task that starts its work in the
+background and returns has that work killed the moment tasks.py exits, with nothing to show for
+it. The unit template sets KillMode=process; an installed unit that differs is reported.
 """
 import os
 import re
@@ -203,6 +209,45 @@ def tasks_here(vault=None, is_mine=None):
     return tasks_from_registry(text, is_mine or _is_mine)
 
 
+TASKS_UNIT = "second-brain-tasks.service"
+
+
+def killmode_problem(show):
+    """`systemctl show -p LoadState -p KillMode` output -> the problem, or None. Pure.
+
+    Fine when the unit is not loaded here, or keeps detached work alive (process or none)."""
+    vals = dict(l.split("=", 1) for l in (show or "").splitlines() if "=" in l)
+    if vals.get("LoadState") != "loaded" or vals.get("KillMode") in (None, "process", "none"):
+        return None
+    return ("%s has KillMode=%s: systemd kills whatever a task detaches as soon as tasks.py exits; "
+            "its template sets KillMode=process, reinstall it with `python3 ~/Brain/_bin/guardian.py repair`"
+            % (TASKS_UNIT, vals["KillMode"]))
+
+
+def _systemctl_show():
+    """The installed tasks unit's LoadState and KillMode, or "" where systemd does not run it."""
+    if not sys.platform.startswith("linux") or not shutil.which("systemctl"):
+        return ""
+    try:
+        return subprocess.run(["systemctl", "--user", "show", TASKS_UNIT, "-p", "LoadState", "-p", "KillMode"],
+                              capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _runner_report(show):
+    """The runner check on `here`: ✓ or ✗ for the tasks unit's KillMode. Nothing when it is not here."""
+    text = show()
+    if not text:
+        return 0
+    problem = killmode_problem(text)
+    print(("✗ " if problem else "✓ ") + "runner %s (KillMode)" % TASKS_UNIT)
+    if problem:
+        print("    " + problem)
+        return GAP_EXIT
+    return 0
+
+
 def _report(name, path, probe, vault, home, do_fix, run):
     try:
         with open(path, encoding="utf-8") as fh:
@@ -221,7 +266,7 @@ def _report(name, path, probe, vault, home, do_fix, run):
     return GAP_EXIT if probs else 0
 
 
-def main(argv=None, probe=None, vault=None, home=None, is_mine=None, run=None):
+def main(argv=None, probe=None, vault=None, home=None, is_mine=None, run=None, show=None):
     argv = sys.argv[1:] if argv is None else argv
     probe = probe or RealProbe()
     vault = vault or default_vault()
@@ -235,12 +280,13 @@ def main(argv=None, probe=None, vault=None, home=None, is_mine=None, run=None):
         return max([_report(p, resolve(p, os.getcwd(), home), probe, vault, home, "--fix" in argv, run)
                     for p in paths] or [0])
     if argv[0] == "here":
+        runner = _runner_report(show or _systemctl_show)
         rows = tasks_here(vault, is_mine)
         if not rows:
             print("no enabled agent task runs on this machine")
-            return 0
-        return max(_report(tid, resolve(p, vault, home), probe, vault, home, "--fix" in argv, run)
-                   for tid, p in rows)
+            return runner
+        return max([runner] + [_report(tid, resolve(p, vault, home), probe, vault, home, "--fix" in argv, run)
+                               for tid, p in rows])
     print(__doc__)
     return GAP_EXIT
 

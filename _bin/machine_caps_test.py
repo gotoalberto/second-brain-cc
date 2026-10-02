@@ -20,6 +20,7 @@ sys.path.insert(0, HERE)
 import machine_caps as M
 
 ok, fail = [], []
+TMP = []
 
 
 def check(name, cond, detail=""):
@@ -312,9 +313,141 @@ def test_real_probe_is_fast():
     check("and produce a renderable dict", "## This machine" in M.render(caps))
 
 
+def test_unknown_is_not_no():
+    text = M.render(dict(CAPS, chrome=dict(CAPS["chrome"], running=None)))
+    check("an unreadable process list says it cannot tell, never that Chrome is not usable",
+          "**cannot tell right now**" in text and "could not tell whether it is running" in text
+          and "not usable" not in text, text)
+    check("a probe with Chrome's state unknown is not complete",
+          M.complete(dict(CAPS, chrome=dict(CAPS["chrome"], running=None))) is False)
+    check("a full probe is complete, and so is a machine with no Chrome",
+          M.complete(CAPS) is True and M.complete(dict(CAPS, chrome={"installed": False})) is True)
+    check("no probe at all is not complete", M.complete(None) is False)
+
+
+class Clock:
+    def __init__(self, t):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+
+def cache_dir():
+    d = tempfile.mkdtemp(prefix="brain-machine-caps-test-")
+    TMP.append(d)
+    return d
+
+
+def seed_cache(state, text, at):
+    with open(os.path.join(state, M.CACHE), "w") as fh:
+        json.dump({"text": text, "at": at}, fh)
+
+
+def cached(state, clock, probe_fn=None, environ=None, budget=None):
+    spawned, probed = [], []
+
+    def probe_once():
+        probed.append(1)
+        return (probe_fn or (lambda: CAPS))()
+    sec = M.cached_section(state_dir=state, now=clock, probe_fn=probe_once, spawn=spawned.append,
+                           environ={} if environ is None else environ,
+                           budget=M.COLD_BUDGET if budget is None else budget)
+    return sec, spawned, probed
+
+
+def test_cached_section():
+    state, clock = cache_dir(), Clock(10000.0)
+    seed_cache(state, "\n## This machine\n- from the cache", clock.t - 60)
+    sec, spawned, probed = cached(state, clock)
+    check("a fresh cache is served as a compass section, with no probe and no refresh",
+          sec == ("machine", "\n## This machine\n- from the cache", M.PRIORITY) and not probed and not spawned,
+          (sec, probed, spawned))
+
+    clock.t += M.CACHE_TTL + 1
+    sec, spawned, probed = cached(state, clock)
+    check("a stale cache is served at once, without waiting for a probe",
+          sec[1] == "\n## This machine\n- from the cache" and not probed, (sec, probed))
+    check("and starts one refresh behind the session",
+          len(spawned) == 1 and spawned[0][-1] == "--refresh", spawned)
+    sec, spawned, probed = cached(state, clock)
+    check("a second session moments later starts no second refresh", spawned == [], spawned)
+    clock.t += M.REFRESH_EVERY + 1
+    sec, spawned, probed = cached(state, clock)
+    check("once the throttle has passed, a stale cache starts another", len(spawned) == 1, spawned)
+
+    state, clock = cache_dir(), Clock(20000.0)
+    seed_cache(state, "\n## This machine\n- old", clock.t - M.CACHE_TTL - 5)
+    sec, spawned, probed = cached(state, clock, environ={"BRAIN_OFFLINE": "1"})
+    check("under BRAIN_OFFLINE (the hook probe) a stale cache starts nothing", spawned == [], spawned)
+
+    state, clock = cache_dir(), Clock(30000.0)
+    sec, spawned, probed = cached(state, clock)
+    with open(os.path.join(state, M.CACHE)) as fh:
+        stored = json.load(fh)
+    check("with no cache it probes, and a complete answer is the block",
+          sec == ("machine", M.render(CAPS), M.PRIORITY) and probed == [1], sec)
+    check("and is cached with the time it was made",
+          stored == {"text": M.render(CAPS), "at": 30000.0}, stored)
+    check("the cache is written atomically, no temporary file left",
+          sorted(os.listdir(state)) == [M.CACHE], os.listdir(state))
+
+    state, clock = cache_dir(), Clock(40000.0)
+    blind = dict(CAPS, chrome=dict(CAPS["chrome"], running=None))
+    sec, spawned, probed = cached(state, clock, probe_fn=lambda: blind)
+    check("an incomplete answer is still shown", "cannot tell right now" in sec[1], sec)
+    check("but never cached, and a refresh is started to fill the cache",
+          not os.path.exists(os.path.join(state, M.CACHE)) and len(spawned) == 1, (os.listdir(state), spawned))
+
+    state, clock = cache_dir(), Clock(50000.0)
+
+    def slow():
+        time.sleep(3)
+        return CAPS
+    t0 = time.time()
+    sec, spawned, probed = cached(state, clock, probe_fn=slow, budget=0.2)
+    took = time.time() - t0
+    check("a cold probe that does not answer in time is not waited for", took < 1.5, took)
+    check("the block still comes, naming the machine and saying the probe did not answer",
+          sec[0] == "machine" and "## This machine" in sec[1] and "did not answer within 0.2 s" in sec[1]
+          and "--fresh" in sec[1], sec)
+    check("and nothing is cached from it", not os.path.exists(os.path.join(state, M.CACHE)), os.listdir(state))
+
+    state = cache_dir()
+    seed_cache(state, "\n## This machine\n- older but whole", 100.0)
+    wrote = M.refresh(state_dir=state, probe_fn=lambda: blind, now=Clock(200.0))
+    with open(os.path.join(state, M.CACHE)) as fh:
+        stored = json.load(fh)
+    check("a refresh that comes back incomplete keeps the older complete cache",
+          wrote is False and stored == {"text": "\n## This machine\n- older but whole", "at": 100.0}, stored)
+    wrote = M.refresh(state_dir=state, probe_fn=lambda: CAPS, now=Clock(300.0))
+    with open(os.path.join(state, M.CACHE)) as fh:
+        stored = json.load(fh)
+    check("a complete refresh replaces it", wrote is True and stored == {"text": M.render(CAPS), "at": 300.0},
+          stored)
+
+    state = cache_dir()
+    with open(os.path.join(state, M.CACHE), "w") as fh:
+        fh.write("{not json")
+    sec, spawned, probed = cached(state, Clock(60000.0))
+    check("an unreadable cache reads as no cache", probed == [1] and sec[1] == M.render(CAPS), sec)
+
+
+def test_cli():
+    import io
+    saved, sys.stderr = sys.stderr, io.StringIO()
+    try:
+        code = M.main(["--bogus"])
+        usage = sys.stderr.getvalue()
+    finally:
+        sys.stderr = saved
+    check("the CLI rejects an unknown flag and its usage names --fresh",
+          code == 2 and "--fresh" in usage, (code, usage))
+
+
 def main():
     for t in (test_render, test_own_chrome, test_devices_file, test_picker, test_probe_linux, test_probe_macos, test_probe_never_raises, test_section,
-              test_real_probe_is_fast):
+              test_real_probe_is_fast, test_unknown_is_not_no, test_cached_section, test_cli):
         print("\n== %s ==" % t.__name__)
         try:
             t()
@@ -322,6 +455,8 @@ def main():
             import traceback
             traceback.print_exc()
             check("%s ran without raising" % t.__name__, False, repr(exc))
+    for d in TMP:
+        shutil.rmtree(d, ignore_errors=True)
     print("\nRESULT: %d passed, %d failed" % (len(ok), len(fail)))
     return 1 if fail else 0
 

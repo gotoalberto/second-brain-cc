@@ -381,10 +381,16 @@ for any number of named accounts, with no connector and no third-party library.
 ```bash
 python3 _bin/google.py add --account personal --client-id <id> --login-hint me@example.com  # secret on stdin
 python3 _bin/google.py auth --account personal        # browser consent on 127.0.0.1
+python3 _bin/google.py auth --account work --publishing production   # app published in Google Cloud
 python3 _bin/google.py api --account personal "https://www.googleapis.com/calendar/v3/users/me/calendarList"
 python3 _bin/google.py send --account personal --to me@example.com --subject "Digest" --body-file digest.txt
 python3 _bin/google.py slots --account personal --start 2030-01-07T16:30:00+01:00 --minutes 45 --with b@example.com
 ```
+
+A consent screen left in testing mode makes Google expire the refresh token after 7 days, and
+`_bin/google_token_watch.py` warns before that happens. Once the OAuth app is published to
+production, record it with `--publishing production`: its token does not expire, so the watch only
+checks that it still works. GET requests are retried on a dropped connection; writes never are.
 
 Creating or moving a Calendar event through `api` is checked for conflicts first
 (`_bin/google_core/calendar_guard.py`): when the slot overlaps an event or a busy attendee,
@@ -413,6 +419,13 @@ and agents, sets `core.hooksPath` to the vault's `githooks/`, reinstalls or relo
 scheduled jobs you accepted, probes that the hooks actually fire, and alerts you (desktop
 notification, email if configured, log) about what it could not fix. A repair run exits 0 when
 it completed, whatever it found. `guardian.py status` shows everything it watches.
+
+The same repair keeps `ENABLE_CLAUDEAI_MCP_SERVERS=false` in the `env` block of Claude Code's
+`settings.json`, leaving every other key there as it is. That switches off the vendor account
+connectors, which the protocol does not use, so a session never asks you to sign in to one. It is
+on by default. To turn it off, empty `REQUIRED_ENV` in `_bin/guardian_core/domain.py`
+(`REQUIRED_ENV = {}`) and the guardian stops writing the variable; remove it from `settings.json`
+by hand if it is already there.
 
 The jobs it can manage are the guardian itself, the git sync, the task runner, the file watch and
 the Remote Control server. Their templates live in `_bin/` (`com.secondbrain.*.plist`,
@@ -446,11 +459,11 @@ which the installer replaces with yours.
 |---|---|---|
 | `task` | Runs a task end to end: context, worktree, plan, implementation, verification, write-back | The vault and Python |
 | `ctx` | Gathers a task's context into a Context Pack before any work | The vault |
-| `recall` | Searches the vault for past decisions and conventions | The vault |
+| `recall` | Searches the vault for past decisions and conventions; when a person is named, also their entity note and the notes linking to it (`python3 _bin/people.py context <name>`) | The vault |
 | `save` | Writes what a session learned into the vault | The vault, and the files directory chosen in the first run, where `files.py` stores the session's files |
 | `vault-doctor` | Diagnoses the vault and the memory system | The vault; reads `guardian.py status` when the guardian is installed |
 | `kp` | Reads and files credentials in your KeePass database | KeePassXC (`keepassxc-cli`) and a database connected in the first run |
-| `dev` | The development pipeline: hexagonal architecture, tests first, design and review gates for anything with an interface | The third-party skills below, and a browser or preview tool for the rendered checks |
+| `dev` | The development pipeline: hexagonal architecture, tests first, design and review gates for anything with an interface, including a worst-case data pass and a phone pass before the critique rounds | The third-party skills below, and a browser or preview tool for the rendered checks |
 | `job-search` | Finds and ranks openings against your own profile (remote, plus on-site or hybrid in an area you name) and LinkedIn posts from people who are hiring; report only | A Google account connected with the send scope; your own `profile.md`, `preferences.md` (recipient address, account name) and `search-queries.md` created from the skill's `templates/` under `80-Private/job-search/` (local, never pushed); `curl` and `jq`; for the LinkedIn posts step, Claude in Chrome with a browser signed in to LinkedIn (without it the report says the step was skipped) |
 | `machine-update` | Updates Claude Code on this machine and says what is stale: the CLI, the Remote Control server still running an old binary, the desktop app's copy | `_bin/machine_update.py`; restarts the server by itself only on macOS and only when no session is open |
 
@@ -463,7 +476,12 @@ Not shipped here (their licences are their authors'); install them separately:
 | `impeccable` | https://impeccable.style | see its site |
 | `frontend-design` | Anthropic's public skills repository | `npx skills@latest add anthropics/skills -g -a claude-code -s frontend-design -y` |
 | `design-taste-frontend` | `leonxlnx/taste-skill` | `npx skills@latest add leonxlnx/taste-skill -g -a claude-code -s design-taste-frontend -y` |
-| `emil-design-eng`, `animate`, `animate-expo`, `find-animation-opportunities`, `review-animations`, `apple-design` | Emil Kowalski's skills repository | `npx skills@latest add emilkowalski/skills -g -a claude-code -s '*' -y` |
+| `emil-design-eng`, `animate`, `animate-expo`, `find-animation-opportunities`, `review-animations`, `apple-design`, `break-ui`, `mobile-native` | Emil Kowalski's skills repository | `npx skills@latest add emilkowalski/skills -g -a claude-code -s '*' -y` |
+
+The `-s '*'` install brings the whole family, `break-ui` and `mobile-native` included. To add only
+those two to a machine that already has the rest:
+`npx skills@latest add emilkowalski/skills -g -a claude-code -s break-ui -s mobile-native -y`.
+That repository has no skill called `animate-pro`; motion is built with `animate`.
 
 ## Agent orchestration
 
@@ -528,6 +546,7 @@ The deepest experience today is Claude Code with the plugin; nothing in the vaul
 | `index_vault.py`, `query.py`, `retrieve.py` / `retrieve_core.py` | Index, search and per-prompt retrieval. |
 | `linkfix.py` | Find broken `[[links]]` and fix the ones with a safe fix; runs on every search. |
 | `vw.py` | The only write path for shared notes (redact, lock, atomic, reindex). |
+| `people.py` | People context: `people.py detect "<text>"` finds the people a text names, `people.py context <name>` lists the person's entity note in `70-Entities/` and the notes linking to it, merged with a named project's notes so each appears once; `query.py --person <name>` adds the same to a search. Optional settings in the frontmatter of `90-Meta/people.md`: `self: entity-<your-slug>` (never detected as someone else), `not_names: [...]` (first names that are ordinary words) and `person_tags: [...]` (entity tags that mark a person besides `person` and `contact`). |
 | `vault_sync.py` | Commit and push over git. |
 | `doctor.py` | Health report. |
 | `kp.py` | Credentials in a local KeePass database. |
@@ -538,9 +557,9 @@ The deepest experience today is Claude Code with the plugin; nothing in the vaul
 | `guardian.py` | Keeps hooks, git hooks and scheduled jobs wired, and alerts. |
 | `brain_watch.py` | The file watch and the generated hooks. |
 | `tasks.py` | The periodic task and routine runner. |
-| `machine_identity.py`, `machines.py`, `machine_caps.py` | Which machine this is; the registry of machines and their Claude accounts; the `## This machine` block, including which connected Chrome is this machine's own (`machine_caps.py learn-chrome`). |
+| `machine_identity.py`, `machines.py`, `machine_caps.py` | Which machine this is; the registry of machines and their Claude accounts; the `## This machine` block, including which connected Chrome is this machine's own (`machine_caps.py learn-chrome`). The block is served from a cache refreshed in the background, so the start hook never waits on probes; `machine_caps.py --fresh` probes now. |
 | `machine_update.py` | What needs updating for Claude on this machine (CLI, Remote Control server, desktop app) and the safe part of doing it (`/machine-update`). |
-| `routine_requires.py` | Preflight: the repos, programs and paths a routine needs on this machine. |
+| `routine_requires.py` | Preflight: the repos, programs and paths a routine needs on this machine. On Linux `here` also checks that the tasks unit runs with `KillMode=process`, so a task that detaches its work is not killed when the runner exits. |
 | `remote_control.py` | Starts the supervised Remote Control server from its recorded working directory. |
 | `gen_instructions.py` | Generates `AGENTS.md`, `CLAUDE.md` and `90-Meta/HOOKS-WITHOUT-CLAUDE.md`. |
 | `install_plugin.py`, `claude_settings.py` | Skills and agents sync; recommended Claude Code settings. |

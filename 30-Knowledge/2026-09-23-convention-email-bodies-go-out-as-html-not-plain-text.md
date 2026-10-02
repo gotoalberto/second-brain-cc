@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-23
+updated: 2026-09-25
 supersedes: []
 ---
 
@@ -41,6 +41,21 @@ yourself: wrapping is the reader's job.
 `google.py send` and the guardian's alert mails both go through `guardian_core/mailer.py`,
 which composes with `build_message`; `--html` still means "this body already is markup" and
 passes it through as is. Tests: `_bin/mail_body_test.py`.
+
+## Replies and hand-built messages
+
+The rule covers mail that does not go through `google.py send` too, above all a reply inside an
+existing thread, since `send` takes no thread option. A reply draft was once built with a bare
+`EmailMessage().set_content()` just to set the thread headers, and it went out as a narrow column
+again.
+
+To build a reply: `from mail_body import build_message`, then add `In-Reply-To` and `References` to
+the message it returns, and post it through `google.py api` to the drafts or send endpoint with the
+thread's `threadId`. Never `set_content()` alone.
+
+A block of short key and value lines (a name, a reference number, a date) keeps its line breaks only when
+every line in it is under 40 characters. Write such a block as bullet lines, which always keep their
+breaks.
 
 ## Links
 

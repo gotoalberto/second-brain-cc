@@ -15,6 +15,10 @@ Environment=PATH=/home/brain-origin/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/bin/sh /home/brain-origin/Brain/_bin/pywrap.sh /home/brain-origin/Brain/_bin/remote_control.py serve
 Restart=always
 RestartSec=15
+# With the default OOMPolicy=stop, one session killed by the kernel's OOM killer stops the whole
+# unit and every other session with it. A ceiling, when wanted, goes in a drop-in, for example:
+# MemoryMax=8G
+OOMPolicy=continue
 
 [Install]
 WantedBy=default.target

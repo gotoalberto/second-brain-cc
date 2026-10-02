@@ -24,10 +24,28 @@ local and never pushed.
 - Contract types, in order of preference: <permanent | contractor | freelance>
 - An unpublished salary is not a reason to exclude (change this line if you disagree).
 
+## Languages
+
+The languages you work in come from `profile.md`. A posting that requires another one is dropped
+from every list and only counted in the report; a posting written entirely in another language with
+no stated working language counts as requiring it. An optional language passes, with a note that it
+adds points.
+
+- Languages that should also pass when required, beyond the profile: <languages, or "none">
+
+## Seniority
+
+How seniority words in a title and in the body are treated. A title word listed as a ranking signal
+lets the posting pass and ranks it below plainer titles; only body wording listed below fails it.
+
+- Title words that only lower the rank: <e.g. Senior, or "none">
+- Title words that fail a posting: <e.g. Lead, Principal, or "none">
+- Body wording that fails a posting: <e.g. managing a team, owning the whole function, or "none">
+
 ## Hard exclusions
 
-Anything that should fail a posting outright: sectors, role types, required languages you do not
-speak, travel requirements.
+Anything that should fail a posting outright: sectors, role types, travel requirements. Required
+languages are handled under Languages above.
 
 - <exclusion>
 

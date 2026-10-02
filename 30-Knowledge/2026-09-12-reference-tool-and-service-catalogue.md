@@ -9,7 +9,7 @@ status: active
 confidence: medium
 source: agent
 provenance: "template generalized from a working vault; every row below is a placeholder to replace with your own"
-updated: 2026-09-22
+updated: 2026-09-26
 supersedes: []
 ---
 
@@ -70,7 +70,9 @@ python3 ~/Brain/_bin/kp.py get apis/<service>-api-key --pipe '/path/to/script.sh
 | `<server>` | user scope, `<auth>` | `<what it answers>` | `<machines>` | YYYY-MM-DD |
 
 Only mechanisms you control: scripts with keys in the kdbx, generic or self-hosted MCP servers
-([[2026-09-15-convention-never-claude-ai-connectors-only-controlled-mechanisms]]).
+([[2026-09-15-convention-never-claude-ai-connectors-only-controlled-mechanisms]]), on every machine.
+The guardian keeps vendor account connectors switched off with `ENABLE_CLAUDEAI_MCP_SERVERS=false`;
+one that shows up anyway counts as absent, and its "needs authentication" notice is never relayed.
 
 ## Keeping this current
 

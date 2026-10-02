@@ -206,6 +206,45 @@ def brain_hook_paths(hooks: dict, brain_dirs) -> list:
     return seen
 
 
+# Environment values Brain keeps in Claude Code's settings.json `env` block on every machine.
+# ENABLE_CLAUDEAI_MCP_SERVERS=false turns off the connectors that come with the vendor account:
+# Brain reaches outside services only through mechanisms it controls (convention note
+# 2026-09-15-convention-never-claude-ai-connectors-only-controlled-mechanisms), and while those
+# connectors stay loaded the harness asks the session to tell the user to authorize the ones
+# that are logged out. A plain dict on purpose: a user who wants them can empty it.
+REQUIRED_ENV = {"ENABLE_CLAUDEAI_MCP_SERVERS": "false"}
+
+
+@dataclass(frozen=True)
+class EnvChange:
+    name: str
+    value: str
+
+    @property
+    def key(self) -> str:
+        return "env:%s" % self.name
+
+    @property
+    def text(self) -> str:
+        return "env %s is not %s" % (self.name, self.value)
+
+
+def reconcile_env(current, required=None):
+    """Every REQUIRED_ENV value set in a settings `env` block, every other key kept.
+
+    Returns (merged, changes). The input is never mutated; an `env` that is not an object is
+    replaced by the required values.
+    """
+    required = REQUIRED_ENV if required is None else required
+    merged = dict(current) if isinstance(current, dict) else {}
+    changes = []
+    for name, value in required.items():
+        if merged.get(name) != value:
+            merged[name] = value
+            changes.append(EnvChange(name, value))
+    return merged, changes
+
+
 def reconcile_hooks(canonical: dict, current: dict, brain_dirs, missing_paths):
     """Remove stale Brain hooks, then merge the canonical ones (`merge_hooks`).
 
@@ -1144,6 +1183,9 @@ class ProbeResult:
     error: str = ""               # could not start at all
     parsed: object = None         # stdout decoded, when it looked like JSON
     parse_error: str = ""
+    elapsed_s: float = 0.0        # wall time of the last attempt
+    load: float = 0.0             # 1-minute load average per CPU while it ran; 0.0 = not measured
+    attempts: int = 1             # a timed-out case is run a second time; see HookProbe._one
 
 
 def probe_payload(hook_event: str, cwd: str) -> dict:
@@ -1224,11 +1266,41 @@ def probe_verdict(case: ProbeCase, result: ProbeResult) -> str:
     return ""
 
 
+# Above this 1-minute load average PER CPU, the machine is the suspect, not the hook. Several
+# hooks going over budget at once, each by a small margin, while the machine is saturated is
+# the signature of a slow machine rather than of several broken hooks.
+PROBE_BUSY_LOAD = 2.0
+
+
+def probe_slow_because_busy(result: ProbeResult) -> bool:
+    """True when a timeout says more about the machine than about the hook.
+
+    Only for a case that timed out on its retry too (`attempts > 1`): a hook that answered is
+    not judged, and one that failed its only attempt is not excused without a second look. A
+    `load` of 0.0 means the platform would not say, and an unmeasured machine gets no benefit
+    of the doubt.
+    """
+    return bool(result.timed_out) and result.attempts > 1 and result.load >= PROBE_BUSY_LOAD
+
+
 def probe_findings(pairs) -> list:
+    """One finding per hook that misbehaved: FAIL, unless the machine was the problem.
+
+    A hook that only missed its budget while the machine was flat out is a WARN: worth seeing
+    in `guardian.py status`, not worth a page. `probe_mail_worthy` pages on FAIL only, so the
+    severity is the whole mechanism. A timeout on a quiet machine stays a FAIL.
+    """
     out = []
     for case, result in pairs or []:
         why = probe_verdict(case, result)
-        if why:
+        if not why:
+            continue
+        if probe_slow_because_busy(result):
+            out.append(Finding("hooks:probe:%s" % case.event_id, WARN,
+                               "hook %s (%s) went over its %ds budget (%.1fs) while this machine was busy "
+                               "(load %.1f per CPU, retried once). Probably the machine, not the hook."
+                               % (case.event_id, case.identity, case.timeout, result.elapsed_s, result.load)))
+        else:
             out.append(Finding("hooks:probe:%s" % case.event_id, FAIL,
                                "hook %s (%s) fails when run the way Claude Code runs it: %s"
                                % (case.event_id, case.identity, " ".join(why.split()))))

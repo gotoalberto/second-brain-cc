@@ -72,9 +72,29 @@ def test_compose():
     check("only the accounts in trouble are in it", "--account work" not in body, body)
 
 
+def test_production():
+    # A refresh token minted by an app published to production has no fixed lifetime: only the
+    # liveness probe applies, and a clock-based warning would be a false alarm.
+    s = W.assess("work", "2030-01-05T09:00:00+00:00", True, "ok", NOW, publishing="production")
+    check("a production token has no expiry and no days left",
+          s["expires"] is None and s["days_left"] is None and s.get("publishing") == "production", s)
+    check("so it is never warned about while it works", W.due(s, None, "2030-01-10") is None)
+    check("and its line says it does not expire, liveness only",
+          "does not expire (production), liveness only" in W.summary_line(s), W.summary_line(s))
+    dead = W.assess("work", "2030-01-05T09:00:00+00:00", False, "invalid_grant", NOW, publishing="production")
+    check("a production token that stops refreshing is still dead", W.due(dead, None, "2030-01-10") == "dead")
+    subject, body = W.compose([dead], {"work": "dead"})
+    check("and its warning does not blame the Testing clock",
+          "Testing publishing status" not in body and "production" in body, body)
+    testing = W.assess("work", "2030-01-05T09:00:00+00:00", True, "ok", NOW)
+    check("testing stays the default", testing.get("publishing") == "testing" and testing["days_left"] == 2.0, testing)
+
+
 class Registry:
-    def __init__(self, stamp):
+    def __init__(self, stamp, publishing=None):
         self.authorized_at = stamp
+        if publishing:
+            self.publishing = publishing
 
 
 def run(argv, accounts, probes, root, sent=None):
@@ -121,6 +141,12 @@ def test_main():
         code, out, calls = run([], {"x": Registry("")}, {"x": (True, "ok")}, root)
         check("with no stamped account it says how to get one", code == 0 and "google.py auth" in out, out)
         check("a bad flag is a usage error", run(["--bogus"], accounts, probes, root)[0] == 2)
+        root2 = os.path.join(root, "prod")
+        os.makedirs(root2)
+        code, out, calls = run(["--to", "me@example.com"], {"work": Registry("2030-01-04T09:00:00+00:00", "production")},
+                               {"work": (True, "ok")}, root2)
+        check("an account stamped production in the registry is watched for liveness only",
+              code == 0 and calls == [] and "does not expire (production)" in out and "no warning due" in out, out)
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -133,7 +159,8 @@ def test_stamp_is_what_google_py_writes():
 
 
 def main():
-    for t in (test_assess_and_due, test_sender, test_compose, test_main, test_stamp_is_what_google_py_writes):
+    for t in (test_assess_and_due, test_sender, test_compose, test_production, test_main,
+              test_stamp_is_what_google_py_writes):
         print("\n== %s ==" % t.__name__)
         try:
             t()

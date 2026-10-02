@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-02
+updated: 2026-09-30
 supersedes: []
 ---
 
@@ -36,6 +36,28 @@ the change is visible.
 - Adapt this to your setup. If you do not want automatic deploys, replace this note with
   your own rule; the protocol links to it.
 
+## What counts as verified
+
+A merged pull request, a green build and pages that answer 200 can all be true while production
+still serves the old thing. Each of these was seen:
+
+- **Production failed while the preview passed.** On a hosting platform that builds a preview and a
+  production deployment for the same commit, the production one failed within a second and the
+  preview of the identical commit was fine. Check the production deployment status of the merged
+  commit itself (for GitHub, `gh api repos/<owner>/<repo>/commits/<sha>/status`), and read the build
+  log when it failed.
+- **The live page is the evidence.** Fetch the real page and look for the new asset name, hash or
+  text (`curl -s https://example.org/ | grep <new-asset>`). A dashboard saying "ready" is a claim
+  about the platform.
+- **Configuration baked at build time.** Frameworks inline some variables into the bundle when it
+  is built (`NEXT_PUBLIC_*` in Next.js, `VITE_*` in Vite and similar). A release whose variables
+  were not switched before the merge ships the old values under the new commit. A version endpoint
+  only proves which commit built; verify the values derived from configuration that the live build
+  serves (an endpoint or page that shows them) as well.
+- **After changing such variables, redeploy without the build cache.** A plain redeploy can reuse
+  the old build and keep the old values.
+
 ## Links
 
 - [[2026-08-30-convention-check-the-effect-not-the-exit-code]]
+- [[2026-09-30-convention-pull-requests-ready-on-main-merged-by-the-agent]]

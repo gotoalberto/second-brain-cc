@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import dataclasses
 import secrets as _secrets
+import time
 from dataclasses import dataclass
 
 from . import domain as D
@@ -23,6 +24,7 @@ class Ports:
     send_log: object = None         # ports.SendLog, for send
     clock: object = None            # ports.Clock
     open_url: object = None         # callable(url), for auth: a browser, or None to only print it
+    sleep: object = None            # callable(seconds), between API retries; time.sleep when None
 
 
 def list_accounts(ports) -> list:
@@ -61,9 +63,14 @@ def _client(ports, account, timeout):
     return ports.secrets.read(entry, "UserName", timeout), ports.secrets.read(entry, "Password", timeout)
 
 
-def authorize(ports, name, timeout=300) -> str:
+def authorize(ports, name, timeout=300, publishing="testing") -> str:
     """The loopback consent: open the URL, wait for Google's callback on 127.0.0.1, exchange the code,
-    store the refresh token. Returns the KeePass entry it was stored in."""
+    store the refresh token. Returns the KeePass entry it was stored in.
+
+    `publishing` is the consent screen's status in Google Cloud (domain.PUBLISHING), stamped with the
+    consent instant: google_token_watch.py counts a 7 day expiry only for a token minted in testing."""
+    if publishing not in D.PUBLISHING:
+        raise D.UsageError("--publishing must be %s" % " or ".join(D.PUBLISHING))
     account = get_account(ports, name)
     client_id, client_secret = _client(ports, account, 60)
     state = _secrets.token_urlsafe(16)
@@ -84,7 +91,8 @@ def authorize(ports, name, timeout=300) -> str:
         accounts = ports.accounts.load()
         if name in accounts:
             accounts[name] = dataclasses.replace(accounts[name],
-                                                 authorized_at=ports.clock.now().isoformat(timespec="seconds"))
+                                                 authorized_at=ports.clock.now().isoformat(timespec="seconds"),
+                                                 publishing=publishing)
             ports.accounts.save(accounts)
     return entry
 
@@ -110,12 +118,24 @@ def access_token(ports, name, required_scope=None, timeout=20) -> str:
 
 def api(ports, name, method, url, body=None, timeout=30) -> dict:
     """An authenticated REST call. An HTTP error comes back as {"_http_error": status, "_body": text},
-    so the caller sees Google's own message; google.py exits 1 on it (domain.api_exit_code)."""
+    so the caller sees Google's own message; google.py exits 1 on it (domain.api_exit_code).
+
+    A read that loses its connection is tried again after each of domain.retry_delays: a
+    dropped connection mid-run used to kill the caller before it could record that its step
+    failed. A write is never retried, it may have landed. After the last attempt the network
+    failure is raised as before."""
     token = access_token(ports, name, timeout=min(timeout, 30))
-    try:
-        return ports.http.request(method, url, token, body, timeout)
-    except HttpError as exc:
-        return {"_http_error": exc.status, "_body": exc.body[:400]}
+    sleep = ports.sleep or time.sleep
+    delays = list(D.retry_delays(method))
+    while True:
+        try:
+            return ports.http.request(method, url, token, body, timeout)
+        except HttpError as exc:
+            return {"_http_error": exc.status, "_body": exc.body[:400]}
+        except D.Unavailable:
+            if not delays:
+                raise
+            sleep(delays.pop(0))
 
 
 def send(ports, mailer, name, to, subject, body, html=False, run_id=None) -> dict:

@@ -9,7 +9,7 @@ status: active
 confidence: medium
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative. Only the invalid-token failure shape was seen from a real CLI; the other failure patterns are best guesses until a real failure confirms them"
-updated: 2026-09-22
+updated: 2026-09-27
 supersedes: []
 ---
 
@@ -172,7 +172,10 @@ to the pool, without `--chrome`, with a prompt saying there is no browser so it 
 fallback, and it raises the `routine-auth:cli-login` warning: run `claude auth login` on that
 machine. Any other failure of the CLI-login attempt is the run's result; no token is spent on it. The
 pool's failover limit counts only pool attempts. [[2026-09-21-reference-where-claude-in-chrome-is-available]]
-`BRAIN_HEADLESS=1` is exported so hook scripts can tell an unattended run apart.
+`BRAIN_HEADLESS=1` is exported so hook scripts can tell an unattended run apart. The memory Stop
+gate (`gate_memory.py`) stays silent under it: a scheduled run is told not to save, and the extra turn
+that gate would force replaces the run's final answer, which is where a `required` marker is read.
+[[2026-09-27-failure-headless-routine-blocked-by-its-own-allowlist]]
 
 ## Smoke checks
 

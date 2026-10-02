@@ -26,7 +26,7 @@ The one-screen version. Full protocol: `~/Brain/90-Meta/AGENT-PROTOCOL.md`.
 - Links are clickable and verified: vault notes as repository URLs (sync first), apps by LAN IP (bind 0.0.0.0; the browser pane uses localhost), deliverables sent as files.
 - Messages in the user's name: read the end of the thread first, draft, show, send only when told.
 - Deliverables are stored with their project; a published page also goes as an HTML file and is archived. Pitches: web page, one infographic per slide, subtle motion, house style.
-- Integrations only through what the vault controls (scripts with kdbx tokens such as `google.py`, a generic MCP server). Never vendor connectors.
+- Integrations only through what the vault controls (kdbx-token scripts like `google.py`, a generic MCP server). No vendor connectors on any machine; never relay their sign-in notices (the guardian disables them).
 - A procedure or correction repeated twice → a skill (`skill-forge`). Skills are self-contained and canonical in the vault; `install_plugin.py sync` after editing.
 - A vault change is done when pushed, in the same session: run `_bin/vault_sync.py` (it commits and pushes under its lock). Never `git commit`/`push` in the vault by hand: the gate denies it.
 - Project repos live in one code directory (e.g. `~/git/<repo>`); a short name matches a repo suffix. Look there before scanning home.

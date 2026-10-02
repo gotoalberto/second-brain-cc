@@ -292,4 +292,5 @@ def build_ports(environ=None, headless=False, open_browser=True):
         opener = webbrowser.open
     return Ports(secrets=KpSecretStore(kp_path(environ), headless=headless), http=UrllibHttp(),
                  accounts=JsonAccountStore(accounts_path(environ)), receiver=LoopbackReceiver(),
-                 send_log=JsonlSendLog(sent_log_path(environ)), clock=SystemClock(), open_url=opener)
+                 send_log=JsonlSendLog(sent_log_path(environ)), clock=SystemClock(), open_url=opener,
+                 sleep=time.sleep)

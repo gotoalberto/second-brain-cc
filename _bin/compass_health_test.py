@@ -146,6 +146,30 @@ def main():
     check("a healthy guardian adds neither",
           p.returncode == 0 and ctx and "Brain health" not in ctx and "guardian.py status" not in (out.get("systemMessage") or ""),
           (p.returncode, out))
+
+    # The fingerprint runs `git status` once per worktree with a per-call default, so a repo
+    # with several worktrees could spend the whole hook budget here. Bounded per call.
+    seen = []
+    saved = C.B.tree_fingerprint
+    C.B.tree_fingerprint = lambda cwd, **kw: seen.append(kw) or "fp"
+    try:
+        C.baseline("cccc3333", PATHS["vault"])
+    finally:
+        C.B.tree_fingerprint = saved
+    check("the startup snapshot bounds each git call of the fingerprint",
+          len(seen) == 1 and seen[0].get("timeout") == getattr(C, "BASELINE_TIMEOUT", None)
+          and seen[0].get("timeout", 99) < 5, seen)
+
+    import machine_caps as M
+    saved = getattr(M, "cached_section", None), M.section
+    M.cached_section = lambda *a, **k: ("machine", "from the cache", M.PRIORITY)
+    M.section = lambda *a, **k: ("machine", "probed live", M.PRIORITY)
+    try:
+        sec = C.machine_section()
+    finally:
+        M.cached_section, M.section = saved
+    check("the startup block reads the machine block from the cache, never probes live",
+          sec == ("machine", "from the cache", M.PRIORITY), sec)
     return finish()
 
 

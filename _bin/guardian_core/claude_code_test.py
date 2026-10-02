@@ -142,7 +142,8 @@ def test_agent():
     w = a.check()
     check("with no settings file every canonical hook is a change",
           sorted(k for k, _ in w.changes)
-          == ["hooks:SessionStart:compass.py", "hooks:Stop:gate_memory.py", "hooks:Stop:vault_sync.py --hook"],
+          == ["env:ENABLE_CLAUDEAI_MCP_SERVERS", "hooks:SessionStart:compass.py", "hooks:Stop:gate_memory.py",
+              "hooks:Stop:vault_sync.py --hook"],
           w.changes)
     check("the wiring is named after the agent and readable", w.name == "claude-code" and not w.unreadable)
     check("checking writes nothing", not os.path.exists(os.path.join(config, "settings.json")))
@@ -150,6 +151,7 @@ def test_agent():
     settings_path = os.path.join(config, "settings.json")
     foreign = {"type": "command", "command": "/usr/local/bin/other-tool"}
     write(settings_path, json.dumps({"model": "opus", "permissions": {"allow": ["Bash"]},
+                                     "env": {"FOO": "1", "ENABLE_CLAUDEAI_MCP_SERVERS": "true"},
                                      "hooks": {"Stop": [{"hooks": [foreign]}]}}))
     r = a.repair()
     data = json.load(open(settings_path))
@@ -159,8 +161,11 @@ def test_agent():
     check("repair keeps every non-hook key",
           data["model"] == "opus" and data["permissions"] == {"allow": ["Bash"]}, data)
     check("repair reports what it changed and where the backup is",
-          r.name == "claude-code" and len(r.changes) == 3 and r.backup and os.path.exists(r.backup)
+          r.name == "claude-code" and len(r.changes) == 4 and r.backup and os.path.exists(r.backup)
           and not r.errors, r)
+    check("repair turns the account connectors off and keeps every other env value",
+          data.get("env") == {"FOO": "1", "ENABLE_CLAUDEAI_MCP_SERVERS": "false"}, data.get("env"))
+    check("and says so in words", "env ENABLE_CLAUDEAI_MCP_SERVERS is not false" in r.changes, r.changes)
 
     mtime = os.path.getmtime(settings_path)
     r = a.repair()
@@ -288,6 +293,23 @@ def test_plugin_sync():
           CC.ClaudeCodeAgent(settings, canonical, config_dir=config, paths=FakePaths()).check().conflicts == [])
 
 
+def test_empty_required_env():
+    print("\n== ClaudeCodeAgent with nothing required in env ==")
+    d = tmpdir()
+    a, config = agent(d)
+    settings_path = os.path.join(config, "settings.json")
+    write(settings_path, json.dumps({"theme": "dark"}))
+    saved = D.REQUIRED_ENV
+    D.REQUIRED_ENV = {}
+    try:
+        r = a.repair()
+    finally:
+        D.REQUIRED_ENV = saved
+    data = json.load(open(settings_path))
+    check("repair wires the hooks", "hooks" in data and len(r.changes) == 3, r)
+    check("and adds no env block when nothing is required", "env" not in data, data)
+
+
 def main():
     global CC, P, D
     try:
@@ -297,7 +319,8 @@ def main():
     except Exception as exc:
         check("guardian_core.claude_code imports", False, "%s: %s" % (type(exc).__name__, exc))
     else:
-        for t in (test_settings_store, test_canonical, test_agent, test_stale_hooks, test_plugin_sync):
+        for t in (test_settings_store, test_canonical, test_agent, test_empty_required_env, test_stale_hooks,
+                  test_plugin_sync):
             try:
                 t()
             except Exception as exc:

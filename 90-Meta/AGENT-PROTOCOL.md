@@ -159,6 +159,10 @@ Adapt this to your own taste; it is a convention note, not code. Detail:
   built so a second language is cheap. `30-Knowledge/2026-09-10-convention-report-deliverable-shape.md`
 - Team chat posts: the title in the channel, the content or link in the thread, published only
   when asked. `30-Knowledge/2026-08-28-convention-publishing-to-a-team-chat-channel.md`
+- A web goes through `/dev` Gate 3's fixed stack: `impeccable`, `frontend-design`,
+  `design-taste-frontend` and `emil-design-eng`, motion built with the `animate` family, `break-ui`
+  (worst-case data) and `mobile-native` (phone feel) before three critique rounds, and every design
+  and every fix looked at in a browser. `30-Knowledge/2026-08-26-convention-code-development-pipeline.md`
 - Web deliverables meet the craft floor and the interface copy rules; text inside images is
   audited with local OCR before shipping.
   `30-Knowledge/2026-08-30-convention-impeccable-craft-floor-rules-for-web.md`,
@@ -353,6 +357,9 @@ Detail and reasoning: `30-Knowledge/2026-08-21-convention-worktree-isolation-per
   proves alive. `30-Knowledge/2026-09-15-decision-brain-machinery-independent-of-claude-app-and-account.md`
 - **Never vendor connectors.** Only mechanisms the vault controls: scripts with kdbx tokens
   (`google.py` for named Google accounts), `files.py` over a local directory, a generic MCP server.
+  This holds on every machine and every kind of session. A vendor connector that still appears
+  counts as absent, and its "needs authentication" notice is never relayed to the user; the
+  guardian keeps them switched off in the agent's settings.
   `30-Knowledge/2026-09-15-convention-never-claude-ai-connectors-only-controlled-mechanisms.md`
 - **A scheduled repair job exits non-zero only when the run itself fails**, never because it found
   something. `30-Knowledge/2026-09-15-convention-scheduled-job-exit-code-should-reflect-crash-not-findings.md`

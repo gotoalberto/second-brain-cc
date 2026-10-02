@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-21
+updated: 2026-09-26
 supersedes: []
 ---
 
@@ -49,3 +49,5 @@ that believes it works and does not is worse than one that stops and says so.
 ## Links
 
 - [[2026-09-15-runbook-brain-guardian]]
+- [[2026-09-26-runbook-unwedge-the-vault-sync-after-a-stuck-rebase]]: what to do when a pull
+  stops half way through a rebase and the sync refuses every later pass.

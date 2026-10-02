@@ -89,7 +89,19 @@ Reports go to `80-Private/job-search/reports/<YYYY-MM-DD>.md`.
 4. **Fetch the real posting text first.** It is the cheapest check and often decides alone. Apply the
    gates on that text, not on the listing row:
    - **Fail:** on-site or hybrid outside the area the preferences allow (or anywhere, when they name
-     none); a required language the profile does not have; anything the preferences exclude.
+     none); anything the preferences exclude.
+   - **Language gate.** A language the posting requires and the profile does not list drops the
+     posting from every list: the table, **Already rejected** and **LinkedIn posts**. It survives only
+     as a count in the report's line on sources ("N dropped for a required language"), so a quiet day
+     still shows the gate ran. Required means the requirements say so ("required", "must", "fluent in")
+     or the daily work needs it (interviews or customers in that language). A posting written entirely
+     in another language that names no working language counts as requiring it. An optional language
+     ("a plus", "nice to have", "preferred") passes, and the row says it adds points. Ambiguous wording,
+     a language listed with no qualifier, passes with the quote written in the row as a doubt.
+   - **Seniority**, as the preferences configure it. A seniority word in a title can be a ranking
+     signal rather than a gate: the posting passes and ranks below the plainer titles. Only wording in
+     the body that puts the user in charge of people or of a whole function fails it, quoted in the
+     row.
    - **Flag, never exclude:** a degree requirement, "remote within a region", heavy travel, an
      unpublished salary.
 
@@ -118,7 +130,7 @@ Reports go to `80-Private/job-search/reports/<YYYY-MM-DD>.md`.
       then unverified, then hybrid or on-site anywhere else. A role the user can actually take outranks
       a better fit they cannot. Local roles carry their mode in the row (on-site, hybrid, days in the
       office).
-   2. **Fit with the profile**, within each tier.
+   2. **Fit with the profile**, within each tier, with the seniority signal from step 4 applied.
 
    Every row: title, company, link, where it was found, the location from the tracking system, salary if
    published, date, deadline, honest strengths and gaps, and for rejected rows the quoted reason.

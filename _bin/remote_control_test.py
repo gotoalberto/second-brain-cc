@@ -221,6 +221,13 @@ def test_templates():
                  "ExecStart=/bin/sh /home/brain-origin/Brain/_bin/pywrap.sh /home/brain-origin/Brain/_bin/remote_control.py serve"):
         check("the unit says %s" % line, line in unit.splitlines(), unit)
     check("and puts ~/.local/bin on PATH", "/home/brain-origin/.local/bin" in unit, unit)
+    # With the default OOMPolicy=stop, one child killed by the kernel's OOM killer stops the whole
+    # unit, and every session it serves with it.
+    check("one session killed for memory does not stop the server and every other session",
+          "OOMPolicy=continue" in unit.splitlines(), unit)
+    check("a memory ceiling is offered as a commented example, never imposed",
+          any(l.startswith("#") and "MemoryMax=" in l for l in unit.splitlines())
+          and not any(l.startswith("MemoryMax=") for l in unit.splitlines()), unit)
     for name, text in (("plist", plist), ("unit", unit)):
         check("the %s never asks for a worktree spawn mode" % name, "--spawn" not in text, name)
 

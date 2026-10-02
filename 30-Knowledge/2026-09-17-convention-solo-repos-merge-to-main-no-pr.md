@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-17
+updated: 2026-09-30
 supersedes: []
 ---
 
@@ -50,6 +50,8 @@ text itself should carry the exception is the user's call.
 
 ## Links
 
+- [[2026-09-30-convention-pull-requests-ready-on-main-merged-by-the-agent]]: how pull requests are
+  opened and merged in the repositories that do use them
 - [[2026-08-21-convention-worktree-isolation-per-deliverable]]
 - [[2026-09-16-convention-push-vault-changes-immediately]]: a different rule, about when the vault
   itself is pushed

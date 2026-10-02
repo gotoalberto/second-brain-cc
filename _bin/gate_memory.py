@@ -64,6 +64,11 @@ def _save(path, st):
 @B.fail_open
 def main():
     data = B.read_hook_input()
+    # A scheduled run (the runner sets BRAIN_HEADLESS=1) is told not to save, and the extra
+    # turn this gate forces replaces its final answer, which is where the runner looks for
+    # the success marker: the run would be recorded as failed after doing its work.
+    if os.environ.get("BRAIN_HEADLESS") == "1":
+        sys.exit(0)
     if not data.get("session_id"):
         sys.exit(0)               # no session, nobody to claim from (fail-open)
     sid = B.sid8(data.get("session_id"))

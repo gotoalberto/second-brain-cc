@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-21
+updated: 2026-09-25
 supersedes: []
 ---
 
@@ -46,7 +46,27 @@ A mechanism that lets an agent use a secret without ever seeing it (an OS keycha
 without revealing the value, a hardware signer) could move this line. "The user trusts this agent"
 is not enough on its own.
 
+## Actions with real effects
+
+The same line applies to a run that spends real money or changes production data, even when no
+secret is typed: it is the user's decision and the user's trigger.
+
+- **The agent prepares and rehearses.** It writes the script and runs it where nothing real is at
+  stake: a test environment, or the real environment in a dry `--check` mode that reads everything
+  and sends nothing.
+- **The user triggers the real run**, from their own machine, through one pasteable command
+  ([[2026-09-27-convention-user-handoffs-as-one-pasteable-command]]).
+- **Both environments run, every time.** The rehearsal does not replace the real run, and the real
+  run does not skip the rehearsal.
+- **Every run is recorded twice**: in the repository's test log, with a link to each job or
+  record it produced, and in the document delivered to the user, with the real figures (times, costs)
+  folded into the write-up.
+- **References to code are concrete**: file path, line, and a link pinned to the commit the shipped
+  archive was cut from. When later commits only touch the documents, the link still points at the
+  last commit where the referenced code changed, so a reviewer lands on the lines the text describes.
+
 ## Links
 
 - [[2026-08-20-decision-credentials-in-keepass]]
 - [[2026-08-21-convention-guides-with-secrets-to-keepass]]
+- [[2026-09-27-convention-user-handoffs-as-one-pasteable-command]]

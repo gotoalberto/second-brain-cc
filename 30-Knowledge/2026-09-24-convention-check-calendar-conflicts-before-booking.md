@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-24
+updated: 2026-09-27
 supersedes: []
 ---
 
@@ -45,6 +45,22 @@ nothing, prints the conflicts and free alternatives, and exits with status 3. Sh
 user and rerun with the chosen slot, or with `--force` once the user accepts the overlap.
 `google.py slots --account NAME --start ISO [--minutes N] [--with ADDRESS ...]` runs the same check
 without writing, for proposing times before anything is booked.
+
+## Known gaps
+
+Seen while booking a meeting with several external attendees:
+
+- **A dry check is never a real create without attendees.** With nobody to check, nothing conflicts,
+  and the event is created for real. Use `slots` for a dry check.
+- **A "free" from the dry check was once wrong.** In one implementation of the guard, the slot check
+  with `--with` reported an external attendee free for a slot where the create path's check, and a
+  direct `freeBusy` call, both said busy. Until a test pins that `slots` and the write path give the
+  same answer for the same attendees, cross-check a "free" for external attendees with a direct
+  `freeBusy` request before proposing the slot.
+- **Your own calendar can lag right after a delete.** An event created and deleted just to see the
+  guard's output still showed up as a conflict for a short while.
+- **Attendees whose calendar is not shared with the account come back not found.** That is unknown,
+  the same "not checked" case as above, and is never read as free.
 
 ## Links
 

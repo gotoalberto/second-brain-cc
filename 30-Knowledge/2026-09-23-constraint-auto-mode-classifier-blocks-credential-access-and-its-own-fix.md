@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from a session in a working vault that tried to query a cloud account's costs from a machine running auto mode with no allow list; service and account details removed"
-updated: 2026-09-23
+updated: 2026-09-30
 supersedes: []
 ---
 
@@ -72,6 +72,26 @@ written about were invisible to it. The vault records decisions and context; the
 account is only in the API. When the API is one permission away, do not answer a "what do I have" or
 "what do I pay" question from the vault alone; say it is an estimate, and ask for the access.
 
+## Addendum: the user's OK in chat does not unblock it
+
+In a later session the user chose, in chat, the option where the agent would carry out a sensitive
+operation with a production key, and said OK. The classifier still refused every step of it: reading
+the key's identifier from a secret store, looking up the account it belongs to, and even reading the
+settings file to see what was allowed. A typed "yes" in the conversation is not a permission the
+classifier can see.
+
+What follows from it:
+
+- **Each step of a sensitive operation needs its own narrow allow rule.** After the first rules
+  landed, the read passed and the next steps were refused one by one: writing a `.env` file with the
+  key's identifier, calling the credential skill for a second key, writing a deploy script that held
+  no secret at all. A rule for one step says nothing about the next.
+- **Otherwise the user runs it.** When a step keeps being refused even with a matching rule (using a
+  production key was refused that way), the agent prepares it and hands it over as one command.
+
+How the person grants the rules from their own machine is in
+[[2026-09-30-howto-grant-claude-code-allow-rules-from-another-machine]].
+
 ## Links
 
 - [[2026-09-21-failure-permission-classifier-blocks-gmail-message-reads]]
@@ -79,3 +99,4 @@ account is only in the API. When the API is one permission away, do not answer a
 - [[2026-09-21-convention-agents-must-not-run-scripts-needing-human-typed-secrets]]
 - [[2026-08-20-decision-credentials-in-keepass]]
 - [[2026-09-21-convention-machines-default-to-bypass-permissions-with-a-non-root-user]]
+- [[2026-09-27-convention-user-handoffs-as-one-pasteable-command]]

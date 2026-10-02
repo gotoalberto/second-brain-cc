@@ -26,6 +26,13 @@ solve it start out knowing everything, without having burned their window search
    to `type: decision` (decisions already made, which you must not contradict) and to
    `10-Projects/` (project state).
 
+   **If the task names a person**, search by their name too, and get their context:
+   ```
+   /usr/bin/python3 ~/Brain/_bin/people.py context "<name>"
+   ```
+   Read the person's entity note, then the notes it lists (those shared with the task's
+   project first). Each note once, even when it shows up under both the person and the project.
+
 2. **Query the code**, if the task touches a repo: structure, files involved, the real
    conventions of the neighbouring code, existing tests.
 

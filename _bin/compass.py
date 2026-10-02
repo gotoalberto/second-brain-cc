@@ -88,16 +88,26 @@ def cleanup(con, keep=None):
     con.commit()
 
 
+BASELINE_TIMEOUT = 2             # per git call inside the fingerprint; see baseline()
+
+
 def baseline(sid, cwd):
     """Snapshot of the working tree at startup, so the memory gate can tell "the repo
     was already dirty" apart from "this session dirtied it".
-    Without this snapshot the gate cannot claim the work done on the first turn."""
+    Without this snapshot the gate cannot claim the work done on the first turn.
+
+    Bounded, because the fingerprint runs `git status` once per worktree and its default
+    budget is per call: a repo with several worktrees on a busy machine can spend the whole
+    hook budget here. A fingerprint missing a worktree only makes the gate read the tree as
+    changed, the safe side; a hook killed at its deadline leaves the session with no
+    startup block at all.
+    """
     try:
         os.makedirs(B.STATE, exist_ok=True)
         marker = os.path.join(B.STATE, "%s.memgate" % sid)
         if os.path.exists(marker):
             return                        # resume: the session already had state
-        fp = B.tree_fingerprint(cwd)
+        fp = B.tree_fingerprint(cwd, timeout=BASELINE_TIMEOUT)
         B.atomic_write(marker, json.dumps(
             {"ack_claims": 0, "ack_turn": 0, "ack_saves": 0,
              "ack_fp": fp, "blocked_turn": -1}))
@@ -110,7 +120,7 @@ def build_sections(con, sid=None, cwd=None):
     is ever dropped (see fit)."""
     secs = [("header", "# Brain — the user's memory (vault: ~/Brain)", 100)]
 
-    # Which machine this is and what it has, probed locally in milliseconds (machine_caps.py).
+    # Which machine this is and what it has, read from machine_caps' cache (probed behind the session).
     # Before the protocol, so no rule is read as if it applied to some other machine.
     machine = machine_section()
     if machine:
@@ -147,10 +157,14 @@ def build_sections(con, sid=None, cwd=None):
 
 
 def machine_section():
-    """The `## This machine` block: ("machine", text, priority), or None. Never raises."""
+    """The `## This machine` block: ("machine", text, priority), or None. Never raises.
+
+    The cached path, never a live probe: a SessionStart hook reads cached state, the same
+    rule health_section follows. With nothing cached it probes for machine_caps.COLD_BUDGET
+    seconds and no longer."""
     try:
         import machine_caps
-        return machine_caps.section()
+        return machine_caps.cached_section()
     except Exception as e:
         B.log_error("compass.machine_section", e)
         return None

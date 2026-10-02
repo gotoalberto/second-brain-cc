@@ -449,6 +449,48 @@ def settle_unmerged(run_git=None):
     return left
 
 
+def settle_rebase(run_git=None, in_rebase=None, max_steps=2000):
+    """Carries a stopped `pull --rebase` through when only machine files stop it.
+
+    Returns [] once the rebase has finished, or the paths a person must see, with the
+    rebase still in progress for the caller to abort. Aborting every stop is not enough:
+    a machine file deleted on one machine while another kept rewriting it in local commits
+    stops the rebase on the same commit at every pass, and that machine never pushes again.
+
+    Same rule as settle_unmerged: the remote's side wins. During a rebase HEAD is the
+    remote plus what was already replayed, so the HEAD copy is kept, else the file goes.
+    A commit left empty by that (it only touched machine files) is skipped. Inert while
+    EPHEMERAL_PREFIXES is empty: then every unmerged path is returned untouched.
+    """
+    run_git = run_git or git
+    in_rebase = in_rebase or rebase_in_progress
+    settled = []
+    for _ in range(max_steps):
+        if not in_rebase():
+            if settled:
+                B.log("sync", "rebase-settled", machine=MACHINE, files_=",".join(settled[:5]))
+                print("rebase carried through, machine files taken from the remote: %s"
+                      % ", ".join(settled[:5]))
+            return []
+        paths = unmerged_paths(run_git)
+        real = [p for p in paths if not is_ephemeral(p)]
+        if real:
+            return real
+        if not paths:
+            return ["(the rebase stopped without an unmerged file)"]
+        for rel in paths:
+            if run_git("cat-file", "-e", "HEAD:" + rel)[0] == 0:
+                run_git("checkout", "HEAD", "--", rel)
+            else:
+                run_git("rm", "-q", "-f", "--ignore-unmatch", "--", rel)
+            settled.append(rel)
+        if run_git("diff", "--cached", "--quiet")[0] == 0:
+            run_git("rebase", "--skip")
+        else:
+            run_git("-c", "core.editor=true", "rebase", "--continue")
+    return ["(the rebase did not finish after %d steps)" % max_steps]
+
+
 def report_unmerged(left):
     """Stops loudly on unmerged files: a CONFLICT note in 00-Inbox and a line on stdout."""
     B.log("sync", "stopped-unmerged", machine=MACHINE, files_=",".join(left[:5]))
@@ -478,6 +520,12 @@ def fetch_from_remote():
     clear_stale_index_lock()
     _, head_before, _ = git("rev-parse", "HEAD")
     code, out, err = git("pull", "--rebase", "--autostash")
+    if code != 0 and rebase_in_progress():
+        left = settle_rebase()
+        if not left and not rebase_in_progress():
+            code = 0
+        elif left:
+            err = (err or "") + "\nleft unresolved: %s" % ", ".join(left[:5])
     if code == 0:
         # Everything the rebase rewrote carries mtime = now. Marked, or the memory gate
         # reads the OTHER machine's commit as this session having saved something.

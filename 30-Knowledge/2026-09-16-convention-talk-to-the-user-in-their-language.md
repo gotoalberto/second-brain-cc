@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-16
+updated: 2026-09-29
 supersedes: []
 ---
 
@@ -19,6 +19,10 @@ Reply to the user in their language, always: whatever language the question arri
 language the code, the note or the document under discussion is written in. If the user writes in
 another language and asks about an English note, the answer is in that language. A switch into English because the
 material is in English is the usual slip.
+
+A reply rewritten after a style check stays in the user's language too. A rewrite that drifted into
+English was the other slip seen in practice. Only code, commands and quoted identifiers keep their own
+language.
 
 Set the user's language once, in `90-Meta/PROTOCOL-COMPACT.md`, so it reaches every session through
 the startup context and the generated `AGENTS.md`. It is not a preference to restate per session.

@@ -196,6 +196,14 @@ def test_files():
           AD.accounts_path(env) == os.path.join(d, "s", "google-accounts.json"), AD.accounts_path(env))
 
 
+
+def test_wiring():
+    print("\n== wiring ==")
+    root = tmpdir()
+    ports = AD.build_ports(environ={"HOME": root, "BRAIN_STATE": os.path.join(root, "state")}, open_browser=False)
+    check("the real ports wait between API retries with the real sleep", getattr(ports, "sleep", None) is time.sleep,
+          getattr(ports, "sleep", None))
+
 def test_receiver():
     print("\n== LoopbackReceiver ==")
     r = AD.LoopbackReceiver()
@@ -230,7 +238,7 @@ def main():
     except Exception as exc:
         check("google_core.adapters, domain and ports import", False, "%s: %s" % (type(exc).__name__, exc))
     else:
-        for t in (test_secret_store, test_http, test_files, test_receiver):
+        for t in (test_secret_store, test_http, test_files, test_receiver, test_wiring):
             try:
                 t()
             except Exception as exc:

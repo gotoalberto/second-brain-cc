@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real installs on a macOS laptop and a Linux server in a working vault; names and numbers are illustrative"
-updated: 2026-09-24
+updated: 2026-09-29
 supersedes: []
 ---
 
@@ -142,6 +142,10 @@ them in step with the templates ([[2026-09-15-runbook-brain-guardian]]).
 - On a Linux server nobody logs into, systemd user units stop with the last login session
   unless lingering is on. The first run's `remote_control` step turns it on (step 8); by hand,
   `sudo loginctl enable-linger $USER`.
+- **The tasks unit keeps `KillMode=process`** (in `_bin/systemd/second-brain-tasks.service`). With
+  systemd's default control-group kill, every child ends when `tasks.py` exits, so a task that
+  detaches its work and returns dies at once; only starts by hand ever work. The template carries
+  the setting and `routine_requires.py here` reports a loaded tasks unit without it.
 - **A machine runs no scheduled task until a row names it.** The registry in
   `90-Meta/scheduled-tasks.md` is shared and every row is pinned to a machine: `*` for every
   machine, or one machine's label (its short hostname), its key or a key it had before a rename.
@@ -175,6 +179,9 @@ Once you say yes, the step:
    macOS (`RunAtLoad` and `KeepAlive`, no `StartInterval`) or
    `_bin/systemd/second-brain-remote-control.service` on Linux (`Restart=always`, and no timer).
    The guardian keeps it installed like every other job.
+   The Linux unit carries `OOMPolicy=continue`, so one child killed for memory does not stop the
+   server and every session with it.
+   [[2026-09-29-failure-one-oom-killed-child-stopped-the-remote-control-service]]
 
 Both templates run `_bin/remote_control.py serve`, which finds the CLI (on `PATH`, then
 `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, preferring the real CLI over a wrapper) and

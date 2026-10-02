@@ -33,7 +33,7 @@ def fake(events, busy=None, current=None, fail_list=False):
     calls = []
 
     def call(url, method="GET", body=None):
-        calls.append((method, url))
+        calls.append((method, url, body))
         if url.endswith("/freeBusy"):
             cals = {}
             for e in body["items"]:
@@ -136,6 +136,38 @@ def test_move():
     check("the attendee's copy of the moved event is ignored", guard(call, EV + "/int", "PATCH", mv) is None)
 
 
+
+def test_slots_and_write_agree():
+    # A dry check must give the answer the write would give. `google.py slots` calls check() the
+    # way the line below does; a write goes through guard(). Same attendees, same slot, same
+    # calendar replies: same conflicts, same unknowns, same alternatives, the same freeBusy asked.
+    people = [ME, "dana@example.org", "lee@example.net"]
+    busy = {"dana@example.org": [("2030-01-07T16:45:00+01:00", "2030-01-07T17:15:00+01:00")]}
+    start, end = cg.parse_ts(BODY["start"], TZ), cg.parse_ts(BODY["end"], TZ)
+
+    def both(busy):
+        dry_call, dry_calls = fake([], busy=busy)
+        dry = cg.check(dry_call, "primary", start, end, [{"email": p} for p in people], TZ, me=(ME,), now=NOW)
+        write_call, write_calls = fake([], busy=busy)
+        body = dict(BODY, attendees=[{"email": ME, "self": True}] + [{"email": p} for p in people[1:]])
+        wet = cg.guard(write_call, EV, "POST", body, (ME,), default_tz=TZ, now=NOW)
+        return dry, wet, dry_calls, write_calls
+
+    dry, wet, dry_calls, write_calls = both(busy)
+    check("a busy attendee is a conflict on both paths",
+          dry["conflicts"] and wet and wet["conflicts"] == dry["conflicts"], (dry, wet))
+    check("an attendee whose calendar is not shared is unknown on both, never free",
+          dry["unknown"] == ["lee@example.net"] and wet and wet["unknown"] == dry["unknown"], (dry, wet))
+    check("and both offer the same alternatives", wet and wet["alternatives"] == dry["alternatives"])
+    check("both ask freeBusy the same question",
+          [c for c in dry_calls if "freeBusy" in c[1]] == [c for c in write_calls if "freeBusy" in c[1]],
+          (dry_calls, write_calls))
+    dry, wet, _, _ = both({})
+    check("a slot the dry check calls free is one the write books",
+          dry["conflicts"] == [] and wet is None, (dry, wet))
+    check("an attendee nobody can see does not stop the write; only the dry check names it as unknown",
+          dry["unknown"] == ["dana@example.org", "lee@example.net"], dry)
+
 def test_helpers():
     check("hours parse", cg.parse_hours("15-20") == (15, 20))
     for bad in ("20-15", "x", "9-24"):
@@ -156,7 +188,7 @@ def test_helpers():
 
 
 def main():
-    for t in (test_target, test_create, test_attendees, test_move, test_helpers):
+    for t in (test_target, test_create, test_attendees, test_move, test_slots_and_write_agree, test_helpers):
         print("\n== %s ==" % t.__name__)
         try:
             t()

@@ -1208,6 +1208,11 @@ def git_touched_since(ts):
 
 PULL_EVERY = 300               # seconds between throttled vault pulls
 PULL_TIMEOUT = 8               # a prompt never blocks longer than this on the network
+MIN_PULL = 2                   # a pull gets at least this, or is not started at all
+# Hard caps for the three LOCAL git calls around the pull. Small fixed numbers, not shares
+# of the caller's budget: they are local and fast, and taking their time out of the pull's
+# can leave the pull too little to finish a rebase it has already started.
+LOCK_WAIT, REVPARSE_CAP, DIFF_CAP = 0.4, 1.0, 2.0
 _LAST_PULL_MARKER = "last_pull"
 
 
@@ -1231,6 +1236,18 @@ def maybe_pull(force=False, timeout=None):
     does not get the lock or the network is slow it gives up silently. The caller's own
     work never waits on the network beyond `timeout` (default `PULL_TIMEOUT`).
 
+    `timeout` bounds the WHOLE call, not just the `git pull` inside it. Bounding only the
+    pull let the lock wait, the `rev-parse` and the `diff` add up on top of it, so a hook
+    that asked for a few seconds spent most of its own budget before reading the vault.
+
+    The three LOCAL calls around the pull get small fixed caps instead of shares of the
+    budget, and the PULL keeps whatever is left with a floor of `MIN_PULL`: the one place
+    the budget may overrun, on purpose. A `pull --rebase --autostash` killed between the
+    stash and the apply leaves `.git/rebase-merge/` holding nothing but the autostash, and
+    from there vault_sync refuses to commit anything until a person clears it by hand. A
+    pull cut short costs one stale read; a pull half done costs the vault. A caller whose
+    whole budget is under `MIN_PULL` gets no pull at all.
+
     `force=True` skips the `PULL_EVERY` throttle. retrieve.py calls this unforced, on
     every prompt, where a pull every few seconds would be wasteful. compass.py calls it
     forced, once per session at SessionStart, where a stale first look at the vault is the
@@ -1245,8 +1262,16 @@ def maybe_pull(force=False, timeout=None):
                 return
         except OSError:
             pass
+    deadline = time.monotonic() + (timeout or PULL_TIMEOUT)
+
+    def left(floor=0.5):
+        """What is still owed to the caller, never zero: a git call given 0 s is a crash."""
+        return max(floor, deadline - time.monotonic())
+
+    if (timeout or PULL_TIMEOUT) < MIN_PULL:
+        return                            # the caller cannot afford a pull; do not start one
     try:
-        with flock(os.path.join(VAULT, "_index", ".gitlock"), timeout=1) as lk:
+        with flock(os.path.join(VAULT, "_index", ".gitlock"), timeout=LOCK_WAIT) as lk:
             if not lk.held:
                 return
             # If a rebase was ALREADY under way on arrival, it is not ours: most likely
@@ -1256,14 +1281,18 @@ def maybe_pull(force=False, timeout=None):
             if _rebase_in_progress():
                 log("sync", "pull-skipped-foreign-rebase")
                 return
-            _, head_before, _ = run([GIT, "rev-parse", "HEAD"], cwd=VAULT)
+            _, head_before, _ = run([GIT, "rev-parse", "HEAD"], cwd=VAULT, timeout=REVPARSE_CAP)
+            # What is left, never less than MIN_PULL: finishing a rebase a few hundred
+            # milliseconds late costs nobody anything, killing it mid-apply costs the vault.
             code, _, err = run([GIT, "pull", "--rebase", "--autostash", "--quiet"],
-                               cwd=VAULT, timeout=timeout or PULL_TIMEOUT)
+                               cwd=VAULT, timeout=max(left(), MIN_PULL))
             # Whatever the pull rewrote now has mtime = now. Marked so the memory gate
             # cannot read someone else's commit as this session having saved.
             if code == 0 and head_before.strip():
+                # Local and cheap, but it cannot be skipped when the budget is spent: without
+                # it the memory gate reads what the pull rewrote as this session's saves.
                 rc2, changed, _ = run([GIT, "diff", "--name-only",
-                                       head_before.strip(), "HEAD"], cwd=VAULT)
+                                       head_before.strip(), "HEAD"], cwd=VAULT, timeout=DIFF_CAP)
                 if rc2 == 0 and changed.strip():
                     mark_git_touched(changed.splitlines())
             # The result canNOT be ignored. A failed pull (a conflict, or the timeout

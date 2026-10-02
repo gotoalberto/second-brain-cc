@@ -904,8 +904,39 @@ def test_hook_probe():
     def missing_run(argv, **kw):
         raise FileNotFoundError(2, "No such file or directory", argv[0])
 
-    r = A_.HookProbe(Canonical(hooks), Events(specs), run=timeout_run, scratch_root=tmpdir()).results()
+    timeouts = []
+
+    def counting_timeout_run(argv, **kw):
+        timeouts.append(argv[-1])
+        return timeout_run(argv, **kw)
+
+    r = A_.HookProbe(Canonical(hooks), Events(specs), run=counting_timeout_run, scratch_root=tmpdir(),
+                     load=lambda: 2.5).results()
     check("a hook that runs past its timeout is reported timed out", r and all(res.timed_out for _c, res in r), r)
+    check("only after a second run that times out too",
+          r and all(getattr(res, "attempts", 1) == 2 for _c, res in r) and len(timeouts) == 2 * len(r),
+          ([getattr(res, "attempts", None) for _c, res in r], timeouts))
+    check("and it carries the load it ran under, so the domain can tell a busy machine from a slow hook",
+          r and all(getattr(res, "load", None) == 2.5 for _c, res in r), [getattr(res, "load", None) for _c, res in r])
+    seen = []
+
+    def slow_once(argv, **kw):
+        seen.append(argv[-1])
+        if seen.count(argv[-1]) == 1:
+            raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
+        return types.SimpleNamespace(returncode=0, stdout=ctx if argv[-1].endswith("compass.py") else "", stderr="")
+
+    r = A_.HookProbe(Canonical(hooks), Events(specs), run=slow_once, scratch_root=tmpdir()).results()
+    check("a hook that misses its budget once and then answers is believed",
+          r and not any(res.timed_out for _c, res in r) and D_.probe_findings(r) == []
+          and all(getattr(res, "attempts", 1) == 2 for _c, res in r), r)
+    calls_before = len(calls)
+    r = A_.HookProbe(Canonical(hooks), Events(specs), run=fake_run, scratch_root=tmpdir()).results()
+    check("a hook that answers the first time is never run twice",
+          len(calls) - calls_before == len(r) and all(getattr(res, "attempts", 1) == 1 for _c, res in r),
+          len(calls) - calls_before)
+    check("the default load is a number per CPU, 0.0 where the platform will not say",
+          isinstance(A_.HookProbe._load(), float) and A_.HookProbe._load() >= 0.0)
     r = A_.HookProbe(Canonical(hooks), Events(specs), run=missing_run, scratch_root=tmpdir()).results()
     check("an interpreter that is not there is reported with the reason",
           r and all("No such file" in res.error for _c, res in r), r)

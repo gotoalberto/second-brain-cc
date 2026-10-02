@@ -819,10 +819,11 @@ class HookProbe:
 
     KEEP_ENV = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "USER", "LOGNAME", "SHELL")
 
-    def __init__(self, canonical, events, run=subprocess.run, scratch_root=None, environ=None):
+    def __init__(self, canonical, events, run=subprocess.run, scratch_root=None, environ=None, load=None):
         self.canonical, self.events = canonical, events
         self.run, self.scratch_root = run, scratch_root
         self.environ = os.environ if environ is None else environ
+        self.load = load or self._load
         self.ran = False
         self._results = []
 
@@ -836,16 +837,27 @@ class HookProbe:
                     "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
         return env
 
-    def _one(self, case, env, cwd):
+    def _one(self, case, env, cwd, attempt=1):
+        """Runs one case. A case that times out is run a second time before it is believed.
+
+        The retry separates "this hook is broken" from "this machine was busy" and costs
+        nothing in the normal case: a hook that answers is never run twice. The load rides
+        along on the result so the domain decides how loudly to complain, which keeps
+        `probe_slow_because_busy` pure.
+        """
         try:
             argv = shlex.split(case.command)
         except ValueError as exc:
             return D.ProbeResult(case.event_id, None, error="command does not parse: %s" % exc)
+        t0 = time.perf_counter()
         try:
             p = self.run(argv, input=json.dumps(case.stdin), env=env, cwd=cwd, capture_output=True, text=True,
                          timeout=case.timeout)
         except subprocess.TimeoutExpired:
-            return D.ProbeResult(case.event_id, None, timed_out=True)
+            if attempt == 1:
+                return self._one(case, env, cwd, attempt=2)
+            return D.ProbeResult(case.event_id, None, timed_out=True, elapsed_s=time.perf_counter() - t0,
+                                 load=self.load(), attempts=attempt)
         except OSError as exc:
             return D.ProbeResult(case.event_id, None, error="%s: %s" % (type(exc).__name__, exc))
         stdout, stderr = p.stdout or "", p.stderr or ""
@@ -856,7 +868,19 @@ class HookProbe:
             except ValueError as exc:
                 parse_error = str(exc)
         return D.ProbeResult(case.event_id, p.returncode, stdout[-4000:], stderr[-4000:],
-                             parsed=parsed, parse_error=parse_error)
+                             parsed=parsed, parse_error=parse_error, elapsed_s=time.perf_counter() - t0,
+                             load=self.load(), attempts=attempt)
+
+    @staticmethod
+    def _load():
+        """1-minute load average per CPU, or 0.0 where the platform will not say.
+
+        Per CPU, because a raw load of 8 means one thing on 4 cores and another on 32. 0.0
+        reads as "not measured" and never excuses a timeout."""
+        try:
+            return float(os.getloadavg()[0]) / (os.cpu_count() or 1)
+        except (OSError, AttributeError, ZeroDivisionError):
+            return 0.0
 
     def results(self):
         if self.ran:

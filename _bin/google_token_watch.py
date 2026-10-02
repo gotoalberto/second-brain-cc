@@ -7,17 +7,19 @@ are used. Everything that reads or sends mail through that account stops on the 
 no warning. Worse, when the alert channel is that same Gmail account, the alert that the mail
 died dies with it. So the warning has to go out while the token still works.
 
-google.py stamps the instant of every consent in its account registry (`authorized_at`). This
-script counts the days left from that stamp, probes the token for real (a revoke or a password
+google.py stamps the instant of every consent in its account registry (`authorized_at`), with
+the consent screen's publishing status (`publishing`, from `google.py auth --publishing`; a stamp
+without it reads as testing). This script counts the days left from that stamp, probes the token for real (a revoke or a password
 change that beat the clock is caught on the next run, not at the next routine), and mails the
-warning a few days before the deadline, at most once a day per account.
+warning a few days before the deadline, at most once a day per account. A token minted while the
+app was published to production has no deadline: it gets the liveness probe only.
 
   google_token_watch.py [--account NAME ...] [--days 7] [--warn-within 3]
                         [--to ADDRESS] [--via ACCOUNT] [--dry-run] [--force]
 
   --account      the accounts to watch (repeatable); default: every account with a consent stamp.
-                 Watch only accounts whose OAuth app is in Testing status: a published app's
-                 tokens do not expire on this clock and would only give false warnings.
+                 An account stamped `production` is only probed for liveness: a published app's
+                 tokens do not expire on this clock.
   --to           where the warning goes. Without it the report is printed and nothing is sent.
   --via          the google.py account that sends it. Default: a watched account that is still
                  alive and not the one in trouble, else the account itself. Give it an account
@@ -61,13 +63,17 @@ def parse_instant(text):
     return when if when.tzinfo else when.replace(tzinfo=dt.timezone.utc)
 
 
-def assess(account, authorized_at, alive, detail, now, lifetime_days=TESTING_LIFETIME_DAYS):
-    """One account's footing: alive or not, when its token expires, how many days are left."""
+def assess(account, authorized_at, alive, detail, now, lifetime_days=TESTING_LIFETIME_DAYS,
+           publishing="testing"):
+    """One account's footing: alive or not, when its token expires, how many days are left.
+
+    A token minted in production has no fixed lifetime, so no expiry: only `alive` counts."""
     granted = parse_instant(authorized_at)
-    expires = granted + dt.timedelta(days=lifetime_days) if granted else None
+    testing = publishing != "production"
+    expires = granted + dt.timedelta(days=lifetime_days) if granted and testing else None
     left = round((expires - now).total_seconds() / 86400, 2) if expires else None
     return {"account": account, "alive": bool(alive), "detail": detail, "granted": granted,
-            "expires": expires, "days_left": left}
+            "expires": expires, "days_left": left, "publishing": "testing" if testing else "production"}
 
 
 def due(status, last_sent_day, today, warn_within=WARN_WITHIN_DAYS):
@@ -97,11 +103,17 @@ def _when(value):
     return value.strftime("%a %Y-%m-%d %H:%M %Z").strip() if value else "unknown"
 
 
+def _production(status):
+    return status.get("publishing") == "production"
+
+
 def summary_line(status):
+    head = "%s: token %s (%s); consent %s" % (
+        status["account"], "alive" if status["alive"] else "NOT working", status["detail"], _when(status["granted"]))
+    if _production(status):
+        return head + "; does not expire (production), liveness only"
     left = "unknown" if status["days_left"] is None else "%.2f" % status["days_left"]
-    return "%s: token %s (%s); consent %s; expires %s; days left %s" % (
-        status["account"], "alive" if status["alive"] else "NOT working", status["detail"],
-        _when(status["granted"]), _when(status["expires"]), left)
+    return head + "; expires %s; days left %s" % (_when(status["expires"]), left)
 
 
 def compose(statuses, reasons, lifetime_days=TESTING_LIFETIME_DAYS):
@@ -120,21 +132,30 @@ def compose(statuses, reasons, lifetime_days=TESTING_LIFETIME_DAYS):
         name = html.escape(s["account"])
         if reasons[s["account"]] == "dead":
             items.append("<li><strong>%s</strong> no longer works: %s</li>" % (name, html.escape(s["detail"])))
+        elif _production(s):
+            items.append("<li><strong>%s</strong> was minted in production and does not expire; it still "
+                         "works.</li>" % name)
         elif s["days_left"] is None:
             items.append("<li><strong>%s</strong> has no consent stamp, so its expiry is unknown.</li>" % name)
         else:
             items.append("<li><strong>%s</strong> expires %s, in about %d hours. It still works: renewing it "
                          "now keeps everything running.</li>"
                          % (name, html.escape(_when(s["expires"])), int(round(s["days_left"] * 24))))
-    commands = "\n".join("python3 ~/Brain/_bin/google.py auth --account %s" % s["account"] for s in trouble)
+    commands = "\n".join("python3 ~/Brain/_bin/google.py auth --account %s%s"
+                         % (s["account"], " --publishing production" if _production(s) else "") for s in trouble)
+    if all(_production(s) for s in trouble):
+        why = ("The OAuth app is published to production, so these tokens do not expire on a clock: one that "
+               "stops working was revoked, or the account's password changed.")
+    else:
+        why = ("The OAuth app is in Testing publishing status, so Google expires each refresh token %d days after "
+               "the consent. Publishing the app to production ends this for good; it needs a home page and a "
+               "privacy policy URL." % lifetime_days)
     body = """<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;font-size:15px;line-height:1.5;color:#1a1a1a;max-width:640px">
 <ul>%s</ul>
 <p style="margin:18px 0 6px;font-weight:600">Renew the consent on a machine with a browser:</p>
 <pre style="background:#f4f4f5;border-left:3px solid #6b7280;padding:12px 14px;white-space:pre-wrap;font-size:14px;border-radius:4px">%s</pre>
-<p style="color:#555;font-size:13px">The OAuth app is in Testing publishing status, so Google expires each
-refresh token %d days after the consent. Publishing the app to production ends this for good; it needs
-a home page and a privacy policy URL.</p>
-</div>""" % ("".join(items), html.escape(commands), lifetime_days)
+<p style="color:#555;font-size:13px">%s</p>
+</div>""" % ("".join(items), html.escape(commands), why)
     return subject, body
 
 
@@ -223,7 +244,8 @@ def main(argv=None, now=None, accounts=None, probe_fn=None, send_fn=None, path=N
     statuses = []
     for n in names:
         alive, detail = probe_fn(n)
-        statuses.append(assess(n, known[n].authorized_at, alive, detail, now, args.days))
+        statuses.append(assess(n, known[n].authorized_at, alive, detail, now, args.days,
+                               getattr(known[n], "publishing", "testing")))
     for s in statuses:
         out.write(summary_line(s) + "\n")
 

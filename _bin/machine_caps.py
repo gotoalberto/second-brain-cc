@@ -15,6 +15,16 @@ short timeout. SessionStart has an 8 s budget and this stays far inside it.
 `render()` is pure (a dict in, text out) and `probe()` takes every effect as a parameter, the
 same split as the rest of `_bin/`. See machine_caps_test.py.
 
+The session-start hook does not probe: it reads the block from a cache in the Brain state
+directory (`cached_section`). What the block describes does not change between two sessions
+minutes apart, and the probe's forks cost far more on a busy machine than on an idle one; a
+hook killed at its deadline leaves the session with no startup block at all. A fresh cache is
+served as is, a stale one is served at once and re-probed in a detached process, and with no
+cache (a new machine, or the guardian's hook probe in its scratch state) the probe runs for
+`COLD_BUDGET` seconds at most. An answer that could not tell something (the process list was
+unreadable, the probe was cut short) is shown but never cached: the machine was busy, not
+changed.
+
 The block must never go missing: a probe or a line that fails is reported in its own line, and
 if everything fails the block still says which machine this is and that the probe failed. A
 session that silently gets no block guesses the machine from the OS, which is what this exists
@@ -26,7 +36,8 @@ only means "same OS"). So a session that has confirmed its machine's Chrome reco
 deviceId in <brain state>/chrome-devices.json with `learn-chrome`, and the block names it from
 then on. The file is local to the machine and never enters the vault.
 
-    machine_caps.py                                   print the block
+    machine_caps.py                                   print the block (from the cache when fresh)
+    machine_caps.py --fresh                           probe now, ignoring the cache
     machine_caps.py learn-chrome <deviceId> '<what>'  record this machine's own Chrome
 """
 import json
@@ -35,12 +46,20 @@ import platform as _platform
 import shutil
 import subprocess
 import sys
+import threading
+import time
 
 if os.path.dirname(os.path.abspath(__file__)) not in sys.path:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 TOOLS = ("git", "gh", "python3", "claude", "keepassxc-cli", "jq", "rg")
 PRIORITY = 92
+CACHE = "machine-caps.json"   # in the Brain state directory: {"text": ..., "at": epoch seconds}
+CACHE_TTL = 900               # what the block describes does not change within a quarter hour
+COLD_BUDGET = 1.0             # the most a hook spends probing when nothing is cached
+PROBE_BUDGET = 3.0            # a refresh or `--fresh`, where nobody waits on a hook
+REFRESH_EVERY = 60            # no second background refresh within this many seconds
+UNSURE_RUNNING = "could not tell whether it is running (the process list could not be read)"
 NATIVE_HOST = "com.anthropic.claude_code_browser_extension.json"
 _LINUX_CHROME = ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser")
 _MAC_CHROME = "/Applications/Google Chrome.app"
@@ -71,10 +90,10 @@ def _browser_line(chrome, scheduler):
     if not chrome.get("installed"):
         return "- Browser: no local Chrome. Another machine's may still be listed by `list_connected_browsers`."
     running = chrome.get("running")
-    usable = chrome.get("paired") and running is not False
     parts = ["Chrome paired" if chrome.get("paired") else "Chrome NOT paired (`claude --chrome` once)"]
-    if running is not None:
-        parts.append("running" if running else "NOT running")
+    # Unknown is not "no": a process list that could not be read leaves the answer open
+    # instead of telling the session it has no browser when it may well have one.
+    parts.append("running" if running else ("NOT running" if running is False else UNSURE_RUNNING))
     rc = chrome.get("remote_control")
     if rc == "with":
         parts.append("Remote Control has `--chrome`")
@@ -92,8 +111,11 @@ def _browser_line(chrome, scheduler):
         parts.append("no CLI login for browser routines (`claude auth login`)")
     elif login == "check":
         parts.append("CLI login: `claude auth status`")
-    return "- Browser (the user's logged-in sessions): %s: %s. %s" % (
-        "**usable**" if usable else "**not usable now**", ", ".join(parts), SESSION_RULE)
+    if not chrome.get("paired") or running is False:
+        head = "**not usable now**"
+    else:
+        head = "**usable**" if running else "**cannot tell right now**"
+    return "- Browser (the user's logged-in sessions): %s: %s. %s" % (head, ", ".join(parts), SESSION_RULE)
 
 
 def _own_chrome_line(chrome, mac):
@@ -385,6 +407,165 @@ def section(probe_fn=None):
             return ("machine", "\n## This machine\n- probe failed. Run `%s` to see it." % SCRIPT, PRIORITY)
 
 
+def complete(caps):
+    """True when a probe answered everything it was asked. Pure.
+
+    A probe that did not finish, or whose process list could not be read, describes a busy
+    moment rather than the machine, so its block is shown once and never cached."""
+    if not isinstance(caps, dict):
+        return False
+    chrome = caps.get("chrome") or {}
+    return not (chrome.get("installed") and chrome.get("running") is None)
+
+
+def probe_within(budget, probe_fn=None):
+    """probe_fn()'s answer, or None when it did not answer within `budget` seconds.
+
+    A plain daemon thread and not a ThreadPoolExecutor: the executor's workers are joined at
+    interpreter exit, so a slow probe would keep the hook process alive after it had already
+    printed its answer, and the deadline would bound the output but not the run. A daemon
+    thread cut off mid-probe loses nothing: every probe here only reads."""
+    got = {}
+
+    def work():
+        try:
+            got["caps"] = (probe_fn or probe)()
+        except Exception as exc:
+            got["error"] = exc
+
+    t = threading.Thread(target=work, daemon=True, name="machine_caps:probe")
+    t.start()
+    t.join(budget)
+    if "error" in got:
+        raise got["error"]
+    return got.get("caps")
+
+
+def timed_out(budget, node=None, system=None):
+    """The block when the probe did not answer in time: the machine's name and how to see the rest."""
+    node = node if node is not None else _platform.node().split(".")[0]
+    system = system if system is not None else _platform.system()
+    return "\n".join(["", "## This machine", "- **%s** (%s), identity from the hostname only" % (node or "?", system or "?"),
+                      "- Probe: did not answer within %.1f s. Run `%s --fresh` to see it." % (budget, SCRIPT),
+                      "- Tools, keys, MCP servers per machine: [[%s]]. Never decide from the OS alone." % CATALOGUE_NOTE])
+
+
+def cache_path(state_dir=None):
+    """<brain state>/machine-caps.json."""
+    if state_dir is None:
+        import brain_paths
+        state_dir = brain_paths.effective_state_dir()
+    return os.path.join(state_dir, CACHE)
+
+
+def _cache_read(state_dir=None, now=None):
+    """(text, age in seconds) of the cached block, or ("", inf) when there is none."""
+    try:
+        with open(cache_path(state_dir), encoding="utf-8") as fh:
+            data = json.load(fh)
+        text, made = data["text"], float(data["at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return "", float("inf")
+    if not isinstance(text, str) or not text:
+        return "", float("inf")
+    return text, max(0.0, (now or time.time)() - made)
+
+
+def _cache_write(text, state_dir=None, now=None):
+    """Writes the cache atomically. A block nobody can cache is still a block: errors pass."""
+    path = cache_path(state_dir)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = "%s.tmp.%d" % (path, os.getpid())
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump({"text": text, "at": (now or time.time)()}, fh)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+def _spawn_detached(argv):
+    """Starts argv in its own session, so it neither dies with the hook nor holds it."""
+    subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def _refresh_async(state_dir=None, now=None, spawn=None, environ=None):
+    """Re-probes behind the session. True when a refresh was started.
+
+    Throttled by a stamp beside the cache, or a machine whose probe keeps failing would start
+    one per session. Never under BRAIN_OFFLINE: that is the guardian's hook probe, whose
+    contract is that a hook starts no process."""
+    environ = os.environ if environ is None else environ
+    if environ.get("BRAIN_OFFLINE") in ("1", "true", "yes"):
+        return False
+    now = now or time.time
+    stamp = cache_path(state_dir) + ".refresh"
+    try:
+        with open(stamp, encoding="utf-8") as fh:
+            if now() - float(fh.read().strip() or 0) < REFRESH_EVERY:
+                return False
+    except (OSError, ValueError):
+        pass
+    try:
+        os.makedirs(os.path.dirname(stamp), exist_ok=True)
+        with open(stamp, "w", encoding="utf-8") as fh:
+            fh.write("%f\n" % now())
+        argv = [sys.executable, os.path.abspath(__file__), "--refresh"]
+        if state_dir is not None:
+            argv[2:2] = ["--state-dir", state_dir]
+        (spawn or _spawn_detached)(argv)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def refresh(state_dir=None, probe_fn=None, now=None, budget=PROBE_BUDGET):
+    """Probes and caches the block when the answer is complete. True when the cache was written.
+
+    An incomplete answer leaves the cache as it was: an older complete block describes the
+    same machine and is not missing a line."""
+    caps = probe_within(budget, probe_fn)
+    if not complete(caps):
+        return False
+    _cache_write(render(caps), state_dir, now)
+    return True
+
+
+def cached_section(max_age=CACHE_TTL, state_dir=None, budget=COLD_BUDGET, probe_fn=None, now=None, spawn=None,
+                   environ=None):
+    """("machine", text, PRIORITY) for compass, cheap on every path. Never raises.
+
+    A fresh cache is returned untouched; a stale one is returned at once and re-probed behind
+    the session; with nothing cached it probes for `budget` seconds and returns whatever came
+    back, caching it only when complete."""
+    try:
+        text, age = _cache_read(state_dir, now)
+        if text and age < max_age:
+            return ("machine", text, PRIORITY)
+        if text:
+            _refresh_async(state_dir, now, spawn, environ)
+            return ("machine", text, PRIORITY)
+        caps = probe_within(budget, probe_fn)
+        if caps is None:
+            _refresh_async(state_dir, now, spawn, environ)
+            return ("machine", timed_out(budget), PRIORITY)
+        fresh = render(caps)
+        if complete(caps):
+            _cache_write(fresh, state_dir, now)
+        else:
+            _refresh_async(state_dir, now, spawn, environ)
+        return ("machine", fresh, PRIORITY)
+    except Exception as exc:
+        try:
+            return ("machine", fallback(exc), PRIORITY)
+        except Exception:
+            return ("machine", "\n## This machine\n- probe failed. Run `%s` to see it." % SCRIPT, PRIORITY)
+
+
+USAGE = "usage: machine_caps.py [--fresh | learn-chrome <deviceId> '<what it is>']\n"
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "learn-chrome":
@@ -393,10 +574,19 @@ def main(argv=None):
             return 2
         print(learn_chrome(argv[1], " ".join(argv[2:])))
         return 0
+    state_dir = None
+    if argv[:1] == ["--state-dir"] and len(argv) > 1:
+        state_dir, argv = argv[1], argv[2:]
+    if argv == ["--refresh"]:
+        refresh(state_dir)                # the detached refresh `_refresh_async` starts
+        return 0
+    if argv == ["--fresh"]:
+        print(render(probe()))            # a person at a terminal, not a hook
+        return 0
     if argv:
-        sys.stderr.write("usage: machine_caps.py [learn-chrome <deviceId> '<what it is>']\n")
+        sys.stderr.write(USAGE)
         return 2
-    print(render(probe()))
+    print(cached_section()[1])
     return 0
 
 

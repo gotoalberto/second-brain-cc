@@ -5,6 +5,11 @@
   query.py "terms" --all              -> includes sessions, packs, inbox, meta
   query.py "terms" --limit 20 --type decision --project brain
   query.py --recent 10                -> most recently updated notes
+  query.py "terms" --person "Dana"    -> also that person's entity note and notes
+
+When the terms name a person (or --person is given), the results end with the person's entity
+note and the notes about them; with --project too, the notes they share are merged so each is
+listed once (people_core).
 """
 import os, sys, argparse, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -20,6 +25,8 @@ def main():
     ap.add_argument("--project", default="")
     ap.add_argument("--recent", type=int, default=0)
     ap.add_argument("--full", action="store_true", help="print the whole note")
+    ap.add_argument("--person", action="append", default=[],
+                    help="a person whose entity note and notes to add (repeatable)")
     args = ap.parse_args()
 
     if not B.enabled():
@@ -45,6 +52,8 @@ def main():
 
     query = " ".join(args.terms)
     san = B.sanitize_fts(query, max_terms=16)
+    if not san and args.person:
+        return people_section(con, query, args)
     if not san:
         print("empty query after sanitising"); return 0
     sql = ("SELECT f.path, bm25(notes_fts) s, n.title, n.ntype, n.updated, n.excerpt, "
@@ -73,7 +82,7 @@ def main():
     if not rows:
         print("no results for: %s" % query)
         print("(try --all to include sessions and context packs)")
-        return 0
+        return people_section(con, query, args)
     for path, s, title, ntype, updated, excerpt, projects, status, source in rows:
         flags = [x for x in (ntype, status if status != "active" else "",
                              "source:" + source if source != "human" else "") if x]
@@ -87,6 +96,37 @@ def main():
         elif excerpt:
             print("   %s" % excerpt[:200])
         print()
+    return people_section(con, query, args)
+
+
+def people_section(con, query, args, limit=8):
+    """The people the query names (or --person gives), their entity note and the notes about
+    them, merged with --project's notes so a shared note is listed once. Silent when nobody is
+    named."""
+    try:
+        import people_core as P
+        projects = [args.project] if args.project else []
+        detected, project_paths, merged = P.context(con, query, projects, args.person)
+    except Exception as e:
+        B.log_error("query.people", e)
+        return 0
+    if not detected:
+        return 0
+    print("── people named")
+    for p, _strength, ambiguous in detected:
+        print("   %s  %s%s" % (p.name, p.note, "  (ambiguous name, confirm who)" if ambiguous else ""))
+    c = P.summary(merged)
+    tail = (", %(common)d shared with the project, %(unique)d to read once" % c) if project_paths else ""
+    print("   notes: %d%s" % (c["person"], tail))
+    for m in merged[:limit]:
+        side = ("  (person and project)" if m["people"] and m["projects"]
+                else "  (project only)" if m["projects"] else "")
+        print("   %s  %s%s" % (m["date"], m["path"], side))
+    if len(merged) > limit:
+        print("   ... all of them: python3 ~/Brain/_bin/people.py context %s%s"
+              % (" ".join('--person "%s"' % p.name for p, _s, _a in detected),
+                 ' --project "%s"' % args.project if args.project else ""))
+    print()
     return 0
 
 

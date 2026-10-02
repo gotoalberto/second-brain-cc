@@ -156,6 +156,70 @@ def main():
           V.is_ephemeral("90-Meta/presence/x.md") and not V.is_ephemeral("30-Knowledge/x.md"))
     V.EPHEMERAL_PREFIXES = ()
 
+    print("\n== a rebase stopped by a machine file ==")
+    # One machine deletes a machine file while another keeps rewriting it in local commits.
+    # `pull --rebase` stops on the local commit, and if every pass aborts that stop, no
+    # later pass ever gets through: the vault stops pushing over a file nobody reads.
+
+    def in_rebase(cwd):
+        return lambda: any(os.path.isdir(os.path.join(cwd, ".git", d))
+                           for d in ("rebase-merge", "rebase-apply"))
+
+    def write(cwd, rel, body):
+        with open(os.path.join(cwd, rel), "w") as fh:
+            fh.write(body)
+
+    def stopped_on_machine_file(root):
+        a, b = two_clones(root)
+        sh(a, "rm", "-q", "90-Meta/presence/p.md"); sh(a, "commit", "-qm", "del"); sh(a, "push", "-q")
+        write(b, "90-Meta/presence/p.md", "v2"); sh(b, "commit", "-qam", "presence")
+        write(b, "n.md", "local note"); sh(b, "commit", "-qam", "note")
+        write(b, "90-Meta/presence/p.md", "v3"); sh(b, "commit", "-qam", "presence again")
+        return a, b, sh(b, "pull", "-q", "--rebase")
+
+    with tempfile.TemporaryDirectory() as root:
+        a, b, pulled = stopped_on_machine_file(root)
+        g = git_in(b)
+        left = V.settle_rebase(g, in_rebase(b))
+        check("with no machine prefixes, a stopped rebase returns the path untouched",
+              left == ["90-Meta/presence/p.md"] and in_rebase(b)(), left)
+
+    V.EPHEMERAL_PREFIXES = ("90-Meta/presence/",)
+    try:
+        with tempfile.TemporaryDirectory() as root:
+            a, b, pulled = stopped_on_machine_file(root)
+            g = git_in(b)
+            check("reproduced: the rebase stops on the machine file",
+                  pulled.returncode != 0 and in_rebase(b)(), pulled.stderr[-300:])
+            left = V.settle_rebase(g, in_rebase(b))
+            check("a rebase stopped only by machine files is carried through", left == [], left)
+            check("and is no longer in progress", not in_rebase(b)())
+            check("the local note commit survives", g("show", "HEAD:n.md")[1] == "local note",
+                  g("log", "--oneline")[1])
+            check("the remote's deletion wins",
+                  g("cat-file", "-e", "HEAD:90-Meta/presence/p.md")[0] != 0)
+            check("and the push is a fast forward",
+                  sh(b, "push", "-q", "origin", "HEAD:main").returncode == 0)
+
+        with tempfile.TemporaryDirectory() as root:
+            a, b = two_clones(root)
+            sh(a, "rm", "-q", "90-Meta/presence/p.md")
+            write(a, "n.md", "remote note"); sh(a, "commit", "-qam", "both"); sh(a, "push", "-q")
+            write(b, "90-Meta/presence/p.md", "v2"); sh(b, "commit", "-qam", "presence")
+            write(b, "n.md", "local note"); sh(b, "commit", "-qam", "note")
+            sh(b, "pull", "-q", "--rebase")
+            g = git_in(b)
+            left = V.settle_rebase(g, in_rebase(b))
+            check("a real note conflict behind it is returned, never settled", left == ["n.md"], left)
+            check("and the rebase is left for the caller to abort", in_rebase(b)())
+
+        states = iter([True, True, False])
+        check("a stop with no unmerged file is named for a person",
+              V.settle_rebase(lambda *a: (0, "", ""), lambda: next(states, False))
+              == ["(the rebase stopped without an unmerged file)"])
+    finally:
+        V.EPHEMERAL_PREFIXES = ()
+
     print("== a stop on unmerged files leaves a note ==")
     with tempfile.TemporaryDirectory() as vault:
         os.makedirs(os.path.join(vault, "00-Inbox"))

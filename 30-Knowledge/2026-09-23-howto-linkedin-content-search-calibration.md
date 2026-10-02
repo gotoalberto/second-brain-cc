@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-23
+updated: 2026-09-30
 supersedes: []
 ---
 
@@ -62,6 +62,27 @@ links back to the search URL itself. What the page does carry is the author's pr
 with `filter: "interactive"` lists the `/in/<slug>` links in post order, each one twice. So the
 deliverable of a content search is the profile link, never a constructed post URL. The CSS class names
 are build hashes that change between deploys; never key a scraper on them.
+
+### Recovering one post's permalink
+
+Re-checked later, the DOM had drifted further: no `data-urn` attributes and no activity URN anywhere in
+the markup. One route still works when a specific post's link is needed, and it should stay a fallback
+because it is slow:
+
+1. Find the post's control menu button ("Open control menu for post by ...") and open the menu.
+2. Before clicking "Copy link to post", wrap the clipboard write from the page so the value lands
+   somewhere readable (the extension may refuse to read the page's URL directly):
+
+   ```js
+   window.__copied = [];
+   const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
+   navigator.clipboard.writeText = t => { window.__copied.push(t); return orig(t).catch(() => {}); };
+   ```
+
+3. Click "Copy link to post", then read `JSON.stringify(window.__copied)`: a short link.
+4. Open the short link in the tab; it resolves to the canonical `/posts/...` permalink.
+5. Strip `utm_*` and `rcm` from the query string before sharing it. `rcm` identifies the account of
+   whoever copied the link.
 
 ## Reading the page
 

@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-23
+updated: 2026-09-30
 supersedes: []
 ---
 
@@ -54,6 +54,22 @@ for p in $(pgrep -f "PATTERN"); do [ "$p" = "$$" ] || kill "$p"; done
 ```
 
 Prefer the two-call form: `$$` is only the wrapper when the loop runs in that same shell.
+
+Two filters are cleaner than comparing with `$$`, which also misses when the pattern matched a child
+of the wrapper rather than the wrapper itself:
+
+- **By working directory.** Keep only the pids whose current directory is the project you mean:
+
+  ```sh
+  for p in $(pgrep -f "PATTERN"); do
+    [ "$(readlink -f /proc/$p/cwd 2>/dev/null)" = "/srv/work/my-app" ] && kill "$p"
+  done
+  ```
+
+  (`/proc` is Linux; on macOS use `lsof -a -p <pid> -d cwd` instead.)
+- **By port, for a server.** When the target listens on a known port, skip pattern matching
+  altogether: `ss -ltnp | grep :4321` (or `lsof -iTCP:4321 -sTCP:LISTEN` on macOS) prints its pid,
+  then `kill` that number.
 
 ## The worse variant: pgrep -f in a wait loop
 

@@ -1,6 +1,6 @@
 ---
 name: dev
-description: Code development pipeline. Use it whenever the task produces code (backend, frontend, scripts, a website or an HTML deliverable). It enforces tests before implementation with red commits first, hexagonal architecture, and for anything with an interface a design interview, a design skill stack, motion built with animation skills, three critique rounds and verification in a real browser after every correction. Do not use it for tasks that produce no code.
+description: Code development pipeline. Use it whenever the task produces code (backend, frontend, scripts, a website or an HTML deliverable). It enforces tests before implementation with red commits first, hexagonal architecture, and for anything with an interface a design interview, a design skill stack, motion built with animation skills, a worst-case data pass (break-ui) and a phone pass (mobile-native), three critique rounds and verification in a real browser after every correction. Do not use it for tasks that produce no code.
 argument-hint: [task description]
 ---
 
@@ -110,7 +110,7 @@ Full rationale: `~/Brain/30-Knowledge/2026-09-18-convention-anti-ai-slop-design-
 
 ### 3b. The skill stack
 
-A web interface is not laid out by hand. This gate expects four **third-party skills**, installed
+A web interface is not laid out by hand. This gate expects six **third-party skills**, installed
 separately (this repository does not ship them):
 
 | Skill | What it brings | Where it comes from |
@@ -119,9 +119,12 @@ separately (this repository does not ship them):
 | `frontend-design` | Aesthetic direction, so the result does not read as a template | Anthropic's public skills repository |
 | `design-taste-frontend` | An anti-template pass for landing pages, portfolios and redesigns | the `leonxlnx/taste-skill` repository |
 | `emil-design-eng` | Component polish and the entry to the animation skills in 3c | Emil Kowalski's skills repository |
+| `break-ui` | Worst-case data for every rendered value, behind a dev-only toggle, used in 3c bis | Emil Kowalski's skills repository |
+| `mobile-native` | The fixes that make a web feel native on a phone, used in 3c bis | Emil Kowalski's skills repository |
 
 They are not alternatives. `impeccable` runs the process and the other three inform the judgement
-inside it. If one is missing on the machine, install it before building, for example:
+inside it; `break-ui` and `mobile-native` come from the same repository as the animation skills and
+run once the motion is built. If one is missing on the machine, install it before building, for example:
 
 ```bash
 npx skills@latest add emilkowalski/skills -g -a claude-code -s '*' -y
@@ -147,6 +150,26 @@ values:
 
 Left to itself, an agent picks the wrong easing for an entrance and a hard border where a soft shadow
 belongs. Small things that add up to an interface that feels cheap.
+
+### 3c bis. Worst-case data and the phone, before the critique rounds
+
+Two more skills from Emil Kowalski's repository. Both run on every web, after the motion is built and
+**before** the first critique round, so the critique judges the interface with realistic data on a
+real phone.
+
+- **`break-ui`** feeds every value the interface renders its realistic worst case (long names,
+  unbreakable emails, one-letter names, missing fields, counts of 0, 1 and 1,000+, non-Latin text,
+  extreme numbers) through the same data boundary the demo data uses, behind a dev-only **Demo data /
+  Worst case** toggle that never ships. When the domain is numeric (amounts, prices, measurements),
+  the worst case also includes very long decimals, raw unformatted values, maximum-length ids and
+  zero amounts. The skill reports before fixing: obvious breaks get fixed here, and the ones that
+  are a design decision (truncate or wrap, hide or show a placeholder) go to the user,
+  as in the 3a interview.
+- **`mobile-native`** whenever the web will be opened on a phone, which is almost always: sticky
+  hover, tap highlight, the `100vh` bug, inputs that zoom the page, safe areas under the notch,
+  long-press selecting button text, pull-to-refresh hijacking scroll. It complements the phone size
+  check in 3g. A resized desktop window does not reproduce touch, so its checklist is applied in the
+  code as well as looked at.
 
 ### 3d. Three critique rounds, minimum
 
@@ -232,6 +255,10 @@ agent's browser tool and look at it. A fix nobody saw rendered is a fix nobody k
 - Check the console and network requests, not only the screenshot.
 - Look at more than one size (phone, tablet, desktop) and both themes when the page has them.
 - Motion cannot be judged from a still: drive the interaction and watch the transition.
+- If the agent's browser tab reports `document.visibilityState` as hidden, or cannot be resized,
+  scroll-triggered reveals and polling never fire there and the screenshots lie. Capture with headless
+  Playwright on the system Chrome instead:
+  `~/Brain/30-Knowledge/2026-09-30-howto-browser-verification-when-the-agent-tab-is-hidden.md`.
 
 **Never ask the user to check whether it works.** Verify it and hand over the proof.
 
@@ -243,8 +270,9 @@ On top of the `/task` closing, state:
 
 - **Gate 1:** the command showing the tests committed before the implementation.
 - **Gate 2:** where the boundary is and what is testable without standing anything up.
-- **Gate 3:** which design skills were used, what motion was added and with which skill, how many
-  critique rounds (mechanical and blind) and what each changed, whether generated images or video
+- **Gate 3:** which design skills were used, what motion was added and with which skill, what
+  `break-ui` broke and what was fixed, what `mobile-native` changed, how many critique rounds
+  (mechanical and blind) and what each changed, whether generated images or video
   were used, what was fixed in the images, and that it was checked in the browser.
 
 If a gate could not be passed, **say so in the closing**. A gate skipped silently is worse than no gate,
@@ -255,6 +283,10 @@ because it creates the impression it was met.
 - The gates are not traded for speed. If there is no time, cut scope, not process.
 - If the user asks to skip one, skip it (it is their project), but state it in the closing and record
   it in the vault.
+- **Any change to an interface goes through Gate 3, however small**: a menu restyle or a layout tweak
+  gets the interview, tests first, the skill stack, the critique rounds including the blind one, and
+  the browser at every width. When a blind critic contradicts something the user chose explicitly in
+  the interview, the user's brief wins, and the rejected suggestion is reported in the closing.
 - Architecture and design decisions agreed here are saved as project conventions, so `context-scout`
   brings them next time.
 

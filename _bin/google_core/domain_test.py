@@ -75,6 +75,17 @@ def test_registry(D):
           D.parse_registry(text) == {"work": stamped} and "authorized_at" in json.loads(text)["accounts"]["work"], text)
     check("a registry written before the stamp existed parses with no instant",
           D.parse_registry(json.dumps({"accounts": {"x": {}}}))["x"].authorized_at == "")
+    check("a registry written before the publishing status existed reads as testing",
+          getattr(D.parse_registry(json.dumps({"accounts": {"x": {"authorized_at": "2026-09-15T07:30:00+00:00"}}}))["x"],
+                  "publishing", None) == "testing")
+    if hasattr(D.Account("x"), "publishing"):
+        published = D.Account("work", authorized_at="2026-09-15T07:30:00+00:00", publishing="production")
+        text = D.render_registry({"work": published})
+        check("a consent minted in production round-trips with its publishing status",
+              D.parse_registry(text) == {"work": published}
+              and json.loads(text)["accounts"]["work"].get("publishing") == "production", text)
+    check("a publishing status that is neither testing nor production is refused",
+          raises(D.parse_registry, D.AccountError, json.dumps({"accounts": {"x": {"publishing": "staging"}}})) is not None)
     defaults = D.parse_registry(json.dumps({"accounts": {"x": {}}}))["x"]
     check("an account with no scopes or port gets the defaults",
           defaults.scopes == D.scopes_for(D.DEFAULT_SCOPE_SETS) and defaults.port == D.DEFAULT_PORT, defaults)

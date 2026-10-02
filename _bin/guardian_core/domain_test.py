@@ -199,6 +199,32 @@ def test_stale_hooks(D):
           and [c.kind for c in changes] == ["removed"], (merged, changes))
 
 
+def test_required_env(D):
+    print("\n== reconcile_env ==")
+    check("the account connectors are off by default, as a plain dict a user can empty",
+          type(getattr(D, "REQUIRED_ENV", None)) is dict
+          and D.REQUIRED_ENV.get("ENABLE_CLAUDEAI_MCP_SERVERS") == "false")
+    merged, changes = D.reconcile_env(None)
+    check("no env block gets every required value",
+          merged == {"ENABLE_CLAUDEAI_MCP_SERVERS": "false"}
+          and [c.key for c in changes] == ["env:ENABLE_CLAUDEAI_MCP_SERVERS"], (merged, changes))
+    check("each change says what is wrong in one line",
+          [c.text for c in changes] == ["env ENABLE_CLAUDEAI_MCP_SERVERS is not false"], changes)
+    cur = {"OTHER_FLAG": "1", "ENABLE_CLAUDEAI_MCP_SERVERS": "true"}
+    merged, changes = D.reconcile_env(cur)
+    check("a wrong value is corrected, other keys kept, the input untouched",
+          merged == {"OTHER_FLAG": "1", "ENABLE_CLAUDEAI_MCP_SERVERS": "false"} and len(changes) == 1
+          and cur == {"OTHER_FLAG": "1", "ENABLE_CLAUDEAI_MCP_SERVERS": "true"}, (merged, changes, cur))
+    merged, changes = D.reconcile_env(merged)
+    check("a correct env block is no change", changes == [], changes)
+    merged, changes = D.reconcile_env({"OTHER_FLAG": "1"}, required={})
+    check("an emptied REQUIRED_ENV asks for nothing", merged == {"OTHER_FLAG": "1"} and changes == [],
+          (merged, changes))
+    merged, changes = D.reconcile_env("not a dict")
+    check("an env block that is not an object is replaced by the required values",
+          merged == {"ENABLE_CLAUDEAI_MCP_SERVERS": "false"} and len(changes) == 1, merged)
+
+
 def test_localize(D):
     print("\n== localize_hooks and command paths ==")
     loc = D.localize_hooks(canonical(), vault="/home/x/Vault", home="/home/x")
@@ -847,6 +873,29 @@ def test_hook_probe(D):
           [(f.key, f.severity) for f in fs] == [("hooks:probe:session-start", "fail")]
           and "compass.py" in fs[0].summary and "SyntaxError" in fs[0].summary and "\n" not in fs[0].summary, fs)
 
+    # A timeout while the machine is flat out says more about the machine than about the hook:
+    # a warning worth seeing in status, never a page. On a quiet machine it stays a failure.
+    def timed(load, attempts):
+        return R("session-start", None, timed_out=True, elapsed_s=8.4, load=load, attempts=attempts)
+    busy, quiet, unmeasured, first_try = timed(3.2, 2), timed(0.3, 2), timed(0.0, 2), timed(3.2, 1)
+    fs = D.probe_findings([(cases[0], busy)])
+    check("a timeout under load, seen twice, is a warn and says the machine was busy",
+          [(f.key, f.severity) for f in fs] == [("hooks:probe:session-start", "warn")]
+          and "busy" in fs[0].summary and "retried once" in fs[0].summary and "\n" not in fs[0].summary, fs)
+    check("the same timeout on a quiet machine is still a failure",
+          [f.severity for f in D.probe_findings([(cases[0], quiet)])] == ["fail"])
+    check("a machine that will not report its load gets no benefit of the doubt",
+          [f.severity for f in D.probe_findings([(cases[0], unmeasured)])] == ["fail"])
+    check("one timeout under load, never retried, is not excused either",
+          [f.severity for f in D.probe_findings([(cases[0], first_try)])] == ["fail"])
+    check("a hook that answered is never judged by load",
+          D.probe_findings([(cases[0], R("session-start", 0, '{"x": 1}', "", parsed=ctx, load=9.0, attempts=2))])
+          == [])
+    check("the busy threshold is per CPU and above an ordinary busy machine", D.PROBE_BUSY_LOAD >= 1.0)
+    check("and a load warn is never mail-worthy, even when it was open last run",
+          D.probe_mail_worthy(D.probe_findings([(cases[0], busy)]),
+                              {"hooks:probe:session-start": {"severity": "warn"}}) == [])
+
     probe_fail = D.Finding("hooks:probe:session-end", D.FAIL, "hook session-end fails")
     other_fail = D.Finding("routine-auth:token:routines-1", D.FAIL, "token dead")
     warn = D.Finding("launchd-drift:com.x", D.WARN, "plist drifted")
@@ -931,7 +980,7 @@ def main():
     except Exception as exc:
         check("guardian_core.domain imports", False, "%s: %s" % (type(exc).__name__, exc))
     else:
-        for t in (test_hook_identity, test_merge_hooks, test_stale_hooks, test_localize, test_schedule,
+        for t in (test_hook_identity, test_merge_hooks, test_stale_hooks, test_required_env, test_localize, test_schedule,
                   test_decide, test_report_and_rules, test_agents_and_drift, test_agent_conflicts, test_git_hooks,
                   test_repair_alert, test_token_pool, test_duplicates_and_degraded, test_routine_permissions,
                   test_hook_liveness, test_hook_probe, test_mail_decide, test_health_notice):

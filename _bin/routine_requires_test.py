@@ -158,6 +158,25 @@ def test_tasks_here():
     check("an empty registry has no tasks", R.tasks_from_registry("", lambda m: True) == [])
 
 
+def test_killmode():
+    km = getattr(R, "killmode_problem", None)
+    if km is None:
+        check("routine_requires has killmode_problem", False)
+        return
+    check("the default control-group kill is a problem, named with the fix",
+          "KillMode=control-group" in (km("LoadState=loaded\nKillMode=control-group\n") or "")
+          and "KillMode=process" in (km("LoadState=loaded\nKillMode=control-group\n") or ""),
+          km("LoadState=loaded\nKillMode=control-group\n"))
+    check("process and none keep what a task detaches",
+          km("LoadState=loaded\nKillMode=process\n") is None and km("LoadState=loaded\nKillMode=none\n") is None)
+    check("a unit that is not loaded here is not this check's business",
+          km("LoadState=not-found\nKillMode=control-group\n") is None and km("") is None)
+    unit = open(os.path.join(HERE, "systemd", "second-brain-tasks.service")).read()
+    mode = [l.split("=", 1)[1] for l in unit.splitlines() if l.startswith("KillMode=")]
+    check("the shipped tasks unit template keeps what a task detaches alive",
+          mode == ["process"] and km("LoadState=loaded\nKillMode=%s\n" % mode[0]) is None, mode)
+
+
 def test_main():
     root = tempfile.mkdtemp(prefix="routine-requires-test-")
     TMP.append(root)
@@ -174,11 +193,12 @@ def test_main():
                  "| bad | * | 07:00 | * | agent | 90-Meta/routines/bad.md | yes | |\n")
     probe = FakeProbe(programs={"jq"})
 
-    def run_main(argv):
+    def run_main(argv, show=""):
         buf = io.StringIO()
+        kw = {"show": lambda: show} if "show" in R.main.__code__.co_varnames else {}
         with contextlib.redirect_stdout(buf):
             rc = R.main(argv, probe=probe, vault=vault, home=root, is_mine=lambda m: False,
-                        run=lambda cmd: (0, "", ""))
+                        run=lambda cmd: (0, "", ""), **kw)
         return rc, buf.getvalue()
 
     rc, out = run_main(["check", good])
@@ -191,6 +211,15 @@ def test_main():
     rc, out = run_main(["here"])
     check("here: every enabled agent task for this machine is checked",
           rc == 2 and "good" in out and "bad" in out, (rc, out))
+    check("here: the runner's KillMode is not reported where systemd does not run it", "KillMode" not in out, out)
+    with open(bad, "w") as fh:
+        fh.write(routine('requires: {"programs": ["jq"]}\n'))
+    rc, out = run_main(["here"], show="LoadState=loaded\nKillMode=control-group\n")
+    check("here: a tasks unit that would kill detached work is a gap, with the fix",
+          rc == 2 and "✗ runner second-brain-tasks.service (KillMode)" in out and "KillMode=process" in out, (rc, out))
+    rc, out = run_main(["here"], show="LoadState=loaded\nKillMode=process\n")
+    check("here: a tasks unit with KillMode=process is a tick",
+          rc == 0 and "✓ runner second-brain-tasks.service (KillMode)" in out, (rc, out))
     rc, out = run_main([])
     check("no arguments prints the usage", rc == 0 and "here" in out, (rc, out))
     rc, out = run_main(["bogus"])
@@ -198,7 +227,7 @@ def test_main():
 
 
 def main():
-    for t in (test_requirements, test_resolve, test_check, test_fix, test_tasks_here, test_main):
+    for t in (test_requirements, test_resolve, test_check, test_fix, test_tasks_here, test_killmode, test_main):
         print("\n== %s ==" % t.__name__)
         try:
             t()

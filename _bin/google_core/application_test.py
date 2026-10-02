@@ -164,6 +164,18 @@ def test_authorize():
           entry == D.refresh_entry("work") and (D.refresh_entry("work"), "rt-new", None) in p.secrets.writes, p.secrets.writes)
     check("and the consent instant is stamped in the registry, so an expiry can be foreseen",
           p.accounts.accounts["work"].authorized_at == "2026-09-15T07:30:00+00:00", p.accounts.accounts)
+    check("with the publishing status it was minted under, testing unless told otherwise",
+          getattr(p.accounts.accounts["work"], "publishing", None) == "testing", p.accounts.accounts)
+    p = configured(D, http=FakeHttp(form=lambda url, fields: {"refresh_token": "rt-2", "access_token": "at"}),
+                   receiver=FakeReceiver({"code": "c-2", "state": "<same>"}))
+    _, exc = outcome(A.authorize, p, "work", publishing="production")
+    check("a consent on an app published to production is stamped as such",
+          exc is None and getattr(p.accounts.accounts["work"], "publishing", None) == "production",
+          (repr(exc), p.accounts.accounts))
+    p = configured(D, receiver=FakeReceiver({"code": "c-3", "state": "<same>"}))
+    _, exc = outcome(A.authorize, p, "work", publishing="staging")
+    check("an unknown publishing status is a usage error before any consent",
+          isinstance(exc, D.UsageError) and p.receiver.calls == [], repr(exc))
 
     p = configured(D, http=FakeHttp(form=lambda url, fields: {"access_token": "at"}),
                    receiver=FakeReceiver({"code": "c-1", "state": "<same>"}))
@@ -216,6 +228,51 @@ def test_api():
           res.get("_http_error") == 403 and "insufficient" in res.get("_body", "") and D.api_exit_code(res) == 1, res)
 
 
+
+def test_api_retries():
+    print("\n== api over a dropped connection ==")
+    # A connection dropped mid-run used to kill the caller before it could record that its
+    # step failed. A read is retried with a backoff; a write never is, it may have landed.
+    def flaky(fails):
+        state = {"n": 0}
+
+        def req(m, u, t, b):
+            state["n"] += 1
+            if state["n"] <= fails:
+                raise P.Unavailable("network: URLError: <urlopen error connection reset>")
+            return {"items": ["ok"]}
+        return req
+
+    slept = []
+    p = configured(D, http=FakeHttp(request=flaky(2)), sleep=slept.append)
+    res = A.api(p, "work", "GET", "https://x")
+    check("a GET that drops twice is retried and answers", res == {"items": ["ok"]} and len(p.http.requests) == 3,
+          (res, p.http.requests))
+    check("waiting 1 then 2 seconds, through the injected sleep", slept == [1, 2], slept)
+
+    slept = []
+    p = configured(D, http=FakeHttp(request=flaky(99)), sleep=slept.append)
+    _, exc = outcome(A.api, p, "work", "get", "https://x")
+    check("a GET that never comes back raises Unavailable after four attempts, as before",
+          isinstance(exc, D.Unavailable) and len(p.http.requests) == 4 and slept == [1, 2, 4],
+          (repr(exc), len(p.http.requests), slept))
+
+    for method in ("POST", "PATCH", "PUT", "DELETE"):
+        slept = []
+        p = configured(D, http=FakeHttp(request=flaky(1)), sleep=slept.append)
+        _, exc = outcome(A.api, p, "work", method, "https://x", {"a": 1})
+        check("a %s is never retried: it may have landed" % method,
+              isinstance(exc, D.Unavailable) and len(p.http.requests) == 1 and slept == [],
+              (repr(exc), p.http.requests, slept))
+
+    def forbidden(m, u, t, b):
+        raise P.HttpError(403, "no")
+    slept = []
+    p = configured(D, http=FakeHttp(request=forbidden), sleep=slept.append)
+    res = A.api(p, "work", "GET", "https://x")
+    check("an HTTP error is Google's answer, never retried",
+          res.get("_http_error") == 403 and len(p.http.requests) == 1 and slept == [], (res, slept))
+
 def test_send():
     print("\n== send ==")
     p = configured(D)
@@ -248,7 +305,7 @@ def main():
     except Exception as exc:
         check("google_core.application, domain and ports import", False, "%s: %s" % (type(exc).__name__, exc))
     else:
-        for t in (test_add_and_list, test_authorize, test_access_token, test_api, test_send):
+        for t in (test_add_and_list, test_authorize, test_access_token, test_api, test_api_retries, test_send):
             try:
                 t()
             except Exception as exc:

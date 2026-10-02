@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-21
+updated: 2026-10-02
 supersedes: []
 ---
 
@@ -32,6 +32,11 @@ Every slide is built from three things at once:
 Every presentation carries subtle animation: staggered entrances, a gentle ease-out curve, restrained
 emphasis. It is part of the deliverable, not an extra for when there is time. Always honour
 `prefers-reduced-motion`, on every redraw and not only the first.
+
+Each entrance and transition is built with the `animate` skill (curve, duration, properties,
+interruption, exit), and the finished deck is swept with `find-animation-opportunities`, as in the
+web pipeline of the `dev` skill. The house style below is the input those skills work from. A deck
+that will be opened on a phone also goes through `mobile-native`.
 
 ## House style
 
@@ -71,6 +76,31 @@ review shows it.
   look at the screenshots. Playwright does this locally: `python3 -m playwright install webkit` (on
   Linux also `python3 -m playwright install-deps webkit` once, which needs root), then a WebKit
   browser with `playwright.devices["iPhone 13"]`.
+
+## Length depends on the audience
+
+Ask who reads the deck before deciding its length. An engineering or product audience can take a
+longer walkthrough; a non-technical team usually wants a few slides on the processes and rules that
+concern them.
+
+## Stage and layout
+
+- **Centre a scaled fixed stage with absolute positioning**:
+  `position:absolute; left:50%; top:50%; transform:translate(-50%,-50%) scale(s)`. Centring it with
+  `display:grid; place-items:center` overflows to one side on windows narrower than the stage, because
+  a transform does not shrink the layout box.
+- **One page can serve phones too.** Below roughly 820 px, turn the slides into static blocks that
+  stack, keep entrance elements visible, hide the slide navigation, and put wide diagrams in a column
+  with `overflow-x:auto` at a minimum width so their text stays legible.
+
+## A PDF version
+
+When a PDF is wanted next to the page, screenshot each slide with Playwright at
+`device_scale_factor` 2 (system Chrome, a fixed viewport, reduced motion, each slide scrolled into
+view and given a moment to settle) and join the images into one PDF with Pillow (`save_all`). The text
+comes out as images only, which keeps the look of the deck. Chrome's print to PDF left the content small and
+cramped on a deck whose print stylesheet had never been checked, so prefer the screenshot route unless
+someone has looked at the print styles.
 
 ## Why
 

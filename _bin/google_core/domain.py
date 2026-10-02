@@ -84,6 +84,11 @@ def refresh_entry(account: str) -> str:
     return "google/%s/refresh-token" % account
 
 
+# The OAuth consent screen's publishing status a refresh token was minted under. In testing,
+# Google expires the token 7 days after the consent; in production it has no fixed lifetime.
+PUBLISHING = ("testing", "production")
+
+
 @dataclass(frozen=True)
 class Account:
     name: str
@@ -91,6 +96,7 @@ class Account:
     scopes: tuple = DEFAULT_SCOPES
     port: int = DEFAULT_PORT
     authorized_at: str = ""         # ISO instant of the last consent; "" when never stamped
+    publishing: str = "testing"     # PUBLISHING status at that consent; a stamp without it was testing
 
 
 def parse_registry(text: str) -> dict:
@@ -118,8 +124,11 @@ def parse_registry(text: str) -> dict:
         port = spec.get("port", DEFAULT_PORT)
         if isinstance(port, bool) or not isinstance(port, int) or not 0 < port < 65536:
             raise AccountError("account %s: `port` must be a TCP port number" % name)
+        publishing = spec.get("publishing") or "testing"
+        if publishing not in PUBLISHING:
+            raise AccountError("account %s: `publishing` must be %s" % (name, " or ".join(PUBLISHING)))
         out[name] = Account(name, str(spec.get("login_hint") or ""), tuple(scopes) or DEFAULT_SCOPES, port,
-                            str(spec.get("authorized_at") or ""))
+                            str(spec.get("authorized_at") or ""), publishing)
     return out
 
 
@@ -131,6 +140,9 @@ def render_registry(accounts: dict) -> str:
         body[name] = {"login_hint": a.login_hint, "scopes": list(a.scopes), "port": a.port}
         if a.authorized_at:
             body[name]["authorized_at"] = a.authorized_at
+            body[name]["publishing"] = a.publishing
+        elif a.publishing != "testing":
+            body[name]["publishing"] = a.publishing
     return json.dumps({"accounts": body}, indent=2, ensure_ascii=False) + "\n"
 
 
@@ -204,6 +216,16 @@ def sent_record(account, to, subject, message_id, run_id=None, now=None) -> dict
     if run_id:
         record["run_id"] = run_id
     return record
+
+
+# Waits between attempts of a read that lost its connection: four attempts in all. Only GET is
+# retried; a write that timed out may still have landed, and repeating it could do it twice.
+API_RETRY_DELAYS = (1, 2, 4)
+
+
+def retry_delays(method) -> tuple:
+    """The waits before each retry of an API call with `method`: none for anything but a read."""
+    return API_RETRY_DELAYS if (method or "").upper() == "GET" else ()
 
 
 def api_exit_code(result) -> int:

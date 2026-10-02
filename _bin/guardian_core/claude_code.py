@@ -1,8 +1,8 @@
 """The Claude Code agent adapter: Brain's events wired as Claude Code hooks.
 
 This module is the only place in the guardian that knows Claude Code exists — where it
-keeps its config (~/.claude), what file holds its wiring (settings.json, under `hooks`)
-and what shape that wiring has. The use cases see one `AgentAdapter` among others.
+keeps its config (~/.claude), what file holds its wiring (settings.json, under `hooks`, plus
+the `env` values in D.REQUIRED_ENV) and what shape that wiring has. The use cases see one `AgentAdapter` among others.
 
 The wiring here is generated, never the source of truth: the vault's
 integrations/claude-code/plugin/brain/hooks/hooks.json says what Brain expects, and repair merges that into
@@ -118,7 +118,7 @@ class ClaudeCodeAgent:
         return os.path.isdir(self.config_dir)
 
     def _plan(self):
-        """(current settings or None, canonical, merged hooks, changes, unreadable)."""
+        """(current settings or None, canonical, (merged hooks, merged env), changes, unreadable)."""
         canonical = self.canonical.load()
         try:
             current = self.settings.load()
@@ -128,7 +128,8 @@ class ClaudeCodeAgent:
         dirs = D.brain_script_dirs(self.vault) if self.vault else ()
         missing = {p for p in D.brain_hook_paths(hooks, dirs) if not self.paths.exists(p)}
         merged, changes = D.reconcile_hooks(canonical, hooks, dirs, missing)
-        return current, canonical, merged, changes, None
+        env, env_changes = D.reconcile_env(current.get("env"))
+        return current, canonical, (merged, env), changes + env_changes, None
 
     PLUGIN_TEXT = {"install": "%s: in the vault, to install into the agent",
                    "backport": "%s: edited in the agent, to back-port into the vault"}
@@ -156,7 +157,9 @@ class ClaudeCodeAgent:
                 result.errors.append("settings not repaired, file unreadable: %s" % unreadable)
             elif changes:
                 data = dict(current)
-                data["hooks"] = merged
+                data["hooks"], env = merged
+                if any(isinstance(c, D.EnvChange) for c in changes):
+                    data["env"] = env     # an env with nothing to change is left as it was, or absent
                 result.backup = self.settings.save(
                     data, "guardian repair: " + "; ".join(c.text for c in changes))
                 result.changes = [c.text for c in changes]

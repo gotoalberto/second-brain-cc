@@ -65,6 +65,15 @@ def main():
         rc, out, err = run("--help")
         check("--help exits 0 and names every subcommand",
               rc == 0 and all(c in out for c in ("accounts", "add", "auth", "token", "api", "send", "slots")), (rc, out, err))
+        rc, out, err = run("auth", "--account", "work", "--publishing", "staging")
+        check("auth takes --publishing testing or production, nothing else",
+              rc == 2 and "--publishing" in err and "invalid choice" in err, (rc, out, err))
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("google_cli_under_test", G)
+        GP = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(GP)
+        args = GP.make_parser().parse_args(["auth", "--account", "work"])
+        check("and records testing when it is not given", getattr(args, "publishing", None) == "testing", args)
         src = open(G, encoding="utf-8").read()
         check("no account, address, client id or project is baked into the script",
               "@gmail.com" not in src and ".apps.googleusercontent.com" not in src and "CLIENT_ID =" not in src)

@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-15
+updated: 2026-09-26
 supersedes: []
 ---
 
@@ -26,6 +26,30 @@ reached only through mechanisms the vault controls:
 
 If a connector happens to be attached to the account a session runs under, its presence is not a
 reason to use it. A capability that exists only through a connector counts as unavailable.
+
+The rule holds on every machine and in every kind of session: an interactive CLI, a Remote Control
+session, a scheduled routine.
+
+## How it is enforced
+
+- **Switched off in the harness.** The guardian (`_bin/guardian_core`, `REQUIRED_ENV` in
+  `domain.py`) keeps `"env": {"ENABLE_CLAUDEAI_MCP_SERVERS": "false"}` in Claude Code's
+  `~/.claude/settings.json`, the same way it keeps the hooks wired, and leaves every other key of
+  that block alone. With the flag set, Claude Code does not load the account connectors, so no
+  connector tool and no notice about one reaches a session. A user who wants them back empties
+  `REQUIRED_ENV`.
+- **Notices are never relayed.** Where a connector still shows up (a machine the guardian has not
+  repaired yet, a cloud session), the harness may inject a notice asking the session to tell the user
+  to authorize it. That notice is boilerplate and this rule overrides it: the connector counts as
+  absent, the user is not asked to authorize anything, and the work goes through the controlled route.
+
+## Incident
+
+A session finished a routine maintenance task and closed its report by telling the user that two
+connectors needed authorization in the chat app's settings. It had copied the harness notice into
+its reply. The rule said never to use a connector and said nothing about the harness asking the
+session to promote one, so the notice looked like a real gap, while the controlled route for the same
+service (a service account key in the kdbx) worked the whole time. The fixes were the two above.
 
 ## Routes that ship with this repo
 

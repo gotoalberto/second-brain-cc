@@ -112,8 +112,63 @@ def test_force_bypasses_throttle():
           "ran" in p2.stdout and os.path.getmtime(marker) > before, (p2.stdout + p2.stderr)[-300:])
 
 
+def budgeted(timeout, cost):
+    """Runs a forced maybe_pull in-process against a git that costs `cost` seconds per call
+    and records the budget each call was handed. Nothing real is touched: the vault and the
+    state are scratch directories and git itself is never started."""
+    import brainlib as B
+    granted = []
+
+    def fake_git(cmd, cwd=None, timeout=10):
+        granted.append((cmd[1] if len(cmd) > 1 else "?", timeout))
+        if cost:
+            time.sleep(cost)
+        return 0, "0123456789abcdef", ""
+
+    env, paths = scratch()
+    os.makedirs(os.path.join(paths["vault"], "_index"))
+    saved = (B.VAULT, B.STATE, B.OFFLINE, B.run, B._rebase_in_progress, B.mark_git_touched)
+    B.VAULT, B.STATE, B.OFFLINE = paths["vault"], paths["state"], False
+    B.run, B._rebase_in_progress, B.mark_git_touched = fake_git, (lambda: False), (lambda rels: None)
+    try:
+        B.maybe_pull(force=True, timeout=timeout)
+    finally:
+        (B.VAULT, B.STATE, B.OFFLINE, B.run, B._rebase_in_progress, B.mark_git_touched) = saved
+    return granted
+
+
+def test_one_budget_for_the_whole_call():
+    # `timeout` bounds the whole call. When it bounded only the pull, the lock wait and the
+    # local git calls around it came on top, and a session-start hook asking for a few
+    # seconds spent most of its own budget before reading the vault.
+    import brainlib as B
+    granted = budgeted(4, 0.6)
+    pulls = [t for c, t in granted if c == "pull"]
+    check("the pull gets what is left of the caller's budget, not the full timeout",
+          bool(pulls) and pulls[0] < 4.0, granted)
+    check("no git call is given more than the caller asked for",
+          bool(granted) and all(t is not None and t <= 4.0 for _, t in granted), granted)
+    check("a pull that is started never gets less than MIN_PULL",
+          bool(pulls) and all(t >= B.MIN_PULL for t in pulls), granted)
+    check("the local calls around it get fixed caps, not slices of the pull's budget",
+          all(t == B.REVPARSE_CAP for c, t in granted if c == "rev-parse")
+          and all(t == B.DIFF_CAP for c, t in granted if c == "diff")
+          and any(c == "rev-parse" for c, _ in granted) and any(c == "diff" for c, _ in granted),
+          granted)
+
+
+def test_no_pull_below_the_floor():
+    # A `pull --rebase --autostash` killed between the stash and the apply leaves
+    # .git/rebase-merge holding only the autostash, and the sync refuses to commit until a
+    # person clears it. A caller who cannot afford MIN_PULL gets no pull at all.
+    granted = budgeted(1.5, 0)
+    check("a caller who cannot afford MIN_PULL does not start a pull",
+          not any(c == "pull" for c, _ in granted), granted)
+
+
 def main():
-    for t in (test_one_implementation, test_forced_pull_leaves_foreign_rebase, test_force_bypasses_throttle):
+    for t in (test_one_implementation, test_forced_pull_leaves_foreign_rebase, test_force_bypasses_throttle,
+              test_one_budget_for_the_whole_call, test_no_pull_below_the_floor):
         try:
             t()
         except Exception as exc:

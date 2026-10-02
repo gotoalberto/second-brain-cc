@@ -220,18 +220,25 @@ def rank(con, query, project, exclude, limit):
     return scored[:limit]
 
 
-def render_block(hits, related, cap, pointer_only, link_notice, first_time):
+def render_block(hits, related, cap, pointer_only, link_notice, first_time, people=()):
     """The injected text, trimmed to `cap` estimated tokens. Returns (block, lines kept).
 
     A pointer per note (title and path), the first note's excerpt unless in pointer-only
-    mode, related notes marked, and the untrusted-data wrapper on a session's first
-    injection. Lines are dropped from the end until the block fits, keeping at least one.
+    mode, the people the prompt names with their notes (`people_core.hook_lines`), related
+    notes marked, and the untrusted-data wrapper on a session's first injection. The people
+    come right after the best hit, so trimming (lines dropped from the end until the block
+    fits, keeping at least one) drops related notes and weaker hits before a named person.
+    What survived is read from the block, not from `lines kept`.
     """
     lines = []
     for i, (score, path, title, excerpt) in enumerate(hits):
         lines.append("· %s — `%s`" % (title, path))
         if i == 0 and not pointer_only and excerpt and score > 3.0:
             lines.append("  %s" % excerpt[:160])
+        if i == 0:
+            lines.extend(people)
+    if not hits:
+        lines.extend(people)
     for _, path, title in related:
         lines.append("· %s — `%s`  (related)" % (title, path))
 
@@ -260,10 +267,26 @@ def search_and_render(con, prompt, top_n=TOP_K_RENDER, project=None, cap=MAX_TOK
         return ""
     query, terms = san
     hits = [h for h in rank(con, query, project, set(), top_n) if coverage(con, h[1], terms) >= THRESHOLD_BASE]
-    if not hits:
+    people = person_lines(con, prompt, hits)
+    if not hits and not people:
         return ""
     seen = {h[1] for h in hits}
     related = [("related", path, title) for path, title in neighbours(con, [h[1] for h in hits[:2]], 3, terms)
                if path not in seen]
-    block, _ = render_block(hits, related, cap, False, "", True)
+    block, _ = render_block(hits, related, cap, False, "", True, people)
     return block
+
+
+def person_lines(con, prompt, hits):
+    """What people_core adds when the prompt names someone; [] otherwise or on any error.
+
+    A named person is context on its own, so these lines ride even when no note clears the
+    coverage bar. The project the prompt is about is the one among the hits, when there is
+    one, so the person's notes shared with it are counted once."""
+    try:
+        import people_core as P
+        projects = [h[1] for h in hits if h[1].startswith("10-Projects/")][:2]
+        return P.hook_lines(con, prompt, projects)
+    except Exception as e:
+        B.log_error("retrieve.person_lines", e)
+        return []

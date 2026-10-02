@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-22
+updated: 2026-09-27
 supersedes: []
 ---
 
@@ -127,6 +127,17 @@ password plus key file included, when the module is installed (`PERL5LIB` pointi
 lib), and skips otherwise. `_bin/kp_test.py` runs a keyfile-only store end to end against the real
 keepassxc-cli when it is installed. After any change to the backend, also read a real store before
 believing it: `kp.py ls -R`, `kp.py get <entry> --pipe 'wc -c'`.
+
+## Keys for other command line tools
+
+Some command line tools accept a credential helper: a command named in their configuration
+(git's `credential.helper`, Claude Code's `apiKeyHelper`) that they run whenever they
+need the key. Point it at a small script that reads the entry through `kp.py` and prints it in the
+format the tool expects. The key is read from the kdbx at call time, and nothing lands in a plaintext
+credentials file in the home directory. Check the result with the tool's own "who am I" call.
+
+Before saying a credential cannot do something, test that specific action. A key that failed one read
+turned out to be allowed a write.
 
 ## Links
 

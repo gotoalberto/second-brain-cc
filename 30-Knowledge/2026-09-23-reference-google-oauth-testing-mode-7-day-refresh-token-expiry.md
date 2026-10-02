@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from a working vault where a personal Gmail token died twice on the same 7 day cadence; names and dates are illustrative"
-updated: 2026-09-24
+updated: 2026-09-28
 supersedes: []
 ---
 
@@ -65,6 +65,20 @@ schedule the token watch from day one, rather than finding the expiry through a 
 runs the Remote Control server, finish the consent before restarting that server: the loopback
 listener waiting for Google's redirect lives inside the session's process tree
 ([[2026-09-23-runbook-claude-code-update-on-a-linux-server]]).
+
+## Publishing to production
+
+Publishing the app removes the 7 day expiry. What it took in practice:
+
+- A home page URL and a privacy policy URL on a domain the project lists as authorized. Two static
+  pages on any static host the user controls are enough; nothing has to run behind them.
+- An app that has not gone through Google's verification still publishes. Its consent screen then
+  shows Google's "unverified app" warning, which the owner clicks through once per consent.
+
+Record the change for the account: `google.py auth --account <name> --publishing production` stamps
+the account as published in the registry (an account with no stamp reads as testing). From then on
+`google_token_watch.py` sets no expiry for it and only keeps the liveness probe, and its output says
+the token does not expire. Any app left in Testing keeps the 7 day clock described above.
 
 ## Links
 

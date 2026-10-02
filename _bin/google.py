@@ -9,10 +9,11 @@ OAuth flow and the REST calls are the standard library.
       the accounts connected on this machine (names, login hints, scopes; never a secret)
   google.py add --account NAME --client-id ID [--login-hint ADDRESS] [--scopes gmail,calendar,drive] [--port N]
       record an account and file its OAuth client in KeePass; the client secret is read from stdin
-  google.py auth --account NAME [--no-browser] [--timeout S]
+  google.py auth --account NAME [--no-browser] [--timeout S] [--publishing testing|production]
       one-off consent: opens Google's page, waits on 127.0.0.1:<port>, stores the refresh token and
-      stamps the consent instant in the registry (google_token_watch.py counts a Testing-mode
-      app's 7 day expiry from it)
+      stamps the consent instant and the app's publishing status in the registry
+      (google_token_watch.py counts a Testing-mode app's 7 day expiry from it; a production
+      token gets the liveness probe only)
   google.py token --account NAME
       print a fresh access token (for a manual curl)
   google.py api --account NAME URL [--method GET|POST|PUT|PATCH|DELETE] [--body-file FILE] [--force]
@@ -87,6 +88,8 @@ def make_parser():
     p.add_argument("--account", required=True)
     p.add_argument("--no-browser", action="store_true", help="only print the consent URL")
     p.add_argument("--timeout", type=int, default=300)
+    p.add_argument("--publishing", choices=D.PUBLISHING, default="testing",
+                   help="the consent screen's publishing status in Google Cloud: a testing token expires in 7 days")
     p = sub.add_parser("token", help="print a fresh access token")
     p.add_argument("--account", required=True)
     p = sub.add_parser("api", help="an authenticated REST call; exit 1 on an HTTP error")
@@ -193,7 +196,7 @@ def run(args, ports, stdin, stdout, environ) -> int:
         stdout.flush()
         if args.no_browser:
             ports.open_url = lambda url: (stdout.write(url + "\n"), stdout.flush())
-        entry = A.authorize(ports, args.account, timeout=args.timeout)
+        entry = A.authorize(ports, args.account, timeout=args.timeout, publishing=args.publishing)
         stdout.write("refresh token stored in kp://%s\n" % entry)
         return 0
 

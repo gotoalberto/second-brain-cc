@@ -9,3 +9,6 @@ WorkingDirectory=/home/brain-origin/Brain
 Environment=BRAIN_JOB_LABEL=second-brain-tasks
 ExecStart=/bin/sh /home/brain-origin/Brain/_bin/pywrap.sh /home/brain-origin/Brain/_bin/tasks.py
 Nice=5
+# A task may detach its work and return. The default control-group kill would end that work the
+# moment tasks.py exits; with process only tasks.py itself is stopped. routine_requires.py here checks it.
+KillMode=process
