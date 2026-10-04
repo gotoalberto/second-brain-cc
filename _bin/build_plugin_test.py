@@ -93,6 +93,20 @@ def main():
     check("a second run does not touch hooks.json (it must settle to be committed)",
           os.path.getmtime(os.path.join(plugin, "hooks", "hooks.json")) == mtime)
 
+    vault3, plugin3, claude3, _, env3 = setup()
+    canonical = "run __VAULT__/_bin/tool.py\n"
+    write(os.path.join(plugin3, "skills", "uses-path", "SKILL.md"), canonical)
+    write(os.path.join(claude3, "skills", "uses-path", "SKILL.md"), "run %s/_bin/tool.py\n" % vault3)
+    p = build(env3)
+    check("an installed copy carrying this vault's path is not back-ported over __VAULT__",
+          p.returncode == 0 and read(os.path.join(plugin3, "skills", "uses-path", "SKILL.md")) == canonical,
+          (p.returncode, read(os.path.join(plugin3, "skills", "uses-path", "SKILL.md")), p.stdout, p.stderr))
+    write(os.path.join(claude3, "skills", "uses-path", "SKILL.md"), "run %s/_bin/tool.py --new\n" % vault3)
+    build(env3)
+    check("and a real live edit is back-ported with the path turned back into __VAULT__",
+          read(os.path.join(plugin3, "skills", "uses-path", "SKILL.md")) == "run __VAULT__/_bin/tool.py --new\n",
+          read(os.path.join(plugin3, "skills", "uses-path", "SKILL.md")))
+
     vault2, plugin2, _, _, env2 = setup(with_registry=False)
     p = build(env2)
     check("with no event registry hooks.json is left as it was, not rebuilt from settings.json",

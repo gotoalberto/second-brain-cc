@@ -68,8 +68,11 @@ def main():
     import install_plugin as IP
     from events_core import adapters as EAD, application as EA, domain as ED
 
+    # vault= makes the sync read this vault's path as __VAULT__, as install_plugin.py and the
+    # guardian do; without it an installed copy looks like a live edit and is back-ported with
+    # the machine's path written into the canonical skill.
     syncer = IP.Syncer(PLUGIN, os.path.join(HOME, ".claude"), brain_paths.state_dir(),
-                       log=lambda s: B.log("plugin", "sync", detail=s))
+                       log=lambda s: B.log("plugin", "sync", detail=s), vault=B.VAULT)
     report = syncer.apply()
     moved = [r for r in report if r["action"] not in ("same", "none")]
     for r in moved:
