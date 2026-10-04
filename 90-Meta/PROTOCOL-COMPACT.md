@@ -25,6 +25,8 @@ The one-screen version. Full protocol: `~/Brain/90-Meta/AGENT-PROTOCOL.md`.
 - A vault change is done when pushed, in the same session: run `_bin/vault_sync.py` (it commits and pushes under its lock). Never `git commit`/`push` in the vault by hand: the gate denies it.
 - Project repos live in one code directory (e.g. `~/git/<repo>`); a short name matches a repo suffix. Look there before scanning home.
 - Writing code or files → ALWAYS a git worktree, one per DELIVERABLE, never the main checkout (read-only exempt). Parallel agents split files (`claim.py`).
+- Merged or published and verified → remove its worktrees, branches, backup branches and scratch files without asking; never one a live process uses.
+- Every web runs locally with fake data; every page is reviewed and critiqued on that local build.
 - Code: tests committed red before the implementation, hexagonal, verified in the real system. Check the effect, not the exit code. Protocol §9.
 - Never edit a gate to get past it: stop and ask. Smoke checks redirect every state path, not just the input.
 - Headless runs: the prompt is an order to execute now; success is judged from a log the code writes, never the model's last words.

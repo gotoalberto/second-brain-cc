@@ -14,7 +14,7 @@ layer. Swap the agent, keep the brain.
 
 Agents start every session with a blank slate. They forget the decision you made last
 week, the convention this repo follows, and who the people and systems in your world are.
-This project gives an agent two things:
+This project gives an agent:
 
 - **Persistent memory**: durable notes (decisions, conventions, how-tos, project state,
   people and systems) that outlive any single session.
@@ -87,12 +87,16 @@ python3 _bin/files.py get <key> --out <dir>
 python3 _bin/files.py check                      # broken references and orphaned files
 ```
 
+`90-Meta/scheduled-tasks.md` carries a `files-check-weekly` row that runs `files.py check` every
+Monday. It ships disabled: it reports and never deletes, and it belongs on the machine that holds the
+files directory, so pin it there before enabling it.
+
 ## Multiple machines
 
 By default everything above is single-machine: one vault, one local KeePass database, one
 files directory. If you run this on more than one machine and already sync a folder between
-them — Dropbox, iCloud Drive, a NAS mount, a USB drive — the first run's `multi_machine` step
-can point at it, and two things start coordinating over it:
+them (Dropbox, iCloud Drive, a NAS mount, a USB drive), the first run's `multi_machine` step
+can point at it, and these start coordinating over it:
 
 - **Presence.** Each machine's heartbeat also lands at
   `<shared>/presence/<project>/<machine key>__<sid>`, so `presence.py view` (and anything that
@@ -111,7 +115,7 @@ characters of a hardware/boot UUID (`ioreg` on macOS, `/etc/machine-id` or
 not collide. Only that short derived key is ever written anywhere; the full UUID never is.
 
 **The harness never syncs this folder itself.** It only reads and writes files under the path
-you give it — keeping that path synced between your machines (Dropbox, iCloud, your NAS's own
+you give it. Keeping that path synced between your machines (Dropbox, iCloud, your NAS's own
 mechanism) is entirely up to whatever already syncs it for you.
 
 ```bash
@@ -125,10 +129,10 @@ python3 _bin/claims_sync.py reap                           # clean up claims nob
   default), nothing above does anything extra: single-machine behaviour is unchanged, byte for
   byte.
 - Declining the `multi_machine` step (or skipping it with `first_run.py skip-all`) is the
-  default and always allowed — unlike the files step, it is never required.
+  default and always allowed: unlike the files step, it is never required.
 - A claim nobody renews for longer than 15 minutes plus a 2-minute margin is treated as
   orphaned (a crashed session, a machine that vanished) and reaped automatically, piggybacked
-  on the same 120 s cadence the presence heartbeat already runs on — no separate scheduled job.
+  on the same 120 s cadence the presence heartbeat already runs on, with no separate scheduled job.
 
 ### A second KeePass client: `kpcli`
 
@@ -147,12 +151,12 @@ BRAIN_KP_BACKEND=kpcli python3 _bin/kp.py ls
 - `_bin/kp_backend.py` covers exactly what `kp.py` actually issues through its central `cli()`
   function: `ls`, `search`, `show`, `mkdir`, `add`, `edit`. Everything else the kpcli backend
   does not cover (`clip`, `kp.py init --create`, the `.lock`-file checks under `kp.py locks`)
-  refuses with a clear message instead of guessing or silently doing nothing — use
+  refuses with a clear message instead of guessing or silently doing nothing; use
   `keepassxc-cli` for those, or `--show`/`--info`/`--pipe` in place of the clipboard.
 - `File::KDBX` is not a Perl core module and is never required for the default backend: only
   install it if `BRAIN_KP_BACKEND=kpcli` is what you actually want.
 - A key file works on this backend too. `kp.py` passes its path to `kp_kdbx.pl` in the
-  environment (`BRAIN_KP_KEYFILE`; it is a path, not a secret), and the helper opens the store
+  environment (`BRAIN_KP_KEYFILE`; the path alone is no secret), and the helper opens the store
   with the master and the key file together, or with the key file alone for a keyfile-only store.
 
 ## Adding a new machine
@@ -249,7 +253,7 @@ supervisor.
   describe itself as running "in a cloud container". Do not decide whether a CLI supports it
   from `remote-control --help`, which can hide it; an old CLI answers `Unknown argument`, and
   `claude update` fixes that.
-- **The CLI itself, not a wrapper.** `remote_control.py` looks on `PATH`, then in `~/.local/bin`
+- **The real CLI is preferred over a wrapper.** `remote_control.py` looks on `PATH`, then in `~/.local/bin`
   (the native installer), `/opt/homebrew/bin` and `/usr/local/bin`, and prefers a real CLI over a
   shell script standing in for it; it warns when a wrapper is all there is. Install Claude Code
   with the native installer rather than Homebrew, whose cask can lag several releases behind. A
@@ -385,6 +389,7 @@ python3 _bin/google.py auth --account work --publishing production   # app publi
 python3 _bin/google.py api --account personal "https://www.googleapis.com/calendar/v3/users/me/calendarList"
 python3 _bin/google.py send --account personal --to me@example.com --subject "Digest" --body-file digest.txt
 python3 _bin/google.py slots --account personal --start 2030-01-07T16:30:00+01:00 --minutes 45 --with b@example.com
+python3 _bin/google.py meeting --account work --also personal --start 2030-01-07T16:30:00+01:00 --minutes 45 --travel 20
 ```
 
 A consent screen left in testing mode makes Google expire the refresh token after 7 days, and
@@ -396,7 +401,12 @@ Creating or moving a Calendar event through `api` is checked for conflicts first
 (`_bin/google_core/calendar_guard.py`): when the slot overlaps an event or a busy attendee,
 nothing is written, the conflicts and free alternatives are printed and the exit status is 3.
 Show them to the user and rerun with the chosen slot, or with `--force` once the overlap is
-accepted. `slots` runs the same check without writing. The rule it enforces:
+accepted. `slots` runs the same check without writing. `meeting --account HOST [--also ACCOUNT ...]`
+checks one meeting across several named accounts, also writing nothing: HOST holds the meeting, each
+`--also` account the private block that mirrors it, `--travel` adds the trips there and back, and the
+exit status is 3 on any clash. When a saved event has a Meet, the reply to the Calendar write also
+carries `join_link`, the same Meet opened as the account that owns it, meant for the user's private
+block on their other calendar and never for anything a guest can see. The rule it enforces:
 [`30-Knowledge/2026-09-24-convention-check-calendar-conflicts-before-booking.md`](30-Knowledge/2026-09-24-convention-check-calendar-conflicts-before-booking.md).
 
 Each account has its own OAuth client ("Desktop app" client in a Google Cloud project with the
@@ -463,25 +473,44 @@ which the installer replaces with yours.
 | `save` | Writes what a session learned into the vault | The vault, and the files directory chosen in the first run, where `files.py` stores the session's files |
 | `vault-doctor` | Diagnoses the vault and the memory system | The vault; reads `guardian.py status` when the guardian is installed |
 | `kp` | Reads and files credentials in your KeePass database | KeePassXC (`keepassxc-cli`) and a database connected in the first run |
-| `dev` | The development pipeline: hexagonal architecture, tests first, design and review gates for anything with an interface, including a worst-case data pass and a phone pass before the critique rounds | The third-party skills below, and a browser or preview tool for the rendered checks |
+| `dev` | The development pipeline: hexagonal architecture, tests first, design and review gates for anything with an interface, including a worst-case data pass and a phone pass before the critique rounds | The bundled third-party skills below, and a browser or preview tool for the rendered checks |
 | `job-search` | Finds and ranks openings against your own profile (remote, plus on-site or hybrid in an area you name) and LinkedIn posts from people who are hiring; report only | A Google account connected with the send scope; your own `profile.md`, `preferences.md` (recipient address, account name) and `search-queries.md` created from the skill's `templates/` under `80-Private/job-search/` (local, never pushed); `curl` and `jq`; for the LinkedIn posts step, Claude in Chrome with a browser signed in to LinkedIn (without it the report says the step was skipped) |
 | `machine-update` | Updates Claude Code on this machine and says what is stale: the CLI, the Remote Control server still running an old binary, the desktop app's copy | `_bin/machine_update.py`; restarts the server by itself only on macOS and only when no session is open |
+| `antigravity` | Hands a task to Google's Antigravity agent (the `agy` CLI) for a second opinion or an alternative design, through a wrapper that sandboxes it, refuses autonomous mode in a main checkout and returns one JSON object; Claude reviews and verifies what comes back | **macOS only** (`agy` keeps its Google sign-in in the macOS keychain). `agy` installed at `~/.local/bin/agy` (or `AGY_BIN`) and signed in once in a terminal; `agy_run.py doctor` checks both. Uses the Google account's Antigravity plan quota |
+| `twitterapi-io` | Reads X/Twitter content (an account's tweets, a search, a list timeline, tweets by id) through the paid twitterapi.io API | A twitterapi.io API key filed in KeePass as `apis/twitterapi-io` (read with `kp.py --pipe`, never printed); `BRAIN_KP_SCRIPT` overrides where `kp.py` is found |
 
-### Third-party skills used by `dev`
+### Third-party skills
 
-Not shipped here (their licences are their authors'); install them separately:
+The web stack `dev` uses is bundled with the plugin, copied verbatim from its upstream repositories
+under their own licences, and installed with everything else. Each skill directory keeps its upstream
+licence text and a `SOURCE.md` with the repository, commit and licence;
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists them all with their copyright lines. They are
+not modified here.
 
-| Skill | Source | Example install |
+| Skills | Upstream | Licence |
 |---|---|---|
-| `impeccable` | https://impeccable.style | see its site |
-| `frontend-design` | Anthropic's public skills repository | `npx skills@latest add anthropics/skills -g -a claude-code -s frontend-design -y` |
-| `design-taste-frontend` | `leonxlnx/taste-skill` | `npx skills@latest add leonxlnx/taste-skill -g -a claude-code -s design-taste-frontend -y` |
-| `emil-design-eng`, `animate`, `animate-expo`, `find-animation-opportunities`, `review-animations`, `apple-design`, `break-ui`, `mobile-native` | Emil Kowalski's skills repository | `npx skills@latest add emilkowalski/skills -g -a claude-code -s '*' -y` |
+| `impeccable` (with its `reference/`, `scripts/` and the four `impeccable-*` agents) | `pbakaus/impeccable` (Paul Bakaus), https://impeccable.style | Apache-2.0 |
+| `frontend-design` | `anthropics/skills` (Anthropic) | Apache-2.0 |
+| `design-taste-frontend` | `leonxlnx/taste-skill` (Leonxlnx) | MIT |
+| `emil-design-eng`, `animate`, `animate-expo`, `animation-vocabulary`, `apple-design`, `ask-sonner`, `break-ui`, `find-animation-opportunities`, `improve-animations`, `mobile-native`, `pick-ui-library`, `prototype`, `review-animations`, `write-swift` | `emilkowalski/skills` (Emil Kowalski) | MIT |
 
-The `-s '*'` install brings the whole family, `break-ui` and `mobile-native` included. To add only
-those two to a machine that already has the rest:
-`npx skills@latest add emilkowalski/skills -g -a claude-code -s break-ui -s mobile-native -y`.
-That repository has no skill called `animate-pro`; motion is built with `animate`.
+`impeccable`'s launcher downloads upstream's engine binary from upstream's GitHub releases on first
+use, when none is installed, and checks its sha256 before running it.
+
+**Refreshing them from upstream.** Clone the upstream repository at the commit you want, replace the
+skill's directory with upstream's copy (for `impeccable`, `plugin/skills/impeccable` and
+`plugin/agents/`), keep the `LICENSE` and `SOURCE.md`, update the commit in `SOURCE.md` and in
+`THIRD_PARTY_NOTICES.md`, and run `python3 _bin/install_plugin.py sync`. To refresh one machine
+without touching the repository, the upstream installers work too:
+
+```bash
+npx skills@latest add emilkowalski/skills -g -a claude-code -s '*' -y
+npx skills@latest add anthropics/skills -g -a claude-code -s frontend-design -y
+npx skills@latest add leonxlnx/taste-skill -g -a claude-code -s design-taste-frontend -y
+npx impeccable install
+```
+
+Emil Kowalski's repository has no skill called `animate-pro`; motion is built with `animate`.
 
 ## Agent orchestration
 
@@ -499,6 +528,10 @@ How a task is split across subagents, and how to change it. The reasoning behind
 | `librarian` | sonnet | medium | Read, Write, Edit, Bash, Grep, Glob |
 | `skill-forge` | sonnet | medium | the librarian's tools plus Skill |
 
+The four `impeccable-*` agents in the same directory ship with the bundled `impeccable` skill,
+which spawns them itself (see [Third-party skills](#third-party-skills)); the pipeline below does not
+use them.
+
 To change a model, effort or tool list, edit that agent's frontmatter and run
 `python3 _bin/install_plugin.py sync`.
 
@@ -512,7 +545,7 @@ To change a model, effort or tool list, edit that agent's frontmatter and run
 5. Integration: rebase on the target branch and verify again.
 6. `librarian` writes what was learned back to the vault.
 
-One subagent per step, in the foreground, unless steps are genuinely independent. When
+One subagent per step, in the foreground, unless steps are truly independent. When
 parallelising: one worktree per implementer with explicit file ownership, files registered with
 `_bin/claim.py`, a verifier per branch, then rebase, run the suite on every supported interpreter
 and fast-forward merge. Keep a single multi-agent workflow under about 15 agents unless the user
@@ -611,7 +644,9 @@ _bin/           the Python engine and its tests; job templates (plists, systemd/
 githooks/       generated git hooks (core.hooksPath)
 integrations/   mcp/, cli/, claude-code/, opencode/, scheduler/, first-run/
 AGENTS.md       generated protocol for any agent; CLAUDE.md points to it
+THIRD_PARTY_NOTICES.md  the bundled third-party skills, their upstream, commit and licence
 ```
 
-Everything in this repo is public and generic, with placeholder examples only. Replace them with
+Everything in this repo is public and generic, with placeholder examples only (the bundled
+third-party skills are their authors' work, under their own licences). Replace them with
 your own notes and make it yours.

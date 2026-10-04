@@ -27,6 +27,19 @@ them, drop the ones that fall at night for someone.
 `call(url, method="GET", body=None)` returns Google's JSON, or {"_http_error": status, ...} the way
 google.py's `api` does. A read that fails raises GuardError: a check that could not look is not a
 check that found the slot free.
+
+One meeting, several calendars: `check_meeting()` (behind `google.py meeting`). Someone with more
+than one account usually keeps a meeting on one calendar and a private block on the other, and the
+per-write guard only ever sees the calendar being written: the block goes in second, so a clash on
+that side used to show up only once the meeting already existed. It checks the meeting on every
+account given, plus the trip there and back when the meeting is somewhere physical, before
+anything is written. Guests' free/busy is read once, for the host's main slot.
+
+Joining the right way: `meet_join_link()`. Meet asks anyone who is neither the host nor a guest to
+knock and wait, so opening the Meet from the mirror block signed in as the other account leaves
+the user waiting for someone to let them in. The same link with `authuser=<host address>` opens
+Meet as the account that owns the meeting. It belongs only in the user's own private block: a
+guest who clicks it is asked to sign in as the user.
 """
 from __future__ import annotations
 
@@ -247,6 +260,57 @@ def guard(call, url, method, body, me=(), default_tz="UTC", now=None):
     out["next"] = ("show the conflicts and alternatives to the user; once they choose, rerun with the chosen "
                    "slot, or with --force if they accept the overlap")
     return out
+
+
+def meet_join_link(event, email):
+    """The event's Meet link opened as `email` (`authuser`), or None without a Meet or an address."""
+    link = (event or {}).get("hangoutLink") if isinstance(event, dict) else None
+    if not link or not email:
+        return None
+    sep = "&" if "?" in link else "?"
+    return link + sep + urllib.parse.urlencode({"authuser": email})
+
+
+def meeting_windows(start, minutes, travel=0):
+    """[(label, start, end)]: the meeting, and with travel the trips there and back around it."""
+    end = start + dt.timedelta(minutes=minutes)
+    out = [("main", start, end)]
+    if travel:
+        gap = dt.timedelta(minutes=travel)
+        out = [("travel_to", start - gap, start)] + out + [("travel_back", end, end + gap)]
+    return out
+
+
+def check_meeting(calls, me, host, start, minutes, travel=0, guests=(), tz="UTC",
+                  hours=(WORK_START, WORK_END), now=None):
+    """One meeting checked on every account's primary calendar, travel slots included.
+
+    `calls` is {account: call}, `me` is {account: (own addresses,)}. Returns {"host", "clashes",
+    "unknown", "alternatives"}: one clash per (account, slot) that overlaps something, the guests
+    whose free/busy is not shared, and the guard's alternatives when the host's main slot is taken.
+    """
+    if host not in calls:
+        raise ValueError("the host %r is not one of the accounts checked (%s)" % (host, ", ".join(calls)))
+    if minutes <= 0 or travel < 0:
+        raise ValueError("the meeting needs positive minutes and travel of zero or more")
+    everyone = set()
+    for addresses in me.values():
+        everyone |= {a.lower() for a in addresses if a}
+    clashes, alternatives_, unknown = [], [], []
+    for label, t0, t1 in meeting_windows(start, minutes, travel):
+        for account, call in calls.items():
+            main_here = label == "main" and account == host
+            people = [{"email": g} for g in guests] if main_here else []
+            rep = check(call, "primary", t0, t1, people, tz, me=tuple(everyone), hours=hours, now=now)
+            if main_here:
+                unknown = rep["unknown"]
+            if rep["conflicts"]:
+                clashes.append({"account": account, "slot": label, "start": _fmt(t0, tz), "end": _fmt(t1, tz),
+                                "conflicts": rep["conflicts"]})
+                if main_here:
+                    alternatives_ = rep["alternatives"]
+    return {"host": host, "clashes": clashes, "unknown": unknown,
+            "alternatives": alternatives_ if clashes else []}
 
 
 def parse_hours(text):

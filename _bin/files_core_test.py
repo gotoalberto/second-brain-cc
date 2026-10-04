@@ -141,6 +141,20 @@ def test_check(F):
     check("with two candidates nothing is guessed", F.variant("demo/material/b.txt", existing) is None)
     check("with none, None", F.variant("demo/material/c.txt", existing) is None)
 
+    print("\n== check() follows the variant the way get does ==")
+    cited = F.cited_keys([("10-Projects/c.md", "- `demo/material/plan.pdf`\n- `demo/material/twice.txt`\n"
+                                               "- `demo/2026-09-15/deliverable/...` and `demo/material/*.csv`\n")])
+    check("an ellipsis or a wildcard is a placeholder, not a reference",
+          sorted(cited) == ["demo/material/plan.pdf", "demo/material/twice.txt"], cited)
+    stored = ["demo/material/plan-0f0f0f0f.pdf", "demo/material/twice-1a2b3c4d.txt", "demo/material/twice-2b3c4d5e.txt"]
+    broken, orphans = F.check(cited, stored)
+    check("a name cited without its fragment is not broken when get would find the one file",
+          "demo/material/plan.pdf" not in broken, broken)
+    check("and that file is not an orphan", "demo/material/plan-0f0f0f0f.pdf" not in orphans, orphans)
+    check("with two candidates get refuses, so the reference is broken and both files are orphans",
+          broken == ["demo/material/twice.txt"]
+          and orphans == ["demo/material/twice-1a2b3c4d.txt", "demo/material/twice-2b3c4d5e.txt"], (broken, orphans))
+
 
 def test_manifest(F):
     print("\n== the manifest ==")

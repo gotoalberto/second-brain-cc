@@ -1,7 +1,7 @@
 {
   "name": "brain",
-  "description": "Persistent memory and context with an Obsidian vault: automatic recall, agents that run in isolated worktrees, and a write-back to the vault before closing. Skills: task, ctx, recall, save, vault-doctor, kp (KeePass credentials), dev (development pipeline), job-search and machine-update (update Claude on this machine).",
-  "version": "1.1.0",
+  "description": "Persistent memory and context with an Obsidian vault: automatic recall, agents that run in isolated worktrees, and a write-back to the vault before closing. Skills: task, ctx, recall, save, vault-doctor, kp (KeePass credentials), dev (development pipeline), job-search, machine-update (update Claude on this machine), antigravity (delegate to Google's agy CLI, macOS only) and twitterapi-io (read X/Twitter through twitterapi.io). Bundled third-party skills for the dev web stack, under their own licences (see THIRD_PARTY_NOTICES.md): impeccable, frontend-design, design-taste-frontend, and Emil Kowalski's emil-design-eng, animate, animate-expo, animation-vocabulary, apple-design, ask-sonner, break-ui, find-animation-opportunities, improve-animations, mobile-native, pick-ui-library, prototype, review-animations and write-swift.",
+  "version": "1.2.0",
   "author": {
     "name": "second-brain-cc"
   }

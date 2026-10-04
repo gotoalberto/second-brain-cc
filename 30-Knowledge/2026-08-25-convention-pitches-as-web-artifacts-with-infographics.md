@@ -19,7 +19,7 @@ supersedes: []
 user asks for another format for a specific case. The deliverable is the page and its link, plus the HTML
 file. [[2026-09-15-convention-every-artifact-also-as-html-file]]
 
-Every slide is built from three things at once:
+Every slide combines:
 
 1. **An infographic or drawing in HTML or SVG that explains that slide's concept**: the mechanism, the
    relationship or the magnitude the slide is about. Not decoration and not a repeated template.
@@ -30,7 +30,7 @@ Every slide is built from three things at once:
 ## Motion, always subtle
 
 Every presentation carries subtle animation: staggered entrances, a gentle ease-out curve, restrained
-emphasis. It is part of the deliverable, not an extra for when there is time. Always honour
+emphasis. It is part of the deliverable and never an extra left for when there is time. Always honour
 `prefers-reduced-motion`, on every redraw and not only the first.
 
 Each entrance and transition is built with the `animate` skill (curve, duration, properties,
@@ -113,3 +113,5 @@ shared by link and updates without resending files.
 - [[2026-08-30-convention-impeccable-craft-floor-rules-for-web]]
 - [[2026-08-25-convention-deliverables-to-the-vault]]
 - [[2026-08-26-convention-code-development-pipeline]]
+- [[2026-10-03-convention-motion-in-web-interfaces]]
+- [[2026-10-04-convention-reports-use-the-project-style]]

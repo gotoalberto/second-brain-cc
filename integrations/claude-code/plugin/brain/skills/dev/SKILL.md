@@ -1,6 +1,6 @@
 ---
 name: dev
-description: Code development pipeline. Use it whenever the task produces code (backend, frontend, scripts, a website or an HTML deliverable). It enforces tests before implementation with red commits first, hexagonal architecture, and for anything with an interface a design interview, a design skill stack, motion built with animation skills, a worst-case data pass (break-ui) and a phone pass (mobile-native), three critique rounds and verification in a real browser after every correction. Do not use it for tasks that produce no code.
+description: Code development pipeline. Use it whenever the task produces code (backend, frontend, scripts, a website or an HTML deliverable). It enforces tests before implementation with red commits first, hexagonal architecture, and for anything with an interface a design interview, a bundled design skill stack, motion built with animation skills, a worst-case data pass (break-ui) and a phone pass (mobile-native), three critique rounds and verification in a real browser after every correction. Do not use it for tasks that produce no code.
 argument-hint: [task description]
 ---
 
@@ -110,21 +110,23 @@ Full rationale: `~/Brain/30-Knowledge/2026-09-18-convention-anti-ai-slop-design-
 
 ### 3b. The skill stack
 
-A web interface is not laid out by hand. This gate expects six **third-party skills**, installed
-separately (this repository does not ship them):
+A web interface is not laid out by hand. This gate uses six **third-party skills**, bundled with
+this plugin verbatim under their own licences (see `THIRD_PARTY_NOTICES.md` at the repository root):
 
-| Skill | What it brings | Where it comes from |
+| Skill | What it brings | Upstream |
 |---|---|---|
-| `impeccable` | Visual hierarchy, typography, spacing, a quality floor, and the `critique` command used in 3d | https://impeccable.style |
-| `frontend-design` | Aesthetic direction, so the result does not read as a template | Anthropic's public skills repository |
-| `design-taste-frontend` | An anti-template pass for landing pages, portfolios and redesigns | the `leonxlnx/taste-skill` repository |
-| `emil-design-eng` | Component polish and the entry to the animation skills in 3c | Emil Kowalski's skills repository |
-| `break-ui` | Worst-case data for every rendered value, behind a dev-only toggle, used in 3c bis | Emil Kowalski's skills repository |
-| `mobile-native` | The fixes that make a web feel native on a phone, used in 3c bis | Emil Kowalski's skills repository |
+| `impeccable` | Visual hierarchy, typography, spacing, a quality floor, and the `critique` command used in 3d | `pbakaus/impeccable` (https://impeccable.style) |
+| `frontend-design` | Aesthetic direction, so the result does not read as a template | `anthropics/skills` |
+| `design-taste-frontend` | An anti-template pass for landing pages, portfolios and redesigns | `leonxlnx/taste-skill` |
+| `emil-design-eng` | Component polish and the entry to the animation skills in 3c | `emilkowalski/skills` |
+| `break-ui` | Worst-case data for every rendered value, behind a dev-only toggle, used in 3c bis | `emilkowalski/skills` |
+| `mobile-native` | The fixes that make a web feel native on a phone, used in 3c bis | `emilkowalski/skills` |
 
 They are not alternatives. `impeccable` runs the process and the other three inform the judgement
 inside it; `break-ui` and `mobile-native` come from the same repository as the animation skills and
-run once the motion is built. If one is missing on the machine, install it before building, for example:
+run once the motion is built. Installing this plugin installs all of them. If one is still missing on
+the machine (a session that does not load the plugin), install it from upstream before building, for
+example:
 
 ```bash
 npx skills@latest add emilkowalski/skills -g -a claude-code -s '*' -y
@@ -132,8 +134,7 @@ npx skills@latest add anthropics/skills -g -a claude-code -s frontend-design -y
 npx skills@latest add leonxlnx/taste-skill -g -a claude-code -s design-taste-frontend -y
 ```
 
-Check each project's own instructions for the current install command. If a skill cannot be installed,
-say so in the closing instead of pretending the gate was met.
+If a skill cannot be installed, say so in the closing instead of pretending the gate was met.
 
 ### 3c. Motion
 
@@ -178,6 +179,9 @@ Before calling a website or page finished:
 ```
 /impeccable critique <target>
 ```
+
+**Every critique round, mechanical and blind, judges the local fake-data pages** (3g): every page,
+every state switched on, every width. Never production or a deployed preview.
 
 **Three complete rounds, each with its corrections applied.** Reading the critique and saying it looks
 fine is not a round. Each round starts from the corrected result of the previous one. This is a
@@ -242,6 +246,18 @@ Full rationale: `~/Brain/30-Knowledge/2026-09-18-convention-anti-ai-slop-design-
 
 After building, after every critique round and after every single correction, open the page in the
 agent's browser tool and look at it. A fix nobody saw rendered is a fix nobody knows works.
+
+**Locally, with fake data, every page.** Every web, new or existing, runs on this machine and shows
+**every** page, the ones behind a login included, filled with fake data injected through the app's own
+ports (fake adapters in the composition root, a fake session, fake external accounts). Fully offline:
+no copy of a production database, no proxy to production, no secrets, no third-party API. The fake
+mode works **only locally**: it cannot be switched on in a deployed build, and a test proves the
+production wiring never picks a fake. **Every state can be switched on** through a dev-only control or
+URL parameter (signed in and out, each role, loading, empty, error, success, a pending operation,
+worst-case data, feature states). If the web has no fake mode, or a state cannot be switched on,
+building it is part of the task. List the routes from the router and look at all of them, in every
+state, at every width; a production URL or a deployed preview never replaces this:
+`~/Brain/30-Knowledge/2026-10-03-convention-web-runs-locally-with-fake-data-every-page-reviewed.md`.
 
 - Whether this machine has a browser:
   `~/Brain/30-Knowledge/2026-09-21-reference-where-claude-in-chrome-is-available.md`. Every

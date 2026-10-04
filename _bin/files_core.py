@@ -142,13 +142,13 @@ def cited_keys(notes):
     """{key: [note, ...]} for every stored-key reference in (relative path, text) pairs.
 
     A folder prefix (`demo/material/`) explains the layout and points at no file, and a key with
-    `<`, `>`, `{` or `}` is a documentation placeholder: neither is a reference, and reporting them
-    as broken would teach you to ignore the report.
+    `<`, `>`, `{`, `}`, `*` or `...` is a documentation placeholder: neither is a reference, and
+    reporting them as broken would teach you to ignore the report.
     """
     cited = {}
     for rel, text in notes:
         for ref in _CITED.findall(text or ""):
-            if ref.endswith("/") or any(c in ref for c in "<>{}"):
+            if ref.endswith("/") or "..." in ref or any(c in ref for c in "<>{}*"):
                 continue
             where = cited.setdefault(ref, [])
             if rel not in where:
@@ -157,10 +157,17 @@ def cited_keys(notes):
 
 
 def check(cited, stored):
-    """(broken, orphans): cited keys with no file, and stored files no note cites. Both sorted."""
+    """(broken, orphans): cited keys with no file, and stored files no note cites. Both sorted.
+
+    A note may cite a name without the sha256 fragment `put` adds. When `get` would resolve it to
+    exactly one file (variant()), the reference works and that file is cited: reporting both as a
+    broken reference and an orphan would send someone to fix a link that is not broken.
+    """
     stored = {k for k in stored if is_content_key(k)}
-    broken = sorted(k for k in cited if k not in stored)
-    orphans = sorted(k for k in stored if k not in cited)
+    resolved = {k: (k if k in stored else variant(k, stored)) for k in cited}
+    broken = sorted(k for k, found in resolved.items() if not found)
+    reached = set(resolved.values())
+    orphans = sorted(k for k in stored if k not in reached)
     return broken, orphans
 
 

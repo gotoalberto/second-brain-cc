@@ -159,10 +159,17 @@ Adapt this to your own taste; it is a convention note, not code. Detail:
   built so a second language is cheap. `30-Knowledge/2026-09-10-convention-report-deliverable-shape.md`
 - Team chat posts: the title in the channel, the content or link in the thread, published only
   when asked. `30-Knowledge/2026-08-28-convention-publishing-to-a-team-chat-channel.md`
-- A web goes through `/dev` Gate 3's fixed stack: `impeccable`, `frontend-design`,
-  `design-taste-frontend` and `emil-design-eng`, motion built with the `animate` family, `break-ui`
-  (worst-case data) and `mobile-native` (phone feel) before three critique rounds, and every design
-  and every fix looked at in a browser. `30-Knowledge/2026-08-26-convention-code-development-pipeline.md`
+- A web goes through `/dev` Gate 3's fixed stack, bundled with the plugin (`THIRD_PARTY_NOTICES.md`):
+  `impeccable`, `frontend-design`, `design-taste-frontend` and `emil-design-eng` on every job, motion
+  built with the `animate` family, `break-ui` (worst-case data) and `mobile-native` (phone feel)
+  before the critique, three rounds of `/impeccable critique` each with its corrections applied, and
+  every design and every fix looked at in a browser, locally with fake data. A session that does not
+  load the plugin refreshes them from upstream (the `npx skills@latest add` lines in the `dev` skill).
+  `30-Knowledge/2026-08-26-convention-code-development-pipeline.md`
+- Every web runs locally with fake data injected through the app's own boundary, login-protected
+  pages included and never in a deployed build. Every page is reviewed there, and every critique
+  round judges that local build, never a production URL or a hosted preview.
+  `30-Knowledge/2026-10-03-convention-web-runs-locally-with-fake-data-every-page-reviewed.md`
 - Web deliverables meet the craft floor and the interface copy rules; text inside images is
   audited with local OCR before shipping.
   `30-Knowledge/2026-08-30-convention-impeccable-craft-floor-rules-for-web.md`,
@@ -290,6 +297,11 @@ The unit of isolation is **the unit of merge**, not the session or the agent.
   sweep someone's files into a commit, undo with `git reset --soft HEAD~1` and
   `git restore --staged <their files>`, which never touch the working tree. Detail:
   `30-Knowledge/2026-09-05-failure-worktree-shared-agent-git-add-dash-a.md`.
+- Once a deliverable is merged or published and verified, clean up **without asking**: its
+  worktrees, their branches, backup branches left by a fold or a history rewrite, and scratch files
+  outside the repo. Never one a live process still uses, never content merged nowhere; the closing
+  reply says in one line what went.
+  `30-Knowledge/2026-10-03-convention-clean-up-worktrees-and-branches-after-merging.md`
 
 Detail and reasoning: `30-Knowledge/2026-08-21-convention-worktree-isolation-per-deliverable.md`
 

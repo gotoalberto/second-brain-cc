@@ -64,16 +64,18 @@ pitch or report page is called done, alongside the `dev` skill's design gates.
 
 ## How to check
 
-- Measure the rendered page, not the stylesheet: inline overrides only show up live.
+- Measure the rendered page; the stylesheet misses inline overrides, which only show up live.
 - Look at it in a real browser at several sizes and in both themes; numbers alone miss empty screens and
   off-screen drawing.
 - When two evaluations run in parallel and one causes changes, record which commit each measured.
 - Run design review and detector or browser evidence as two separate agents; they catch different things.
 - Treat a detector hit that contradicts an explicit brief (a deliberate grid background, say) as a question
-  about the brief, not an automatic finding.
+  about the brief rather than an automatic finding.
 
 ## Links
 
 - [[2026-08-25-convention-pitches-as-web-artifacts-with-infographics]]
 - [[2026-08-26-convention-code-development-pipeline]]
 - [[2026-08-24-convention-local-ocr-to-audit-text-in-images]]
+- [[2026-08-23-verify-frontend-findings-against-production]]
+- [[2026-10-03-convention-motion-in-web-interfaces]]

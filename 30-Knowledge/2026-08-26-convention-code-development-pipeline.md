@@ -20,7 +20,7 @@ order. The `task` skill orchestrates them; the `dev` skill adds the code gates o
 the task produces code.
 
 1. **Context first.** `context-scout` writes a Context Pack from the vault, the repository and
-   git history before anyone plans or writes. Whoever executes reads the pack, not the vault.
+   git history before anyone plans or writes. Whoever executes reads the pack and leaves the vault alone.
 2. **A worktree per deliverable.** Writing happens in a git worktree with its own branch, never
    in the main checkout. One worktree per unit of merge, not per session or per agent.
    [[2026-08-21-convention-worktree-isolation-per-deliverable]]
@@ -72,7 +72,8 @@ testing a business rule needs a database or a browser, the boundary is in the wr
 - **Interview before building.** Ask for references, anti-references and why each one works or
   does not. A visual deliverable built on assumptions gets thrown away, not corrected.
 - **Build with design skills, not by hand.** The `dev` skill names a stack of third-party design
-  and animation skills; they are installed separately.
+  and animation skills; they are bundled with the plugin, and a machine without it refreshes them
+  from upstream with the `npx skills@latest add` lines in the `dev` skill.
 - **Critique rounds with fixes applied**, at least three, one of them only about the images:
   framing, crop, quality, consistency, background, and what is actually visible in each.
 - **Look at it rendered** after every correction, at several sizes, with the console open.

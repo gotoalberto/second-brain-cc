@@ -43,6 +43,66 @@ sys.exit(2)
 '''
 
 
+def in_process(GP):
+    """google.py's run() with the application layer faked: what it prints around the API's reply."""
+    import io
+    import types
+
+    accounts = {"home": "me@example.com", "work": "me@example.org"}
+    sent = []
+
+    def api(ports, name, method, url, body=None):
+        sent.append((name, method, url))
+        if url.endswith("/freeBusy"):
+            return {"calendars": {i["id"]: {"busy": []} for i in body["items"]}}
+        if "/events?" in url:
+            items = [{"id": "s1", "summary": "Standup", "start": {"dateTime": "2030-01-07T10:30:00+01:00"},
+                      "end": {"dateTime": "2030-01-07T10:45:00+01:00"}}] if name == "work" else []
+            return {"items": items}
+        return dict(body or {}, id="ev1", hangoutLink="https://meet.google.com/aaa-bbbb-ccc")
+
+    def get_account(ports, name):
+        if name not in accounts:
+            raise GP.D.UsageError("unknown account %s: google.py add --account %s" % (name, name))
+        return types.SimpleNamespace(name=name, login_hint=accounts[name])
+
+    real = GP.A
+    GP.A = types.SimpleNamespace(api=api, get_account=get_account)
+    try:
+        def go(*argv):
+            out = io.StringIO()
+            rc = GP.run(GP.make_parser().parse_args(list(argv)), None, io.StringIO(), out, {"TZ": "Europe/Paris"})
+            return rc, out.getvalue()
+
+        rc, out = go("api", "--account", "home", "--method", "POST", "--force",
+                     "https://www.googleapis.com/calendar/v3/calendars/primary/events")
+        data = json.loads(out) if out.strip().startswith("{") else {}
+        check("a saved event with a Meet carries join_link, opened as the account that wrote it",
+              rc == 0 and data.get("join_link") == "https://meet.google.com/aaa-bbbb-ccc?authuser=me%40example.com",
+              (rc, out))
+        rc, out = go("api", "--account", "home", "https://www.googleapis.com/calendar/v3/colors")
+        check("a read gets no join_link", rc == 0 and "join_link" not in out, out)
+
+        del sent[:]
+        rc, out = go("meeting", "--account", "home", "--also", "work", "--start", "2030-01-07T11:00:00+01:00",
+                     "--minutes", "60", "--travel", "40", "--with", "sam@example.net")
+        data = json.loads(out) if out.strip().startswith("{") else {}
+        check("meeting reports a clash on the other account's calendar during the trip there, exit 3",
+              rc == 3 and [(c["account"], c["slot"]) for c in data.get("clashes", [])] == [("work", "travel_to")],
+              (rc, out))
+        check("and writes nothing", sent and all(m == "GET" or u.endswith("/freeBusy") for _, m, u in sent), sent)
+        rc, out = go("meeting", "--account", "home", "--also", "work", "--start", "2030-01-07T12:00:00+01:00",
+                     "--minutes", "30")
+        check("meeting with every calendar free exits 0", rc == 0 and json.loads(out)["clashes"] == [], (rc, out))
+        del sent[:]
+        rc, out = go("meeting", "--account", "home", "--also", "home", "--start", "2030-01-07T12:00:00+01:00",
+                     "--minutes", "30")
+        check("the host named again under --also is checked once",
+              rc == 0 and sum(1 for n, m, u in sent if "/events?" in u) == 1, sent)
+    finally:
+        GP.A = real
+
+
 def main():
     root = tempfile.mkdtemp(prefix="google-cli-")
     try:
@@ -64,7 +124,8 @@ def main():
 
         rc, out, err = run("--help")
         check("--help exits 0 and names every subcommand",
-              rc == 0 and all(c in out for c in ("accounts", "add", "auth", "token", "api", "send", "slots")), (rc, out, err))
+              rc == 0 and all(c in out for c in ("accounts", "add", "auth", "token", "api", "send", "slots", "meeting")),
+              (rc, out, err))
         rc, out, err = run("auth", "--account", "work", "--publishing", "staging")
         check("auth takes --publishing testing or production, nothing else",
               rc == 2 and "--publishing" in err and "invalid choice" in err, (rc, out, err))
@@ -124,6 +185,18 @@ def main():
         check("slots with a start that is not ISO is a usage error, exit 2", rc == 2 and "--start" in err, (rc, err))
         rc, out, err = run("slots", "--account", "work", "--start", "2030-01-07T16:30:00+01:00", "--tz", "UTC")
         check("slots that cannot get a token exits 1", rc == 1, (rc, out, err))
+        rc, out, err = run("meeting", "--account", "work", "--start", "2030-01-07T16:30:00+01:00", "--minutes", "0")
+        check("meeting with no length is a usage error, exit 2", rc == 2 and "--minutes" in err, (rc, err))
+        rc, out, err = run("meeting", "--account", "work", "--start", "2030-01-07T16:30:00+01:00", "--minutes", "30",
+                           "--travel", "-5")
+        check("meeting with negative travel is a usage error, exit 2", rc == 2 and "--travel" in err, (rc, err))
+        rc, out, err = run("meeting", "--account", "work", "--also", "nobody", "--start", "2030-01-07T16:30:00+01:00",
+                           "--minutes", "30")
+        check("meeting with an unknown second account exits 2", rc == 2 and "google.py add" in err, (rc, err))
+        rc, out, err = run("meeting", "--account", "work", "--start", "2030-01-07T16:30:00+01:00", "--minutes", "30",
+                           "--tz", "UTC")
+        check("meeting that cannot get a token exits 1, nothing written", rc == 1 and out == "", (rc, out, err))
+        in_process(GP)
     finally:
         shutil.rmtree(root, ignore_errors=True)
     print("\nRESULT: %d passed, %d failed" % (len(ok), len(fail)))

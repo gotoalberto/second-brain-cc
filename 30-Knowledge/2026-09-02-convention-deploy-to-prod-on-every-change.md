@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-30
+updated: 2026-10-04
 supersedes: []
 ---
 
@@ -21,7 +21,7 @@ change. Without being asked and without being reminded.
 
 ## Why
 
-For most users the running site or service is the deliverable, not the repository. A
+For most users the running site or service is the deliverable; the repository alone is not. A
 change that only sits on the main branch is not done, and a passing build is not proof that
 the change is visible.
 
@@ -56,6 +56,17 @@ still serves the old thing. Each of these was seen:
   serves (an endpoint or page that shows them) as well.
 - **After changing such variables, redeploy without the build cache.** A plain redeploy can reuse
   the old build and keep the old values.
+- **A merge can never reach production at all.** One merge got no deployment of any kind (no
+  deployment record for its commit) while the merge before it deployed in a minute: the push
+  webhook was apparently lost. Check the version endpoint after every merge, not only after the
+  ones that change configuration. The next merge deployed normally and carried the missed change
+  with it; when no next merge is coming, ask the user to redeploy, since triggering a production
+  deploy through the platform's API is an action to confirm first.
+- **A client-rendered app's HTML shell proves nothing.** Fetch `/`, take the hashed bundle name from
+  its `<script>` tag, fetch that bundle and grep it for strings that must now be present or absent; a
+  changed hash between two checks is itself proof of a new deploy. Grep the string as written in the
+  source, which can differ from what renders: a heading shown in capitals by `text-transform` is title case in the
+  bundle. Then check the rendered page in a browser.
 
 ## Links
 

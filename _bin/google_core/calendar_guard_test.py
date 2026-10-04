@@ -187,8 +187,83 @@ def test_helpers():
     check("no alternative is in the past", alts and all(a["start"] >= "2030-01-07T12:00" for a in alts), alts)
 
 
+def test_join_link():
+    link = "https://meet.google.com/aaa-bbbb-ccc"
+    check("the Meet link opens as the given account",
+          cg.meet_join_link({"hangoutLink": link}, "dana@example.org")
+          == link + "?authuser=dana%40example.org")
+    check("a query string already in the link is kept",
+          cg.meet_join_link({"hangoutLink": link + "?hs=1"}, ME).startswith(link + "?hs=1&authuser="))
+    check("an event without a Meet gives no link", cg.meet_join_link({"summary": "x"}, ME) is None)
+    check("an API error gives no link", cg.meet_join_link({"_http_error": 400}, ME) is None)
+    check("no account to open it as gives no link", cg.meet_join_link({"hangoutLink": link}, "") is None)
+    check("nothing at all gives no link", cg.meet_join_link(None, ME) is None)
+
+
+def test_meeting():
+    start = cg.parse_ts("2030-01-07T11:00:00+01:00")
+    w = cg.meeting_windows(start, 90, 40)
+    check("the trip there ends when the meeting starts",
+          w[0][0] == "travel_to" and w[0][1] == start - dt.timedelta(minutes=40) and w[0][2] == start, w)
+    check("the main slot is the meeting itself",
+          w[1] == ("main", start, start + dt.timedelta(minutes=90)), w)
+    check("the trip back starts when it ends",
+          w[2][0] == "travel_back" and w[2][1] == start + dt.timedelta(minutes=90)
+          and w[2][2] == start + dt.timedelta(minutes=130), w)
+    check("without travel only the main slot is checked", [x[0] for x in cg.meeting_windows(start, 30)] == ["main"])
+
+    def cal(*events):
+        return fake([ev(n, s, e, n) for n, s, e in events], busy={"sam@example.org": []})[0]
+
+    me = {"home": ("me@example.com",), "work": ("me@example.org",)}
+    free = {"home": cal(), "work": cal()}
+    rep = cg.check_meeting(free, me, "home", start, 90, 40, tz=TZ, now=NOW)
+    check("everything free: no clashes and no alternatives",
+          rep["clashes"] == [] and rep["alternatives"] == [] and rep["host"] == "home", rep)
+
+    calls = {"home": cal(), "work": cal(("Standup", "2030-01-07T10:30:00+01:00", "2030-01-07T10:45:00+01:00"))}
+    rep = cg.check_meeting(calls, me, "home", start, 90, 40, tz=TZ, now=NOW)
+    check("a clash on the other calendar during the trip there is reported",
+          [(c["account"], c["slot"]) for c in rep["clashes"]] == [("work", "travel_to")], rep)
+    check("and names the event", rep["clashes"][0]["conflicts"][0]["summary"] == "Standup", rep)
+    check("a clash outside the host's main slot offers no alternatives", rep["alternatives"] == [], rep)
+
+    calls = {"home": cal(("Lunch", "2030-01-07T12:00:00+01:00", "2030-01-07T13:00:00+01:00")), "work": cal()}
+    rep = cg.check_meeting(calls, me, "work", start, 90, 40, tz=TZ, now=NOW)
+    slots = [(c["account"], c["slot"]) for c in rep["clashes"]]
+    check("a clash on the mirror calendar during the meeting is reported", ("home", "main") in slots, rep)
+    check("and so is the trip back that overlaps it", ("home", "travel_back") in slots, rep)
+
+    calls = {"home": cal(), "work": cal(("Sync", "2030-01-07T11:00:00+01:00", "2030-01-07T11:30:00+01:00"))}
+    rep = cg.check_meeting(calls, me, "work", start, 30, tz=TZ, now=NOW)
+    check("a clash on the host's main slot comes with alternatives", rep["alternatives"], rep)
+
+    seen = []
+
+    def spy(url, method="GET", body=None):
+        if url.endswith("/freeBusy"):
+            seen.append(tuple(i["id"] for i in body["items"]))
+            return {"calendars": {i["id"]: {"busy": []} for i in body["items"]}}
+        return {"items": []}
+
+    rep = cg.check_meeting({"home": spy, "work": spy}, me, "home", start, 30, 20,
+                           guests=("sam@example.org", "kim@example.net"), tz=TZ, now=NOW)
+    check("guests are looked up once, for the host's main slot", seen == [("sam@example.org", "kim@example.net")], seen)
+    try:
+        cg.check_meeting(free, me, "elsewhere", start, 30, tz=TZ, now=NOW)
+        check("a host that is not one of the accounts is refused", False)
+    except ValueError:
+        check("a host that is not one of the accounts is refused", True)
+    try:
+        cg.check_meeting(free, me, "home", start, 30, -5, tz=TZ, now=NOW)
+        check("negative travel is refused", False)
+    except ValueError:
+        check("negative travel is refused", True)
+
+
 def main():
-    for t in (test_target, test_create, test_attendees, test_move, test_slots_and_write_agree, test_helpers):
+    for t in (test_target, test_create, test_attendees, test_move, test_slots_and_write_agree, test_helpers,
+              test_join_link, test_meeting):
         print("\n== %s ==" % t.__name__)
         try:
             t()

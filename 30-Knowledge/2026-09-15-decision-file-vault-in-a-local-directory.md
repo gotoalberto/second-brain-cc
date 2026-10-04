@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-15
+updated: 2026-10-04
 supersedes: []
 ---
 
@@ -89,9 +89,15 @@ digest, kind and the note that cites it, reconciled with what is really on disk 
 
 `check` once reported folder prefixes cited in notes (`<slug>/material/`) as broken
 references. With several false positives on top, the report stopped being read, and two
-genuinely broken references were hidden among them. `check` ignores keys ending in `/` and
+real broken references were hidden among them. `check` ignores keys ending in `/` and
 documentation placeholders. A check with false positives is worse than no check, because it
-teaches you to ignore it.
+teaches you to ignore it. A key cited without its digest fragment is followed to the stored file the
+same way `get` follows it (when exactly one file matches), so it is reported neither as broken nor as
+an orphan, and keys with an ellipsis or a wildcard are read as layout examples.
+
+The task registry template (`90-Meta/scheduled-tasks.md`) carries a `files-check-weekly` row that runs
+`files.py check` on Monday mornings. It ships disabled: it reports and never deletes, and it belongs
+on the one machine that holds the files directory, so pin it there before enabling it.
 
 ## What not to do
 

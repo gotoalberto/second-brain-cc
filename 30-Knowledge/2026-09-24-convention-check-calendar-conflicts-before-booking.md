@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-27
+updated: 2026-10-04
 supersedes: []
 ---
 
@@ -45,6 +45,26 @@ nothing, prints the conflicts and free alternatives, and exits with status 3. Sh
 user and rerun with the chosen slot, or with `--force` once the user accepts the overlap.
 `google.py slots --account NAME --start ISO [--minutes N] [--with ADDRESS ...]` runs the same check
 without writing, for proposing times before anything is booked.
+
+## A meeting that also blocks another calendar
+
+When a meeting booked on one account also needs a private block on another of the user's calendars
+(a personal meeting mirrored on the work calendar, say), check it with `google.py meeting` first:
+
+```sh
+python3 _bin/google.py meeting --account personal --also work \
+  --start 2026-11-05T17:00 --minutes 60 [--travel 20] [--with dana@example.org]
+```
+
+It checks the one meeting on every account named and writes nothing: `--account` holds the meeting,
+each `--also` account gets the mirror block, and with `--travel` (minutes each way) the trips there
+and back are checked too. It prints one clash per account and slot plus alternatives on the host
+calendar, and exits 3 when anything clashes. Book only once it is clear, or once the user accepts the
+clash.
+
+When the saved event has a video meeting, `google.py api` adds a `join_link` to the reply: the same
+link opened as the account that owns the meeting. It goes only into the user's own private block on
+their other calendar, never into the guests' event or anywhere a guest can see it.
 
 ## Known gaps
 

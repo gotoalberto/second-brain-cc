@@ -22,11 +22,21 @@ OAuth flow and the REST calls are the standard library.
       Creating or moving a Calendar event is checked for conflicts first
       (google_core/calendar_guard.py): when the slot overlaps anything, nothing is written, the
       conflicts and free alternatives are printed and the exit status is 3. `--force` writes anyway,
-      once the user has chosen to accept the overlap
+      once the user has chosen to accept the overlap. When the saved event has a Meet, the reply
+      also carries `join_link`: the same Meet with authuser=<this account's login hint>, so it opens
+      as the account that owns the meeting. Put it in the user's own private block on their other
+      calendar, never anywhere a guest can see it
   google.py slots --account NAME --start ISO [--minutes N] [--with ADDRESS ...] [--calendar ID]
                   [--tz ZONE] [--hours 9-19]
       the same conflict check for a slot, writing nothing: conflicts, attendees whose calendar is
       not shared, and free alternatives; exit 3 when the slot is taken
+  google.py meeting --account HOST [--also ACCOUNT ...] --start ISO --minutes N [--travel MIN]
+                    [--with ADDRESS ...] [--tz ZONE] [--hours 9-19]
+      one meeting checked on every account named, writing nothing: HOST holds the meeting, each
+      --also account the private block that mirrors it. With --travel (minutes each way) the trips
+      there and back are checked too. Guests' free/busy is read for HOST's main slot. Prints one
+      clash per (account, slot) and HOST's alternatives; exit 3 when anything clashes. Run it before
+      booking a meeting that will also block another calendar
   google.py send --account NAME --to ADDRESS --subject S [--body-file FILE] [--html]
       one message from the account through the Gmail API (the gmail.send scope); the body comes from
       stdin or --body-file. Write it as plain text with a blank line between paragraphs and no hard
@@ -39,7 +49,7 @@ Scope sets for --scopes: gmail (read, compose, send, labels, trash), calendar, d
 
 Exit status: 0 done, 1 not done (a token or credential unavailable, an HTTP error, a message not
 delivered, a calendar the conflict check could not read), 2 asked wrongly (usage, an unknown
-account), 3 a calendar slot that is already taken (nothing written). token, api and send never prompt: they read
+account), 3 a calendar slot that is already taken (nothing written). token, api, send and meeting never prompt: they read
 KeePass headless (arm its cache with `kp.py unlock`), so they are safe in scheduled jobs. So does slots.
 
 KeePass entries per account: google/<account>/oauth-client (UserName = client id, Password = client
@@ -63,7 +73,7 @@ from google_core import application as A  # noqa: E402
 from google_core import domain as D  # noqa: E402
 from google_core.ports import HttpError  # noqa: E402
 
-HEADLESS = ("token", "api", "send", "slots")
+HEADLESS = ("token", "api", "send", "slots", "meeting")
 
 
 class _Parser(argparse.ArgumentParser):
@@ -76,7 +86,7 @@ class _Parser(argparse.ArgumentParser):
 def make_parser():
     ap = _Parser(prog="google.py", description="Google accounts for Brain: Gmail, Calendar and Drive",
                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    sub = ap.add_subparsers(dest="cmd", metavar="{accounts,add,auth,token,api,send,slots}", parser_class=_Parser)
+    sub = ap.add_subparsers(dest="cmd", metavar="{accounts,add,auth,token,api,send,slots,meeting}", parser_class=_Parser)
     sub.add_parser("accounts", help="the accounts connected on this machine")
     p = sub.add_parser("add", help="record an account and file its OAuth client (secret on stdin)")
     p.add_argument("--account", required=True)
@@ -113,6 +123,15 @@ def make_parser():
     p.add_argument("--tz", default="", help="IANA zone for the alternatives; default this machine's")
     p.add_argument("--hours", default="%d-%d" % (CG.WORK_START, CG.WORK_END),
                    help="window for the alternatives in --tz, e.g. 15-20 when someone is hours behind")
+    p = sub.add_parser("meeting", help="check one meeting on several accounts' calendars, travel included; writes nothing")
+    p.add_argument("--account", required=True, help="the account whose calendar holds the meeting")
+    p.add_argument("--also", nargs="*", default=[], help="accounts whose calendar gets the mirror block")
+    p.add_argument("--start", required=True)
+    p.add_argument("--minutes", type=int, required=True)
+    p.add_argument("--travel", type=int, default=0, help="minutes each way when the meeting is somewhere physical")
+    p.add_argument("--with", dest="people", nargs="*", default=[])
+    p.add_argument("--tz", default="", help="IANA zone for the report; default this machine's")
+    p.add_argument("--hours", default="%d-%d" % (CG.WORK_START, CG.WORK_END))
     return ap
 
 
@@ -166,6 +185,46 @@ def _slots(ports, args, stdout, environ) -> int:
     return CG.EXIT_CONFLICT if rep["conflicts"] else 0
 
 
+def _meeting(ports, args, stdout, environ) -> int:
+    try:
+        hours = CG.parse_hours(args.hours)
+    except ValueError as exc:
+        raise D.UsageError(str(exc))
+    if args.minutes <= 0:
+        raise D.UsageError("--minutes must be positive")
+    if args.travel < 0:
+        raise D.UsageError("--travel must be zero or more minutes")
+    tz = args.tz or CG.local_zone(environ)
+    try:
+        start = CG.parse_ts(args.start, tz)
+    except Exception:
+        raise D.UsageError("--start must be an ISO datetime, e.g. 2030-01-07T16:30:00+01:00")
+    names = [args.account] + [a for a in args.also if a != args.account]
+    names = list(dict.fromkeys(names))
+    me = {n: _me(ports, n) for n in names}          # an unknown account fails here, before any request
+    calls = {n: _caller(ports, n) for n in names}
+    try:
+        rep = CG.check_meeting(calls, me, args.account, start, args.minutes, args.travel, args.people, tz,
+                               hours=hours)
+    except CG.GuardError as exc:
+        raise D.GoogleError("could not read a calendar: %s" % exc)
+    stdout.write(json.dumps(rep, indent=2, ensure_ascii=False) + "\n")
+    return CG.EXIT_CONFLICT if rep["clashes"] else 0
+
+
+def _with_join_link(ports, account, method, url, result):
+    """A saved Calendar event's reply, plus `join_link` when it has a Meet (see CG.meet_join_link)."""
+    if method not in ("POST", "PATCH", "PUT") or "/calendar/v3/" not in (url or ""):
+        return result
+    if not isinstance(result, dict) or result.get("_http_error"):
+        return result
+    me = _me(ports, account)
+    link = CG.meet_join_link(result, me[0] if me else "")
+    if link:
+        result = dict(result, join_link=link)
+    return result
+
+
 def run(args, ports, stdin, stdout, environ) -> int:
     if args.cmd == "accounts":
         accounts = A.list_accounts(ports)
@@ -215,11 +274,15 @@ def run(args, ports, stdin, stdout, environ) -> int:
                 stdout.write(json.dumps(blocked, indent=2, ensure_ascii=False) + "\n")
                 return CG.EXIT_CONFLICT
         result = A.api(ports, args.account, args.method, args.url, body)
+        result = _with_join_link(ports, args.account, args.method, args.url, result)
         stdout.write(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
         return D.api_exit_code(result)
 
     if args.cmd == "slots":
         return _slots(ports, args, stdout, environ)
+
+    if args.cmd == "meeting":
+        return _meeting(ports, args, stdout, environ)
 
     if args.cmd == "send":
         account = A.get_account(ports, args.account)

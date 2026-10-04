@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-30
+updated: 2026-10-04
 supersedes: []
 ---
 
@@ -78,6 +78,33 @@ own check, and it never ships.
   `page.addStyleTag({ content })` (and new markup with `page.evaluate`), then screenshot or compare
   computed styles and `getBoundingClientRect()` before and after. Often faster than fighting a
   worktree's dependencies for a pure CSS change.
+
+## The desktop app's browser pane
+
+The built-in browser pane has failure modes of its own, all silent:
+
+- **Screenshots only paint at scroll offset 0.** `window.scrollTo()` returned a black frame, and
+  translating `body` upwards produced stale tiles. What works: resize to a very tall viewport (say
+  1280x4000) and shoot at scroll 0, or hide the sections above the target (`display: none`) and let the
+  page settle a couple of seconds.
+- **A pane that is not displayed renders nothing.** Screenshots come back as flat colour, and scroll or
+  hover time out; only text reads and JavaScript evaluation keep working, since they do not need paint.
+  Fall back to the headless route above instead of retrying.
+- **A hidden pane throttles CSS animations**, so a working animated diagram looks frozen. Before
+  judging its end state, finish every animation:
+  `document.getAnimations().forEach(a => a.finish())`.
+- **`element.click()` does not always fire React handlers.** Dispatch the full sequence instead,
+  `pointerdown`, `mousedown`, `pointerup`, `mouseup`, `click`, each with
+  `{bubbles: true, cancelable: true, composed: true}`. To fill a React-controlled input, use the
+  prototype's native setter, then dispatch `input` and `change`:
+  `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, "42")`.
+  A button that has just become enabled can still read `disabled` for a moment; check it right before
+  clicking and retry rather than concluding the action failed.
+
+Measurements (`getComputedStyle`, `getBoundingClientRect`, `elementFromPoint`) stay correct through all
+of this, but they complement a screenshot, they do not replace it
+([[2026-08-23-verify-frontend-findings-against-production]]). Starting the pane's server has its own traps
+([[2026-09-04-howto-preview-start-launch-json-primary-cwd]]).
 
 ## Links
 

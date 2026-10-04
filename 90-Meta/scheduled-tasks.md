@@ -8,7 +8,7 @@ status: active
 confidence: high
 source: agent
 provenance: shipped with the harness as a template; edit the table for your own tasks
-updated: 2026-09-21
+updated: 2026-10-04
 supersedes: []
 ---
 
@@ -33,6 +33,7 @@ once.
 | id | machine | time | days | type | command | enabled | notes |
 |----|---------|------|------|------|---------|---------|-------|
 | vault-doctor-weekly | * | 09:00 | 1 | shell | python3 _bin/doctor.py | no | Monday health check of the vault |
+| files-check-weekly | * | 09:10 | 1 | shell | python3 _bin/files.py check | no | Monday check of the local files store: notes citing a file that is gone, and stored files no note cites. Reports only, never deletes; a finding exits 1 and shows in the task log. Pin it to the machine that holds the files directory before enabling it |
 | example-digest-agent | * | 07:30 | * | agent | 90-Meta/routines/example-routine.md | no | Example routine: emails a digest of the day's notes. Enable after connecting a Google account and adding a routine token |
 
 ### Columns

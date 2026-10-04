@@ -65,3 +65,4 @@ change into the live page from a headless browser
 - [[2026-08-30-convention-impeccable-craft-floor-rules-for-web]]
 - [[2026-08-21-convention-worktree-isolation-per-deliverable]]
 - [[2026-09-30-howto-browser-verification-when-the-agent-tab-is-hidden]]
+- [[2026-09-01-howto-css-source-order-and-override-traps]]

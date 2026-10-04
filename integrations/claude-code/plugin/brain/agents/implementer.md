@@ -32,7 +32,15 @@ for the user: no headline that announces a finding (count and reveal, "X, not Y"
 triads, "the real X", "in silence"). A decision note may state its decision in the title,
 plainly. `~/Brain/30-Knowledge/2026-09-10-convention-write-like-a-person.md`.
 
-**Shared notes are not written directly.** `10-Projects/` and `70-Entities/` go through
-`python3 ~/Brain/_bin/vw.py` (`new`, `append`, `set`): it locks the file, redacts
-credentials and writes atomically. `gate_write.py` denies `Write`/`Edit` there, and shell
-writes too.
+## Writing shared vault notes
+
+**Never write `10-Projects/` or `70-Entities/` with Write, Edit or a shell redirect.** Those
+notes are shared between concurrent sessions; go through
+
+```
+python3 ~/Brain/_bin/vw.py append 10-Projects/<note>.md
+```
+
+(`new`, `append`, `set`), which locks the file, redacts credentials and writes atomically.
+`gate_write.py` denies a direct write, and a redirect that slips past it leaves the note
+unlocked and unredacted. The rest of the vault is written normally.
