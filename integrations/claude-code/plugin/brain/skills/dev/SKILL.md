@@ -258,6 +258,8 @@ worst-case data, feature states). If the web has no fake mode, or a state cannot
 building it is part of the task. List the routes from the router and look at all of them, in every
 state, at every width; a production URL or a deployed preview never replaces this:
 `~/Brain/30-Knowledge/2026-10-03-convention-web-runs-locally-with-fake-data-every-page-reviewed.md`.
+How to build the fake mode (ports, composition root, locks, scenarios, fake auth, route sweep,
+tests): `~/Brain/30-Knowledge/2026-10-05-howto-architecture-for-a-local-fake-data-mode-in-web-apps.md`.
 
 - Whether this machine has a browser:
   `~/Brain/30-Knowledge/2026-09-21-reference-where-claude-in-chrome-is-available.md`. Every
