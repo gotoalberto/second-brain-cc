@@ -66,6 +66,11 @@ const adapters = process.env.NEXT_PUBLIC_FAKE === "on" && process.env.NODE_ENV !
 
 with a test asserting that `realAdapters` is what a production build composes.
 
+## How to build it
+
+Architecture guide (ports, composition root, the two locks, fake world, scenarios, fake auth,
+route sweep, tests): [[2026-10-05-howto-architecture-for-a-local-fake-data-mode-in-web-apps]].
+
 ## Where it applies
 
 The `dev` skill's design gates carry this rule. The worst-case pass of `break-ui` reuses the same fake
