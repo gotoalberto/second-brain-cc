@@ -19,6 +19,12 @@ class TokenUnavailable(Exception):
         self.kind = kind
 
 
+class Machine(Protocol):
+    def name(self) -> str: ...                        # this machine, for a message
+    def matches(self, name: str) -> bool: ...         # does one name in a pool entry's `machines` list name it?
+                                                      # the registry's rule for its `machine` column
+
+
 class PoolSource(Protocol):
     def entries(self) -> list: ...                   # [domain.PoolEntry]; raises domain.PoolConfigError
 

@@ -3,13 +3,18 @@
 
   vw.py append <rel-path>            (content on stdin)
   vw.py new    <rel-path> --title T [--type decision] [--project p] [--area a] [--tag t]
+  vw.py set    <rel-path> --section H | --match TEXT   (content on stdin)
+
+The body is read only from a pipe, a heredoc or `< file`. Any other stdin (a terminal, a
+socket that never closes, /dev/null) is no body: `new` writes the note without one, and
+`append` and `set` exit 2 at once instead of waiting.
 
 It does three things Write/Edit do not:
   1. redacts credentials before writing,
   2. serialises with a per-file lock (several sessions at once),
   3. writes atomically (os.replace), so it does not fight Obsidian's buffer.
 """
-import os, sys, time, argparse
+import os, stat, sys, time, argparse
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import brainlib as B
 
@@ -67,9 +72,33 @@ def _lease_redirect(path, sid):
     return alt, owner
 
 
+def read_body(required):
+    """Body from stdin, without hanging when nothing is ever going to arrive.
+
+    Claude Code's Bash tool hands the process a unix socket on fd 0 that never reaches EOF, so
+    a plain sys.stdin.read() blocks for ever, and killing it mid-write leaves a stub note
+    behind. Only a regular file or a pipe can carry a body, so anything else (a socket, a
+    terminal, /dev/null) is treated as no body at all: `new` goes on without one and
+    `append`/`set` fail fast instead of waiting.
+    """
+    mode = None
+    try:
+        if sys.stdin is not None and not sys.stdin.closed and not sys.stdin.isatty():
+            mode = os.fstat(sys.stdin.fileno()).st_mode
+    except (OSError, ValueError):
+        mode = None
+    if mode is not None and (stat.S_ISREG(mode) or stat.S_ISFIFO(mode)):
+        return sys.stdin.read()
+    if required:
+        sys.stderr.write("vw: nothing on stdin. Pass the body with a heredoc, "
+                         "a pipe or '< file'.\n")
+        sys.exit(2)
+    return ""
+
+
 def cmd_append(args):
     path = resolve(args.path)
-    content = sys.stdin.read()
+    content = read_body(required=True)
     content, redacted = B.scrub_secrets(content)
     if redacted:
         sys.stderr.write("vw: " + B.redaction_notice(redacted))
@@ -124,7 +153,7 @@ def cmd_append(args):
 
 def cmd_new(args):
     path = resolve(args.path)
-    body = sys.stdin.read() if not sys.stdin.isatty() else ""
+    body = read_body(required=False)
     body, redacted = B.scrub_secrets(body)
     if redacted:
         sys.stderr.write("vw: " + B.redaction_notice(redacted))
@@ -147,7 +176,7 @@ def cmd_set(args):
     while the log below it said the opposite.
     """
     path = resolve(args.path)
-    new_one = sys.stdin.read()
+    new_one = read_body(required=True)
     new_one, redacted = B.scrub_secrets(new_one)
     if redacted:
         sys.stderr.write("vw: " + B.redaction_notice(redacted))

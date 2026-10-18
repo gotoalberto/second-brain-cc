@@ -202,10 +202,23 @@ def test_machine_is_mine_override():
           M.machine_is_mine("alias-x", environ=dict(env, BRAIN_MACHINE_ALIASES="alias-x"), run=boom, open_=boom))
 
 
+def test_public_id():
+    check("the public id is the key's 8-hex fragment, without the hostname",
+          M.public_id(environ={"BRAIN_MACHINE_KEY": "laptop-a1b2c3d4"}) == "a1b2c3d4")
+    check("an uppercase fragment is lowered", M.public_id("laptop-A1B2C3D4") == "a1b2c3d4")
+    no_uuid = M.public_id("laptop-a")
+    check("a key with no fragment gets a stable 8-hex id that is not the hostname",
+          len(no_uuid) == 8 and set(no_uuid) <= set("0123456789abcdef") and "laptop" not in no_uuid
+          and no_uuid == M.public_id("laptop-a"), no_uuid)
+    check("two hostnames with no fragment get different ids", M.public_id("laptop-a") != M.public_id("laptop-b"))
+    check("this machine's id is read through current_key",
+          M.public_id(environ={"BRAIN_MACHINE_KEY": "studio-0f0f0f0f"}) == "0f0f0f0f")
+
+
 def main():
     for t in (test_sanitize_hostname, test_machine_key, test_parse_ioreg_uuid, test_parse_machine_id,
               test_parse_product_uuid, test_current_key_override, test_read_uuid, test_machine_label, test_id8,
-              test_historical_keys, test_machine_is_mine, test_machine_is_mine_override):
+              test_historical_keys, test_machine_is_mine, test_machine_is_mine_override, test_public_id):
         print("\n== %s ==" % t.__name__)
         try:
             t()

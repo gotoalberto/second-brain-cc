@@ -39,15 +39,17 @@ DEFAULT_CONFIG = {"enabled": False, "adapter": "gmail-api", "account": "", "from
                   "smtp": {}}
 
 
-def _message(sender, to, subject, body, html=False):
+def _message(sender, to, subject, body, html=False, attachments=None, headers=None):
     """A bare text/plain part is re-wrapped by the reading client at its own fixed width, which
     turns a paragraph into a narrow column, so every message carries an HTML part
-    (mail_body.build_message). With html=True the body already is markup and goes through as is."""
+    (mail_body.build_message). With html=True the body already is markup and goes through as is;
+    with html a string, that string is the markup and `body` its plain part."""
     if BIN not in sys.path:
         sys.path.insert(0, BIN)
     from mail_body import build_message
 
-    return build_message(to, subject, body, sender=sender, html=body if html else None)
+    markup = body if html is True else (html or None)
+    return build_message(to, subject, body, sender=sender, html=markup, attachments=attachments, headers=headers)
 
 
 class GmailApiMailer:
@@ -55,14 +57,20 @@ class GmailApiMailer:
         self.sender, self.token_provider = sender, token_provider
         self.urlopen, self.timeout = urlopen, timeout
 
-    def send(self, to: str, subject: str, body: str, html: bool = False) -> None:
+    def send(self, to: str, subject: str, body: str, html=False, attachments=None, thread_id=None,
+             headers=None) -> None:
+        """`attachments` (filename, bytes) pairs; `thread_id` and `headers` (In-Reply-To,
+        References) keep a reply in its Gmail conversation."""
         try:
             token = self.token_provider()
         except Exception as exc:
             raise MailUnavailable("no Gmail token: %s" % exc)
-        raw = base64.urlsafe_b64encode(_message(self.sender, to, subject, body, html).as_bytes()).decode("ascii")
+        msg = _message(self.sender, to, subject, body, html, attachments=attachments, headers=headers)
+        payload = {"raw": base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")}
+        if thread_id:
+            payload["threadId"] = thread_id
         req = urllib.request.Request(
-            GMAIL_SEND_URL, data=json.dumps({"raw": raw}).encode("utf-8"), method="POST",
+            GMAIL_SEND_URL, data=json.dumps(payload).encode("utf-8"), method="POST",
             headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
         try:
             resp = self.urlopen(req, timeout=self.timeout)

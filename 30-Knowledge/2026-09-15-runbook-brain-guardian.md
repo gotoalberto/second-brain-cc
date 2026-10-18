@@ -9,7 +9,7 @@ status: active
 confidence: medium
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-22
+updated: 2026-10-12
 supersedes: []
 ---
 
@@ -27,7 +27,7 @@ Commands below are the shape of the tool; `guardian.py --help` is authoritative.
 |---|---|---|
 | agents | an installed agent's wiring differs from the vault's (a hook missing, broken, duplicated, under the wrong matcher, or pointing at a vault script that no longer exists; a skill or agent to install or back-port) | wiring yes; a missing canonical script or an unparseable config no |
 | scheduler | a job from the vault's templates not installed, not loaded, drifted from its template, or whose last run failed | install, load, reinstall |
-| interpreter | the python3 the hooks run on does not start | no |
+| interpreter | the python3 the hooks run on does not start. A timeout is retried once with a longer one before it counts: a Mac just woken from sleep can start the interpreter slowly once | no |
 | vault | commits unpushed for hours, no upstream, index not rewritten for a day | no |
 | githooks | the vault's `core.hooksPath` is not `githooks`, or a hook file is missing or not executable | the key and execute bits yes |
 | token pool | an agent routine's token refused, malformed, resting after a limit, near expiry or expired | no |
@@ -92,8 +92,9 @@ model in the loop.
   duration), in a `finally`, so a failing hook still leaves its line. Only a run that received a hook
   payload writes one; a person at a terminal or a program importing the script writes nothing.
 - **Sessions.** Each Claude Code session writes a transcript under `~/.claude/projects/`. The guardian
-  matches recent transcripts with heartbeats. Sessions under temporary directories and the probe's own
-  session are ignored. A session whose transcript records a `hook_cancelled` attachment for
+  matches recent transcripts with heartbeats. Sessions under temporary directories, the probe's own
+  session and empty transcripts (size 0: a session opened and never used, so no hook had anything to
+  fire on) are ignored. A session whose transcript records a `hook_cancelled` attachment for
   SessionStart is not held to the session-start heartbeat: an unattended SDK run can have Claude Code
   cancel SessionStart as the queued prompt starts, which kills the hook before it writes its line.
   [[2026-09-17-analysis-cancelled-session-start-hooks-in-unattended-runs]]

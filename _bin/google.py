@@ -37,11 +37,19 @@ OAuth flow and the REST calls are the standard library.
       there and back are checked too. Guests' free/busy is read for HOST's main slot. Prints one
       clash per (account, slot) and HOST's alternatives; exit 3 when anything clashes. Run it before
       booking a meeting that will also block another calendar
-  google.py send --account NAME --to ADDRESS --subject S [--body-file FILE] [--html]
+  google.py send --account NAME --to ADDRESS --subject S [--body-file FILE] [--html] [--attach FILE ...]
+  google.py send --account NAME --reply-to MESSAGE_ID [--to ADDRESS] [--body-file FILE] [--html] [--attach FILE ...]
       one message from the account through the Gmail API (the gmail.send scope); the body comes from
       stdin or --body-file. Write it as plain text with a blank line between paragraphs and no hard
       wrapping: it goes out as HTML paragraphs with the text as the fallback part (mail_body.py);
-      --html means the body already is markup and is sent as is. Every delivered message appends one JSON line (time, account, to, subject,
+      --html means the body already is markup and is sent as is. --attach (repeatable) adds a file,
+      its type taken from its name. --reply-to answers a Gmail message (its id, as `api` lists it) as a
+      real reply: the same thread, In-Reply-To and References, the subject "Re: <original>" (another
+      --subject is refused), the original quoted in Gmail's gmail_quote block under an attribution
+      line in this machine's time zone. --to defaults to the other party: the recipient of an own
+      message, the Reply-To or sender of anyone else's. The body is only the new text. Answer or
+      follow up a message this way, never with a new send and pasted "> " lines: that lands as a
+      separate conversation. Every delivered message appends one JSON line (time, account, to, subject,
       Gmail message id, BRAIN_ROUTINE_RUN_ID when set; never the body) to BRAIN_MAIL_SENT_LOG, else
       <brain state>/logs/mail-sent.jsonl: the routine runner checks a routine's delivery there
 
@@ -51,6 +59,10 @@ Exit status: 0 done, 1 not done (a token or credential unavailable, an HTTP erro
 delivered, a calendar the conflict check could not read), 2 asked wrongly (usage, an unknown
 account), 3 a calendar slot that is already taken (nothing written). token, api, send and meeting never prompt: they read
 KeePass headless (arm its cache with `kp.py unlock`), so they are safe in scheduled jobs. So does slots.
+
+When Google refuses an account's token (revoked, expired, a rotated client secret, a scope taken
+away), token_alert.py mails the guardian's address once a day through another channel, never through
+the refused account; a network blip never alerts.
 
 KeePass entries per account: google/<account>/oauth-client (UserName = client id, Password = client
 secret) and google/<account>/refresh-token. Creating the OAuth client (a Google Cloud project with a
@@ -108,12 +120,14 @@ def make_parser():
     p.add_argument("--method", default="GET", choices=["GET", "POST", "PUT", "PATCH", "DELETE"])
     p.add_argument("--body-file")
     p.add_argument("--force", action="store_true", help="write a calendar event even over a conflict")
-    p = sub.add_parser("send", help="send one message through the Gmail API")
+    p = sub.add_parser("send", help="send one message, or a reply in its thread, through the Gmail API")
     p.add_argument("--account", required=True)
-    p.add_argument("--to", required=True)
-    p.add_argument("--subject", required=True)
+    p.add_argument("--to", help="one address; with --reply-to it defaults to the other party")
+    p.add_argument("--subject", help="one line; a reply keeps the original's")
     p.add_argument("--body-file")
     p.add_argument("--html", action="store_true")
+    p.add_argument("--attach", action="append", default=[], metavar="FILE", help="attach a file (repeatable)")
+    p.add_argument("--reply-to", metavar="MESSAGE_ID", help="reply to this Gmail message, in its thread")
     p = sub.add_parser("slots", help="check a calendar slot for conflicts and propose free ones; writes nothing")
     p.add_argument("--account", required=True)
     p.add_argument("--start", required=True, help="ISO datetime, e.g. 2030-01-07T16:30:00+01:00")
@@ -285,6 +299,17 @@ def run(args, ports, stdin, stdout, environ) -> int:
         return _meeting(ports, args, stdout, environ)
 
     if args.cmd == "send":
+        if not args.reply_to and not args.to:
+            raise D.UsageError("--to is required (or --reply-to, which answers the other party)")
+        if not args.reply_to and not args.subject:
+            raise D.UsageError("--subject is required (a reply with --reply-to keeps the original's)")
+        attachments = []
+        for path in args.attach:
+            try:
+                with open(path, "rb") as fh:
+                    attachments.append((os.path.basename(path), fh.read()))
+            except OSError as exc:
+                raise D.UsageError("cannot read the attachment %s (%s)" % (path, type(exc).__name__))
         account = A.get_account(ports, args.account)
         if args.body_file:
             try:
@@ -297,8 +322,12 @@ def run(args, ports, stdin, stdout, environ) -> int:
         sender = account.login_hint or "me"
         mailer = AD.GmailSender(sender, lambda: A.access_token(ports, args.account, D.GMAIL_SEND_SCOPE))
         run_id = (environ.get("BRAIN_ROUTINE_RUN_ID") or "").strip() or None
-        record = A.send(ports, mailer, args.account, args.to, args.subject, body, html=args.html, run_id=run_id)
-        stdout.write("sent to %s: %s\n" % (args.to, args.subject))
+        if args.reply_to and not (body or "").strip():
+            raise D.UsageError("empty body: pass it on stdin or with --body-file")
+        reply = A.reply_context(ports, args.account, args.reply_to, tz=CG.local_zone(environ)) if args.reply_to else None
+        record = A.send(ports, mailer, args.account, args.to, args.subject, body, html=args.html, run_id=run_id,
+                        attachments=attachments, reply=reply)
+        stdout.write("sent to %s: %s\n" % (record.get("to") or args.to, record.get("subject") or args.subject))
         if record.get("log_error"):
             sys.stderr.write("google.py send: delivered, but the send log could not be written (%s)\n"
                              % _one_line(record["log_error"]))

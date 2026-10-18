@@ -422,12 +422,14 @@ class GitHooksControl:
 class TokenPoolProbe:
     """The agent routines' token pool: 90-Meta/routine-tokens.json plus the state file
     routine_auth_core writes after every attempt. Reads both, writes neither, never reads
-    KeePass. The pool rules (parsing, expiry, the renewal commands) are routine_auth_core's;
-    this is where the two hexagons meet.
+    KeePass. The pool rules (parsing, expiry, the renewal commands, which tokens are this
+    machine's) are routine_auth_core's; this is where the two hexagons meet. With `machine`
+    (routine_auth_core.adapters.ThisMachine) only the tokens assigned to this machine, or to no
+    machine in particular, are listed, the others named in `elsewhere`; without it, every token.
     """
 
-    def __init__(self, pool_path, state_path):
-        self.pool_path, self.state_path = pool_path, state_path
+    def __init__(self, pool_path, state_path, machine=None):
+        self.pool_path, self.state_path, self.machine = pool_path, state_path, machine
 
     def pool(self):
         from routine_auth_core import domain as RA
@@ -441,6 +443,7 @@ class TokenPoolProbe:
             return D.TokenPool([], "unreadable: %s" % type(exc).__name__)
         except RA.PoolConfigError as exc:
             return D.TokenPool([], str(exc))
+        entries, elsewhere = RA.split_by_machine(entries, self.machine.matches if self.machine is not None else None)
         state = read_json(self.state_path, {})
         tokens = []
         for e in entries:
@@ -450,7 +453,7 @@ class TokenPoolProbe:
                 until=s.get("until"), last_kind=s.get("last_kind"), last_at=s.get("last_at"),
                 detail=s.get("detail") or "", expires=RA.expires_on(e.issued).isoformat(),
                 renew=RA.renew_command(e.kp_ref), restore=RA.restore_command(e.kp_ref)))
-        return D.TokenPool(tokens)
+        return D.TokenPool(tokens, None, [e.label for e in elsewhere])
 
 
 class DesktopScheduledTasksProbe:
@@ -493,9 +496,10 @@ class InterpreterHealthProbe:
     DEFAULT_FALLBACKS = ("/usr/bin/python3", "/opt/homebrew/bin/python3", "/usr/local/bin/python3")
 
     def __init__(self, hook_python="/usr/bin/python3", fallbacks=DEFAULT_FALLBACKS, clt=CLT,
-                 run=subprocess.run, timeout=10):
+                 run=subprocess.run, timeout=10, retry_timeout=60):
         self.hook_python, self.fallbacks = hook_python, list(fallbacks)
         self.clt, self.run, self.timeout = clt, run, timeout
+        self.retry_timeout = retry_timeout
 
     def _probe(self, path, extra_env=None):
         if not os.path.exists(path):
@@ -503,13 +507,21 @@ class InterpreterHealthProbe:
         env = dict(os.environ)
         env.pop("DEVELOPER_DIR", None)       # hooks and launchd do not carry the caller's
         env.update(extra_env or {})
-        try:
-            p = self.run([path, "-c", "import sqlite3"], env=env, capture_output=True, text=True,
-                         timeout=self.timeout, stdin=subprocess.DEVNULL)
-        except subprocess.TimeoutExpired:
-            return False, "timed out"
-        except OSError as exc:
-            return False, "%s: %s" % (type(exc).__name__, exc)
+        # A machine that has just woken can take longer than `timeout` to start an interpreter
+        # once (on macOS, the xcrun stub): one slow start is not a broken interpreter, so a
+        # timeout gets one longer retry before it counts.
+        p = None
+        for limit in (self.timeout, self.retry_timeout):
+            try:
+                p = self.run([path, "-c", "import sqlite3"], env=env, capture_output=True,
+                             text=True, timeout=limit, stdin=subprocess.DEVNULL)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+            except OSError as exc:
+                return False, "%s: %s" % (type(exc).__name__, exc)
+        if p is None:
+            return False, "timed out twice (%ss, then %ss)" % (self.timeout, self.retry_timeout)
         if p.returncode == 0:
             return True, "ok"
         last = (p.stderr or "").strip().splitlines()
@@ -703,6 +715,10 @@ class HookLivenessSource:
                 except OSError:
                     continue
                 if not stat.S_ISREG(st.st_mode) or st.st_mtime < since:
+                    continue
+                if st.st_size == 0:
+                    # Opened and never used (a remote session, the desktop app): no turn, so no
+                    # hook was due.
                     continue
                 # Linux has no st_birthtime, so a long session touched now (Claude Code appends
                 # metadata when its process exits, with no turn and no hook) would look born now

@@ -32,14 +32,27 @@ def check(name, cond, detail=""):
 
 
 class FakePool:
-    def __init__(self, labels=("a",), error=None):
-        self.labels, self.error = list(labels), error
+    def __init__(self, labels=("a",), error=None, machines=None):
+        self.labels, self.error, self.machines = list(labels), error, dict(machines or {})
 
     def entries(self):
         if self.error:
             raise self.error
         return [D.PoolEntry(l, "kp://Brain/apis/claude-code-oauth-routines-%s" % l, dt.date(2026, 9, 15),
-                            account="routines") for l in self.labels]
+                            account="routines", machines=tuple(self.machines.get(l, ()))) for l in self.labels]
+
+
+class FakeMachine:
+    """This machine, in place of the hostname and machine_identity: answers to its names, any case."""
+
+    def __init__(self, names=("box", "box-1a2b3c4d")):
+        self.names = list(names)
+
+    def name(self):
+        return self.names[0]
+
+    def matches(self, cell):
+        return cell.strip().casefold() in {n.casefold() for n in self.names}
 
 
 class FakeTokens:
@@ -166,14 +179,14 @@ class FakeAlerts:
 
 
 def ports(labels=("a",), outcomes=(), tokens=None, state=None, cli=None, pool_error=None, clock=None,
-          cost_s=10.0, base_env=None, scratch=None, sends=None, run_env=None):
+          cost_s=10.0, base_env=None, scratch=None, sends=None, run_env=None, machines=None, machine=None):
     clock = clock or FakeClock()
-    return A.Ports(pool=FakePool(labels, pool_error), tokens=tokens or FakeTokens(), state=FakeState(state),
+    return A.Ports(pool=FakePool(labels, pool_error, machines), tokens=tokens or FakeTokens(), state=FakeState(state),
                    clock=clock, cli=cli or FakeCli(), runner=FakeRunner(outcomes, clock, cost_s),
                    raw_log=FakeRawLog(), alerts=FakeAlerts(),
                    base_env=dict(base_env if base_env is not None else BASE_ENV), kp_timeout=20,
                    scratch=scratch or FakeScratch(), run_ids=FakeRunIds(), sends=sends or FakeSends(),
-                   run_env=dict(run_env or {}))
+                   run_env=dict(run_env or {}), machine=machine)
 
 
 BASE_ENV = {"HOME": "/h", "PATH": "/usr/bin:/bin", "USER": "someone", "LANG": "en_US.UTF-8",
@@ -553,6 +566,53 @@ def test_browser():
           and "--chrome" not in p.runner.calls[0]["args"] and "browser:" not in p.runner.calls[0]["prompt"])
 
 
+def test_machines():
+    print("\n== tokens assigned to machines ==")
+    p = ports(labels=("a", "b"), outcomes=["ok_json"], machines={"a": ("studio-box",), "b": ("BOX",)},
+              machine=FakeMachine())
+    res = A.run_routine(p, routine(), budget_s=1800)
+    check("a token assigned to another machine is skipped, the first one for this machine runs",
+          res.rc == 0 and res.label == "b" and [r[0] for r in p.tokens.reads] == ["kp://Brain/apis/claude-code-oauth-routines-b"],
+          (res, p.tokens.reads))
+
+    p = ports(labels=("a", "b"), outcomes=["auth_invalid_text", "ok_json"], machines={"b": ("box",)}, machine=FakeMachine())
+    res = A.run_routine(p, routine(), budget_s=1800)
+    check("an unassigned token is usable on every machine and failover keeps pool order",
+          res.rc == 0 and [x.label for x in res.attempts] == ["a", "b"], res.attempts)
+
+    p = ports(labels=("a", "b"), outcomes=["auth_invalid_text", "ok_json"], machines={"b": ("studio-box",)},
+              machine=FakeMachine())
+    res = A.run_routine(p, routine(), budget_s=1800)
+    check("failover never reaches a token assigned to another machine",
+          [x.label for x in res.attempts] == ["a"] and len(p.runner.calls) == 1, res.attempts)
+
+    p = ports(labels=("a",), outcomes=["ok_json"], machines={"a": ("studio-box", "0f0f0f0f")}, machine=FakeMachine())
+    res = A.run_routine(p, routine(), budget_s=1800)
+    alert = p.alerts.raised.get(A.ALERT_CONFIG, ("", ""))
+    check("with no token for this machine the run is a config failure and nothing is read or run",
+          res.kind == D.CONFIG and res.rc == D.EXIT_CODES[D.CONFIG] and p.tokens.reads == []
+          and p.runner.calls == [], res)
+    check("the alert names this machine, the machines field and the runbook",
+          alert[0] == "fail" and "box" in alert[1] and "machines" in alert[1]
+          and "2026-09-15-runbook-brain-routine-auth" in alert[1] and res.summary == alert[1], alert)
+
+    p = ports(labels=("a",), outcomes=["ok_json"], machines={"a": ("studio-box",)})
+    res = A.run_routine(p, routine(), budget_s=1800)
+    check("without a machine port every token is usable, as before", res.rc == 0 and res.label == "a", res)
+
+    p = ports(labels=("a",), outcomes=["ok_json"], machines={"a": ("studio-box",)}, machine=FakeMachine())
+    res = A.run_routine(p, routine(BROWSER_ARGS), budget_s=1800)
+    check("a browser routine still runs on the CLI login when no pool token is assigned to this machine",
+          res.rc == 0 and res.label == D.CLI_LOGIN_LABEL and A.ALERT_CONFIG not in p.alerts.raised, res)
+
+    p = ports(labels=("a",), outcomes=["auth_not_logged_in"], machines={"a": ("studio-box",)}, machine=FakeMachine())
+    res = A.run_routine(p, routine(BROWSER_ARGS), budget_s=1800)
+    check("and when that CLI login is refused, the missing pool token is the config failure, the attempt reported",
+          res.kind == D.CONFIG and len(p.runner.calls) == 1 and p.tokens.reads == []
+          and [x.label for x in res.attempts] == [D.CLI_LOGIN_LABEL]
+          and A.ALERT_CONFIG in p.alerts.raised and A.ALERT_CLI_LOGIN in p.alerts.raised, res)
+
+
 def main():
     global A, D, FIXTURES
     try:
@@ -563,7 +623,7 @@ def main():
         check("routine_auth_core.application imports", False, "%s: %s" % (type(exc).__name__, exc))
     else:
         for t in (test_success, test_failover, test_malformed, test_stops, test_budget_and_args, test_contract,
-                  test_permissions, test_framing_and_scratch, test_delivery, test_browser):
+                  test_permissions, test_framing_and_scratch, test_delivery, test_browser, test_machines):
             try:
                 t()
             except Exception as exc:

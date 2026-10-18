@@ -91,6 +91,13 @@ def log(message: str) -> None:
 # ---------------------------------------------------------------- wiring
 
 
+def this_machine():
+    """This machine for the routine token pool's `machines` lists, matched like tasks.py's registry."""
+    from routine_auth_core import adapters as RAD
+
+    return RAD.ThisMachine()
+
+
 def build_ports(args) -> application.Ports:
     vault = vault_dir()
     state = brain_paths.state_dir()
@@ -130,7 +137,8 @@ def build_ports(args) -> application.Ports:
         mail_to=cfg.get("to") or "",
         git_hooks=adapters.GitHooksControl(vault),
         token_pool=adapters.TokenPoolProbe(os.path.join(vault, "90-Meta", "routine-tokens.json"),
-                                           os.path.join(state, "routine-auth-state.json")),
+                                           os.path.join(state, "routine-auth-state.json"),
+                                           machine=this_machine()),
         desktop_tasks=adapters.DesktopScheduledTasksProbe(
             os.path.join(HOME, "Library", "Application Support", "Claude", "claude-code-sessions")),
         hook_liveness=liveness,

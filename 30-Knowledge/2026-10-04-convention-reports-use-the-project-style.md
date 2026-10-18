@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: user
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-10-04
+updated: 2026-10-07
 supersedes: []
 ---
 
@@ -24,6 +24,13 @@ looking like the project it was about.
 - For a project with no defined style yet, read whatever CSS exists; ask only if there is none.
 - Without any project, the user's house style applies
   ([[2026-08-25-convention-pitches-as-web-artifacts-with-infographics]]).
+
+## Generated art (optional)
+
+A report may carry one generated illustration (a cover or a section opener), made with the
+`chatgpt-image` skill in the project's palette, with no text, figures or logos in it. Charts, key
+figure tiles and every number stay in HTML. The default is no art
+([[2026-10-07-convention-image-generation-through-chatgpt-image]]).
 
 ## Record the style once, as a reference
 

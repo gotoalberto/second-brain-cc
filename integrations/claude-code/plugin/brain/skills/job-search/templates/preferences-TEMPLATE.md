@@ -49,6 +49,14 @@ languages are handled under Languages above.
 
 - <exclusion>
 
+## Excluded sectors
+
+Sectors you do not want to work in. A posting at an employer in one of them fails, and so does a role
+of that kind at any other employer; an agency recruiting for an employer outside them passes. Leave
+"none" to exclude nothing.
+
+- <sector, e.g. gambling, or "none">
+
 ## Flags
 
 Things that should be highlighted for you but not excluded.
@@ -58,6 +66,14 @@ Things that should be highlighted for you but not excluded.
 ## CV
 
 - CV file used only to judge fit (optional): <path to a file on this machine, or "none">
+
+## Job search framework (optional)
+
+A local checkout of a third-party job search project you run alongside the skill. When it is set, the
+skill checks its upstream for new commits before starting.
+
+- Checkout: <path, or "none">
+- Upstream remote and branch: <e.g. upstream/main>
 
 ## Report
 

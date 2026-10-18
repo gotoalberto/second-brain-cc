@@ -8,7 +8,8 @@ says) are domain.py; this only sequences them:
   2. a routine that allows Claude in Chrome runs first on the CLI's own login with --chrome (a pool
      token never gets the browser); only when that login is missing or rejected does it go on to
      the pool, without the browser, raising `routine-auth:cli-login`
-  3. the pool config, and old scratch directories pruned
+  3. the pool config, then only the tokens assigned to this machine (or to no machine in particular):
+     with none left the run stops as a config failure naming this machine; old scratch directories pruned
   4. per attempt: read the token from KeePass, check its shape, give the attempt a run id and
      a private scratch directory, frame the prompt, run the CLI with an environment built from
      scratch, classify the outcome, check the success contract (the send log included), record
@@ -53,6 +54,7 @@ class Ports:
     run_ids: object = None    # ports.RunIds; None: a run id from the routine, the time and the attempt number
     sends: object = None      # ports.SendLog; None: a contract requiring sends can only fail
     run_env: dict = field(default_factory=dict)   # exported to every attempt (the send log path)
+    machine: object = None       # ports.Machine; None: every pool token is usable here
 
 
 @dataclass(frozen=True)
@@ -192,6 +194,15 @@ def run_routine(ports, routine: Routine, budget_s: int) -> RunResult:
         summary = D.failure_summary(D.CONFIG, str(exc), None)
         _safe(alerts.raise_alert, ALERT_CONFIG, summary)
         return RunResult(D.EXIT_CODES[D.CONFIG], stderr=str(exc), kind=D.CONFIG, summary=summary)
+    if ports.machine is not None:
+        # A token may be assigned to some machines only (the account it belongs to is that machine's
+        # to spend); the others are skipped. The CLI-login attempt above never needed one.
+        entries, elsewhere = D.split_by_machine(entries, ports.machine.matches)
+        if not entries:
+            summary = D.no_token_here_summary(_safe(ports.machine.name) or "", elsewhere)
+            _safe(alerts.raise_alert, ALERT_CONFIG, summary)
+            return RunResult(D.EXIT_CODES[D.CONFIG], stderr=summary, kind=D.CONFIG, summary=summary,
+                             attempts=list(prior), run_id=prior[-1].run_id if prior else None)
     _safe(alerts.clear_alert, ALERT_CONFIG)
 
     by_label = {e.label: e for e in entries}

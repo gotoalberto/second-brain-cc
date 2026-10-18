@@ -431,6 +431,25 @@ def test_interpreter_probe():
     check("the hooks' interpreter is judged without the caller's DEVELOPER_DIR (hooks do not have it)",
           st[0].ok is False, st)
 
+    calls = []
+
+    def slow_once(cmd, timeout=None, **kw):
+        calls.append(timeout)
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    st = AD.InterpreterHealthProbe(hook_python=good, fallbacks=[], clt=clt, run=slow_once,
+                                   timeout=10, retry_timeout=60).python3_health()
+    check("one slow start (a machine just woken) is retried with the longer limit and passes",
+          st[0].ok is True and calls == [10, 60], (st, calls))
+
+    def always_slow(cmd, timeout=None, **kw):
+        raise subprocess.TimeoutExpired(cmd, timeout)
+    st = AD.InterpreterHealthProbe(hook_python=good, fallbacks=[], clt=clt, run=always_slow,
+                                   timeout=10, retry_timeout=60).python3_health()
+    check("an interpreter that times out on the retry too is reported timed out",
+          st[0].ok is False and "timed out" in st[0].detail, st)
+
 
 # ---------------------------------------------------------------- agent runner and routines
 
@@ -607,6 +626,29 @@ def test_gmail_mailer():
     html_part = [part.get_payload(decode=True).decode() for part in msg_h.walk() if part.get_content_type() == "text/html"]
     check("html=True passes the caller's markup through verbatim", html_part and "<h1>Report</h1>" in html_part[0],
           html_part)
+    threaded = []
+    m_reply = ML.GmailApiMailer(sender="me@example.com", token_provider=lambda: "tok-1",
+                                urlopen=lambda req, timeout=None: (threaded.append(req), FakeResponse(b"{}"))[1])
+    outcome(m_reply.send, "ana@example.com", "Re: Timetable", "plain reply", html="<p>reply markup</p>",
+            attachments=[("timetable.pdf", b"%PDF-1.4 x")], thread_id="thread-9",
+            headers={"In-Reply-To": "<m1@example.com>", "References": "<m1@example.com>"})
+    payload = json.loads(threaded[0].data.decode()) if threaded else {}
+    check("a reply is posted with its Gmail threadId", payload.get("threadId") == "thread-9", payload.keys())
+    raw_r = payload.get("raw", "")
+    msg_r = email.message_from_bytes(base64.urlsafe_b64decode(raw_r + "=" * (-len(raw_r) % 4)))
+    check("with its threading headers", msg_r["In-Reply-To"] == "<m1@example.com>"
+          and msg_r["References"] == "<m1@example.com>", dict(msg_r.items()))
+    parts_r = {part.get_content_type(): part for part in msg_r.walk() if not part.is_multipart()}
+    check("html as a string is the markup, the body its plain part",
+          "<p>reply markup</p>" in parts_r["text/html"].get_payload(decode=True).decode()
+          and "plain reply" in parts_r["text/plain"].get_payload(decode=True).decode(), parts_r.keys())
+    check("and attachments travel with it", "application/pdf" in parts_r
+          and parts_r["application/pdf"].get_filename() == "timetable.pdf", parts_r.keys())
+    plain_sent = []
+    m_plain = ML.GmailApiMailer(sender="me@example.com", token_provider=lambda: "tok-1",
+                                urlopen=lambda req, timeout=None: (plain_sent.append(req), FakeResponse(b"{}"))[1])
+    outcome(m_plain.send, "me@example.com", "S", "b")
+    check("a plain send carries no threadId", plain_sent and "threadId" not in json.loads(plain_sent[0].data.decode()))
 
     calls = []
 
@@ -693,6 +735,24 @@ def test_token_pool_probe():
     tp = AD.TokenPoolProbe(pool_path, os.path.join(d, "missing-state.json")).pool()
     check("no state yet means every token is healthy", [t.status for t in tp.tokens] == ["healthy", "healthy"], tp)
     check("the probe is read-only", not os.path.exists(os.path.join(d, "missing-state.json")))
+
+    class Machine:
+        def name(self):
+            return "box"
+
+        def matches(self, cell):
+            return cell.casefold() == "box"
+
+    assigned = write(os.path.join(d, "assigned.json"), json.dumps({"tokens": [
+        {"label": "routines-1", "kp_ref": "kp://Brain/apis/r1", "issued": "2026-09-15", "machines": ["studio-box"]},
+        {"label": "routines-2", "kp_ref": "kp://Brain/apis/r2", "issued": "2026-09-15", "machines": ["BOX"]},
+        {"label": "any", "kp_ref": "kp://Brain/apis/any", "issued": "2026-09-15"}]}))
+    tp = AD.TokenPoolProbe(assigned, state_path, machine=Machine()).pool()
+    check("with this machine given, only its tokens and the unassigned ones are listed, in order",
+          [t.label for t in tp.tokens] == ["routines-2", "any"] and tp.elsewhere == ["routines-1"], tp)
+    tp = AD.TokenPoolProbe(assigned, state_path).pool()
+    check("without it every token is listed, as before",
+          [t.label for t in tp.tokens] == ["routines-1", "routines-2", "any"] and tp.elsewhere == [], tp)
 
 
 def test_desktop_tasks_probe():
@@ -806,6 +866,12 @@ def test_hook_liveness_source():
     check("a session starts at its transcript's first timestamp when that is earlier than its birth time",
           ll and abs(ll[0].started - (now - 7200)) < 2 and ll[0].mtime >= now - 5, ll)
     os.remove(long_lived)
+    # A session opened and never used leaves an empty transcript with no turn, so no hook ever had a
+    # reason to fire: it is not a session to judge.
+    empty = write(os.path.join(app, "0000bbbb-0000-4000-8000-000000000004.jsonl"), "")
+    check("an empty transcript is not a session",
+          not [x for x in src.sessions(now - 3600) if x.sid == "0000bbbb"])
+    os.remove(empty)
     check("a missing projects directory is no sessions",
           A_.HookLivenessSource(os.path.join(d, "nope"), log, registry, os.path.join(d, "e")).sessions(0) == [])
 

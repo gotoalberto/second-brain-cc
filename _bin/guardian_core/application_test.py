@@ -771,6 +771,14 @@ def test_token_pool():
           and "dead" in text and "token_malformed" in text, text)
     text = A.run_status(make(token_pool=FakeTokenPool(D.TokenPool([], "the pool has no tokens"))))
     check("status says when the pool config is invalid", "invalid" in text and "no tokens" in text, text)
+    text = A.run_status(make(token_pool=FakeTokenPool(D.TokenPool([], None, ["routines-1"]))))
+    check("status says when no token is assigned to this machine, naming the skipped ones",
+          "routine tokens: none assigned to this machine (skipped, assigned to other machines: routines-1)" in text, text)
+    r = A.run_check(make(token_pool=FakeTokenPool(D.TokenPool([], None, ["routines-1"]))))
+    check("and check finds nothing to report about it", not any(k.startswith("routine-auth") for k in keys(r)), keys(r))
+    text = A.run_status(make(token_pool=FakeTokenPool(D.TokenPool([token("routines-2")], None, ["routines-1"]))))
+    check("beside this machine's tokens the skipped ones are named",
+          "routines-2 healthy" in text and "(skipped, assigned to other machines: routines-1)" in text, text)
 
 
 class FakeRoutinesMeta(FakeRoutines):

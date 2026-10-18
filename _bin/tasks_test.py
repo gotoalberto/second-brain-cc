@@ -154,6 +154,7 @@ id: scheduled-tasks
 | task-a | box | -- | -- | shell | %(wait)s | yes | forced by one run |
 | task-b | box | -- | -- | shell | %(wait)s | yes | forced by another run |
 | task-s | box | -- | -- | shell | %(wait)s | yes | forced by both runs |
+| tick-b | box | 05:30 | * | shell | true | yes | a second task due on the tick |
 | tick-a | box | 05:00 | * | shell | true | yes | due on the tick |
 """ % {"wait": WAIT_FOR_GO}
 
@@ -446,6 +447,71 @@ def _state_tests(T, real_run_task):
     check("the next tick after it ends runs it", exc is None and st.get("tick-a", {}).get("last_exit") == 0,
           (rc, exc, st))
     T.single_instance = real_single
+
+    print("\n== tasks in the same lock_group never run at once ==")
+    world = state_world(T)
+    routine = os.path.join(world["VAULT"], "90-Meta", "routines", "g.md")
+    write(routine, "---\nid: g\nlock_group: Printer\n---\n\nbody\n")
+    check("lock_group is read from the front matter, lower case",
+          T.lock_group({"type": "agent", "command": "90-Meta/routines/g.md"}) == "printer")
+    write(routine, "---\nid: g\n---\n\nlock_group: printer in the body does not count\n")
+    check("but not from the body", T.lock_group({"type": "agent", "command": "90-Meta/routines/g.md"}) == "")
+    rows = {t["id"]: t for t in T.read_registry()}
+    check("a shell row has no lock group", T.lock_group(rows["task-s"]) == "")
+    real_group = T.lock_group
+    T.lock_group = lambda task: "printer" if task["id"] == "tick-a" else ""
+    lock = T.task_lock_path("group-printer")
+    os.makedirs(os.path.dirname(lock), exist_ok=True)
+    holder = subprocess.Popen([sys.executable, "-c", HOLD_LOCK, lock], stdout=subprocess.PIPE, universal_newlines=True)
+    try:
+        holder.stdout.readline()
+        rc, exc = attempt(T.main, [])
+        st = read_json(T.STATE_FILE) or {}
+        check("a due task whose lock group is busy is skipped with its state untouched",
+              exc is None and rc == 0 and "tick-a" not in st, (rc, exc, st))
+        check("and the runner log says which group", "skipped tick-a: lock group printer busy" in read_text(T.RUNNER_LOG),
+              read_text(T.RUNNER_LOG)[-300:])
+        check("while a task outside the group still runs on that tick",
+              st.get("tick-b", {}).get("last_exit") == 0, st)
+    finally:
+        holder.kill()
+        holder.wait()
+    rc, exc = attempt(T.main, [])
+    st = read_json(T.STATE_FILE) or {}
+    check("once the group is free the next tick runs it", exc is None and st.get("tick-a", {}).get("last_exit") == 0,
+          (rc, exc, st))
+
+    def group_lock_label():
+        with T.task_lock("group-printer", label="tick-a") as (held, _holder):
+            return held and read_text(T.task_lock_path("group-printer")).startswith("tick-a pid %d " % os.getpid())
+    check("a group lock file names the task holding it", attempt(group_lock_label)[0] is True,
+          attempt(group_lock_label))
+    T.lock_group = real_group
+
+    world = state_world(T)
+    T.lock_group = lambda task: "printer" if task["id"] in ("tick-a", "tick-b") else ""
+    real_due = T.due
+    seen = {"tick-b": 0}
+
+    def late_due(task, state):
+        if task["id"] == "tick-b":
+            seen["tick-b"] += 1
+            if seen["tick-b"] == 1:
+                return False, "not due yet in the main pass"
+        return real_due(task, state)
+    T.due = late_due
+    try:
+        rc, exc = attempt(T.main, [])
+    finally:
+        T.due = real_due
+        T.lock_group = real_group
+    st = read_json(T.STATE_FILE) or {}
+    check("a group task that became due while the group was busy runs right after the holder ends",
+          exc is None and st.get("tick-a", {}).get("last_exit") == 0 and st.get("tick-b", {}).get("last_exit") == 0,
+          (rc, exc, st))
+    check("and the runner log says it ran right after",
+          "running tick-b right after tick-a freed lock group printer" in read_text(T.RUNNER_LOG),
+          read_text(T.RUNNER_LOG)[-400:])
 
     print("\n== the state lock ==")
     world = state_world(T)
@@ -791,6 +857,30 @@ def main():
         check("its raw output is logged for calibration, redacted",
               "401 OAuth access token is invalid" in raw and FAKE_TOKEN not in raw, raw)
 
+        print("\n== routine tokens assigned to machines ==")
+        root, args_file = setup(T)
+        assigned = dict(POOL["tokens"][0], machines=["studio-box"])
+        write(os.path.join(T.VAULT, "90-Meta", "routine-tokens.json"), json.dumps({"tokens": [assigned]}))
+        rc, _ = quiet(T.main, ["--force", "routine-a"])
+        raised = {c[0]: c[1] for c in T.raise_alert.calls}
+        config = raised.get("routine-auth:config", "")
+        check("a pool with no token for this machine never reaches the agent or KeePass",
+              rc != 0 and not os.path.exists(args_file) and T.token_source().reads == 0, (rc, T.token_source().reads))
+        check("and the config alert names this machine and the machines field",
+              "box" in config and "machines" in config, raised)
+
+        root, args_file = setup(T)
+        real_mine = T.machine_is_mine
+        T.machine_is_mine = lambda m: m.strip().casefold() == "box-1a2b3c4d"
+        try:
+            assigned = dict(POOL["tokens"][0], machines=["studio-box", "BOX-1A2B3C4D"])
+            write(os.path.join(T.VAULT, "90-Meta", "routine-tokens.json"), json.dumps({"tokens": [assigned]}))
+            rc, _ = quiet(T.main, ["--force", "routine-a"])
+        finally:
+            T.machine_is_mine = real_mine
+        check("a token assigned to this machine's key, in any case, is used",
+              rc == 0 and T.token_source().reads == 1, (rc, T.token_source().reads))
+
         root, args_file = setup(T, token_value="tokenA tokenB")
         rc, _ = quiet(T.main, ["--force", "routine-a"])
         alert = {c[0]: c[1] for c in T.raise_alert.calls}.get("routine:routine-a", "")
@@ -898,6 +988,56 @@ def main():
         T.token_source = lambda: source
         rc, _ = quiet(T.main, ["--force", "shell-ok"])
         check("a shell row runs as before and never reads a token", rc == 0 and source.reads == 0, (rc, source.reads))
+
+        print("\n== the model a routine runs on, and the repair attempt ==")
+        import model_fallback as MF
+        CHEAP, STRONG = MF.MODELS[0], MF.DEFAULT_FALLBACK
+        CHEAP_ROUTINE = ("---\nid: routine-a\nneeds_bridge: none\nmodel: %s\n---\n\nSummarise the day in one line.\n"
+                         % CHEAP)
+        calls_body = 'echo "=== CALL ===" >> "%s"; echo "$*" >> "%s"; case "$*" in *"--model ' + CHEAP + '"*) echo first-try-failed; exit 3;; esac; echo fixed'
+        calls = os.path.join(tmpdir(), "calls.txt")
+        root, args_file = setup(T, agent_body=calls_body % (calls, calls))
+        write(os.path.join(T.VAULT, "90-Meta", "routines", "routine-a.md"),
+              CHEAP_ROUTINE)
+        rc, _ = quiet(T.main, ["--force", "routine-a"])
+        runs = [c for c in read_text(calls).split("=== CALL ===\n") if c.strip()]
+        check("the first attempt runs on the routine's model", runs and "--model " + CHEAP in runs[0], runs[:1])
+        check("a failure a better model can help with gets one repair attempt on the fallback model",
+              rc == 0 and len(runs) == 2 and "--model " + STRONG in runs[1] and "--model " + CHEAP not in runs[1],
+              (rc, [r[-120:] for r in runs]))
+        last = runs[-1] if runs else ""
+        check("whose prompt is the repair prompt, with the failed attempt's answer",
+              "REPAIR RUN ON " + STRONG.upper() in last and "first-try-failed" in last, last[:300])
+        check("and which may edit the procedure and sync it", "install_plugin.py sync" in last, last[-400:])
+        check("a repaired run raises no routine alert",
+              "routine:routine-a" not in {c[0] for c in T.raise_alert.calls}, T.raise_alert.calls)
+        check("the runner log names both models",
+              "repair attempt on " + STRONG in read_text(T.RUNNER_LOG), read_text(T.RUNNER_LOG)[-400:])
+
+        root, args_file = setup(T, agent_body='echo "$*" >> "%s"; exit 3' % os.path.join(tmpdir(), "unused"))
+        write(os.path.join(T.VAULT, "90-Meta", "routines", "routine-a.md"),
+              CHEAP_ROUTINE)
+        rc, _ = quiet(T.main, ["--force", "routine-a"])
+        alert = {c[0]: c[1] for c in T.raise_alert.calls}.get("routine:routine-a", "")
+        check("when the repair fails too the alert names both attempts",
+              rc != 0 and "failed on " + CHEAP in alert and "and on " + STRONG in alert, (rc, alert))
+
+        calls = os.path.join(tmpdir(), "calls.txt")
+        root, args_file = setup(T, agent_exit=1,
+                                agent_body='echo "=== CALL ===" >> "%s"; echo run >> "%s"; echo "Failed to authenticate. API Error: 401 OAuth '
+                                           'access token is invalid."' % (calls, calls))
+        write(os.path.join(T.VAULT, "90-Meta", "routines", "routine-a.md"),
+              CHEAP_ROUTINE)
+        rc, _ = quiet(T.main, ["--force", "routine-a"])
+        runs = [c for c in read_text(calls).split("=== CALL ===\n") if c.strip()]
+        check("a refused token gets no repair attempt: a better model cannot fix it",
+              rc != 0 and len(runs) == 1, (rc, len(runs)))
+
+        unused = os.path.join(tmpdir(), "calls.txt")
+        root, args_file = setup(T, agent_body=calls_body % (unused, unused))
+        rc, _ = quiet(T.main, ["--force", "routine-a"])
+        args = read_text(args_file).splitlines()
+        check("a routine with no model adds no --model of its own", rc == 0 and "--model" not in args, args[-6:])
 
         state_tests(T)
 

@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-15
+updated: 2026-10-16
 supersedes: []
 ---
 
@@ -53,6 +53,26 @@ python3 ~/Brain/_bin/install_plugin.py sync     # apply it
 ```
 
 A skill edit that has not been synced exists in one place with no history. Sync when you finish.
+
+## Backups go once git holds what they hold
+
+Nothing used to remove those backups. A skill under a tight feedback loop is synced dozens of times a
+day, and a large one (a skill that bundles media or templates) backed up on every sync filled the
+state directory with gigabytes of copies within weeks.
+
+`install_plugin.py` now removes the backups and diffs of a skill or agent after a successful step,
+once the vault's git holds that skill exactly as it is on disk (tracked, nothing changed). For a
+back-port that is checked before the vault copy is rewritten, since the backup holds the old vault
+copy. Backups stay:
+
+- when the step failed;
+- during an unresolved conflict;
+- while the vault copy has uncommitted changes;
+- for a skill that no longer exists on either side.
+
+The vault's git history is the record of every past version. To get an old one back, use
+`git -C ~/Brain log -- integrations/claude-code/plugin/brain/skills/<name>`, not the backups
+directory.
 
 ## Before a wholesale rewrite
 

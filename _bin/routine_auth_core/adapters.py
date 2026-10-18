@@ -102,6 +102,61 @@ class PoolFile:
         return D.parse_pool(text)
 
 
+class ThisMachine:
+    """This machine, for a pool entry's `machines` list (ports.Machine).
+
+    Matched exactly as tasks.py matches the `machine` column of 90-Meta/scheduled-tasks.md:
+    guardian_core.domain.machine_matches with this host's short name and machine_identity's
+    machine_is_mine (its key, its uuid, its label, any case, plus `*`). One rule for both files, so
+    a token and the routines it serves always agree on which machine is which. Every part is
+    injectable for the tests; by default the hostname and machine_identity are asked when needed.
+    """
+
+    def __init__(self, host=None, is_mine=None, names=None):
+        self._host, self._is_mine = host, is_mine
+        self._names = list(names) if names is not None else None
+
+    def host(self) -> str:
+        if self._host is None:
+            import socket
+
+            self._host = socket.gethostname().split(".")[0]
+        return self._host
+
+    def _mine(self, value) -> bool:
+        if self._is_mine is None:
+            import machine_identity
+
+            self._is_mine = machine_identity.machine_is_mine
+        try:
+            return bool(self._is_mine(value))
+        except Exception:
+            return False
+
+    def names(self) -> list:
+        if self._names is None:
+            names = [self.host()]
+            try:
+                import machine_identity
+
+                key = machine_identity.current_key()
+                if key and key not in names:
+                    names.append(key)
+            except Exception:
+                pass
+            self._names = names
+        return list(self._names)
+
+    def name(self) -> str:
+        names = self.names()
+        return names[0] + (" (%s)" % ", ".join(names[1:]) if len(names) > 1 else "")
+
+    def matches(self, name: str) -> bool:
+        from guardian_core import domain as GD
+
+        return GD.machine_matches(name, self.host(), self._mine)
+
+
 class CliResolver:
     """Is the CLI the template names the standalone one, and does it run?
 

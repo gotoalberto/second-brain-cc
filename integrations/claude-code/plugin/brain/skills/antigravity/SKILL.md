@@ -1,8 +1,8 @@
 ---
 name: antigravity
-description: Delegates work to Google Antigravity (the `agy` CLI, Google's coding agent with its own headless browser) from Claude Code, headless and sandboxed. Use it when the user mentions Antigravity, agy or Gemini as a coding agent; when they want a second opinion or an alternative design from another model (web redesigns, landing pages, visual critiques with screenshots); when a task should spend Antigravity quota instead of Claude tokens; or to compare its take against Claude's. Claude always briefs, reviews and verifies what agy returns; agy never deploys. macOS only, because `agy` keeps its sign-in in the macOS keychain.
+description: Delegates work to Google Antigravity (the `agy` CLI, Google's coding agent with its own headless browser) from Claude Code, headless and sandboxed. Use it when the user mentions Antigravity, agy or Gemini as a coding agent; when they want a second opinion or an alternative design from another model (web redesigns, landing pages, visual critiques with screenshots); when a task should spend Antigravity quota instead of Claude tokens; or to compare its take against Claude's. Claude always briefs, reviews and verifies what agy returns; agy never deploys. Works on macOS and Linux; each machine needs its own one-time Google sign-in.
 argument-hint: [what to hand to Antigravity]
-allowed-tools: Bash(python3 ~/.claude/skills/antigravity/scripts/agy_run.py:*), Bash(/usr/bin/python3 ~/.claude/skills/antigravity/scripts/agy_run.py:*), Bash(git worktree:*), Read
+allowed-tools: Bash(python3 ~/.claude/skills/antigravity/scripts/agy_run.py:*), Bash(/usr/bin/python3 ~/.claude/skills/antigravity/scripts/agy_run.py:*), Bash(git worktree:*), Bash(python3 __VAULT__/_bin/quota.py:*), Read
 ---
 
 # Antigravity (agy)
@@ -16,16 +16,27 @@ always through a wrapper that sandboxes it and returns one JSON object.
 
 | item | value |
 |---|---|
-| platform | macOS only: `agy` stores its OAuth sign-in in the macOS keychain |
+| platform | macOS and Linux. On macOS `agy` keeps its OAuth sign-in in the keychain; on Linux it persists it without a keyring. The sign-in does not travel: each machine signs in once |
 | binary | `~/.local/bin/agy` (it updates itself). Override with `AGY_BIN` |
 | install | download `https://antigravity.google/cli/install.sh` to a scratch file, read it, then run it with `bash`. It verifies its download and writes only `~/.local/bin/agy` plus a `PATH` line in the shell profile |
-| auth | the user's Google account through OAuth, kept in the keychain. It spends that account's Antigravity plan quota; there is no API key and no per-token billing |
+| auth | the user's Google account through OAuth. It spends that account's Antigravity plan quota; there is no API key and no per-token billing |
 | state | `~/.gemini/antigravity-cli/` (conversations, `cli.log`) |
 | check | `agy_run.py doctor` prints the version, `signed_in` and the model list |
 
-If `doctor` says `signed_in: false`, the user opens a terminal, runs `agy`, picks Google OAuth and
-signs in. Never try to sign in on their behalf. An auth code pasted into chat after the terminal used
+If `doctor` says `signed_in: false`, the user opens a terminal on that machine, runs `agy`, picks
+Google OAuth and signs in. On a remote Linux machine that means an interactive SSH session as the
+same user the agent runs as (`ssh -t <host> agy`, or `sudo -iu <user> agy` when the SSH login is a
+different user), since a sign-in made as another user is not seen. Never try to sign in on their
+behalf. An auth code pasted into chat after the terminal used
 it is harmless (it is single use), but say so.
+
+## Quota
+
+Antigravity spends a plan quota, so every use goes into the vault's global quota ledger
+(`__VAULT__/30-Knowledge/2026-10-10-convention-global-quota-ledger.md`). Before a job that spends it,
+`python3 __VAULT__/_bin/quota.py status antigravity`; after each run, record what the account reports
+as a reading, `python3 __VAULT__/_bin/quota.py reading antigravity --remaining <n>` or
+`--used-pct <n> --window <window>`.
 
 ## Models
 
@@ -51,7 +62,7 @@ What the wrapper always does, and why:
 2. **`--sandbox`.** Arbitrary writes outside the workspace fail with "Operation not permitted", but
    tool caches stay writable (its first browser run downloads Chromium into the user's cache
    directory) and the network is open. Treat it as a guard against damage to the repository and the
-   home directory, not as full isolation.
+   home directory; it does not fully isolate agy.
 3. **stdin closed, JSON output, and a kill timer 60 s past `--print-timeout`**, because a headless
    agent that hangs must not hang the caller.
 

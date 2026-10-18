@@ -10,9 +10,10 @@ with no tool calls to remember. On top of the MCP server and the CLI it adds:
 - **Agents**: `context-scout`, `planner`, `implementer`, `verifier`, `librarian`, `skill-forge`, a
   pipeline that gathers context, plans, implements in an isolated worktree, verifies and writes back.
 - **Skills**: `/task`, `/ctx`, `/recall`, `/save`, `/vault-doctor`, `/kp` (KeePass credentials),
-  `/dev` (the development pipeline), `/job-search`, `/machine-update`, `/antigravity` (macOS only)
-  and `/twitterapi-io`, plus the third-party web stack `/dev` uses, bundled under its own licences
-  (`THIRD_PARTY_NOTICES.md` at the repository root).
+  `/dev` (the development pipeline), `/job-search`, `/machine-update`, `/antigravity`,
+  `/twitterapi-io`, `/chatgpt-image`, `/grok-browser`, `/x-browser` and `/vpn-proxy`, plus the
+  third-party web stack `/dev` uses and two video skills (`/animated-video`, `/remotion`), bundled
+  under their own licences (`THIRD_PARTY_NOTICES.md` at the repository root).
 
 Everything here is a convenience layer over the same `_bin/` engine the MCP server and the CLI use.
 The knowledge, the index and the write path are identical.
@@ -63,8 +64,9 @@ plugin/
     agents/          context-scout, planner, implementer, verifier, librarian, skill-forge,
                      and the four impeccable-* agents vendored with the impeccable skill
     skills/          task, ctx, recall, save, vault-doctor, kp, dev, job-search, machine-update,
-                     antigravity, twitterapi-io, and the vendored third-party skills (each with
-                     its LICENSE and SOURCE.md)
+                     antigravity, twitterapi-io, chatgpt-image, grok-browser, x-browser,
+                     vpn-proxy, and the vendored third-party skills (each with its LICENSE and
+                     SOURCE.md)
     hooks/hooks.json generated from 90-Meta/events.json (brain_watch.py generate)
 settings.example.json   recommended settings, merged with claude_settings.py
 install.sh

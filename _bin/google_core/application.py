@@ -25,6 +25,7 @@ class Ports:
     clock: object = None            # ports.Clock
     open_url: object = None         # callable(url), for auth: a browser, or None to only print it
     sleep: object = None            # callable(seconds), between API retries; time.sleep when None
+    alert: object = None            # callable(account, detail), when Google refuses a token (token_alert.py)
 
 
 def list_accounts(ports) -> list:
@@ -110,10 +111,27 @@ def access_token(ports, name, required_scope=None, timeout=20) -> str:
         payload = ports.http.post_form(D.TOKEN_URL, D.refresh_request(client_id, client_secret, refresh),
                                        timeout=timeout)
     except HttpError as exc:
+        reason = " ".join(exc.body.split())[:200]
+        if D.is_refusal(exc.status):
+            _alert(ports, name, "refresh refused (%d): %s" % (exc.status, reason))
         raise D.Unavailable("the token refresh for %s was refused (%d): %s; if it says invalid_grant or "
-                            "invalid_client, run google.py auth --account %s"
-                            % (name, exc.status, " ".join(exc.body.split())[:200], name))
-    return D.access_token_from(payload, required_scope)
+                            "invalid_client, run google.py auth --account %s" % (name, exc.status, reason, name))
+    try:
+        return D.access_token_from(payload, required_scope)
+    except D.Unavailable as exc:
+        if required_scope and isinstance(payload, dict) and payload.get("access_token"):
+            _alert(ports, name, str(exc))
+        raise
+
+
+def _alert(ports, name, detail):
+    """Tell the owner a token died. Never raises: a failed alert must not change how the caller fails."""
+    if ports.alert is None:
+        return
+    try:
+        ports.alert(name, detail)
+    except Exception:
+        pass
 
 
 def api(ports, name, method, url, body=None, timeout=30) -> dict:
@@ -138,19 +156,60 @@ def api(ports, name, method, url, body=None, timeout=30) -> dict:
             sleep(delays.pop(0))
 
 
-def send(ports, mailer, name, to, subject, body, html=False, run_id=None) -> dict:
+GMAIL_MESSAGE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/%s?format=full"
+
+
+def reply_context(ports, name, message_id, tz="UTC") -> dict:
+    """What a reply to Gmail message `message_id` in account `name` needs: the thread, the reply
+    subject, the other party, the threading headers, the attribution line (the original's date in
+    zone `tz`) and the original's bodies to quote. Raises GoogleError when it cannot be read."""
+    import urllib.parse
+    from zoneinfo import ZoneInfo
+
+    from mail_body import reply_attribution, reply_subject
+
+    result = api(ports, name, "GET", GMAIL_MESSAGE_URL % urllib.parse.quote(message_id or "", safe=""))
+    if isinstance(result, dict) and result.get("_http_error"):
+        raise D.GoogleError("the message to reply to could not be read (%s): %s"
+                            % (result["_http_error"], " ".join(str(result.get("_body", "")).split())[:200]))
+    src = D.reply_source(result, get_account(ports, name).login_hint)
+    when = src["date"].astimezone(ZoneInfo(tz or "UTC")) if src["date"] else None
+    return {"thread_id": src["thread_id"], "subject": reply_subject(src["subject"]), "to": src["to"],
+            "headers": {"In-Reply-To": src["message_id"], "References": src["references"]},
+            "attribution": reply_attribution(src["sender"], when) if when else "%s wrote:" % src["sender"],
+            "text": src["text"], "html": src["html"]}
+
+
+def send(ports, mailer, name, to, subject, body, html=False, run_id=None, attachments=None, reply=None) -> dict:
     """One message through `mailer`, then one record in the send log. Returns the record.
+
+    `attachments` is a list of (filename, bytes). `reply` is a reply_context(): the message then goes
+    to the other party (unless `to` says otherwise) in the same thread, under the original subject with
+    Re: (another subject is refused), with the original quoted after the new text.
 
     Usage problems raise UsageError before anything is sent. A delivery failure raises whatever the
     mailer raised and logs nothing. A log that cannot be written leaves `log_error` on the record: the
     message was delivered, and that is not undone."""
+    thread_id, headers = None, None
+    if reply:
+        if subject and subject.strip() != reply["subject"]:
+            raise D.UsageError("a reply keeps the original subject (%s); leave --subject out" % reply["subject"])
+        subject, to = reply["subject"], to or reply["to"]
     if not D.valid_address(to):
         raise D.UsageError("--to must be exactly one email address")
     if not (subject or "").strip() or "\n" in subject or "\r" in subject:
         raise D.UsageError("--subject is required, on one line")
     if not (body or "").strip():
         raise D.UsageError("empty body: pass it on stdin or with --body-file")
-    message_id = mailer.send(to, subject, body, html=html) or ""
+    if reply:
+        from mail_body import reply_bodies, text_to_html
+
+        new_html = body if html else text_to_html(body)
+        new_text = D.html_to_text(body) if html else body
+        body, html = reply_bodies(new_text, new_html, reply["attribution"], reply["text"], reply["html"])
+        thread_id, headers = reply["thread_id"], reply["headers"]
+    message_id = mailer.send(to, subject, body, html=html, attachments=attachments or None,
+                             thread_id=thread_id, headers=headers) or ""
     record = D.sent_record(name, to, subject, message_id, run_id, ports.clock.now() if ports.clock else None)
     try:
         ports.send_log.append(record)

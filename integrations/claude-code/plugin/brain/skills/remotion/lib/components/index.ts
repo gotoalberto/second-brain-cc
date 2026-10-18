@@ -1,0 +1,54 @@
+/**
+ * Shared video components
+ *
+ * These components are building blocks for video templates.
+ * Import into templates via: import { ComponentName } from '../../../lib/components';
+ */
+
+// Backgrounds
+export { AnimatedBackground } from './AnimatedBackground';
+export type { AnimatedBackgroundProps, BackgroundVariant } from './AnimatedBackground';
+
+// Decorations
+export { MazeDecoration } from './MazeDecoration';
+export type { MazeDecorationProps } from './MazeDecoration';
+
+// Overlays
+export { Vignette } from './Vignette';
+export type { VignetteProps } from './Vignette';
+
+export { FilmGrain } from './FilmGrain';
+export type { FilmGrainProps } from './FilmGrain';
+
+export { LogoWatermark } from './LogoWatermark';
+export type { LogoWatermarkProps } from './LogoWatermark';
+
+export { Label } from './Label';
+export type { LabelProps, LabelPosition, LabelSize } from './Label';
+
+// Transitions
+export { SlideTransition } from './SlideTransition';
+export type { SlideTransitionProps, TransitionStyle } from './SlideTransition';
+
+// Layouts
+export { SplitScreen } from './SplitScreen';
+export type { SplitScreenProps } from './SplitScreen';
+
+// Captions (word-level JSON from tools/captions.py)
+export { Captions, captionsFor } from './Captions';
+export type { CaptionsProps, CaptionsConfig, CaptionWord } from './Captions';
+
+// Narrator (needs refinement - see component docs)
+export { NarratorPiP } from './NarratorPiP';
+export type { NarratorPiPProps } from './NarratorPiP';
+
+// Animations
+export { Envelope } from './Envelope';
+export type { EnvelopeProps } from './Envelope';
+
+export { PointingHand } from './PointingHand';
+export type { PointingHandProps } from './PointingHand';
+
+// Utilities
+export { hexToRgba, SIZE_PRESETS, POSITION_PRESETS } from './utils';
+export type { SizePreset, PositionPreset } from './utils';

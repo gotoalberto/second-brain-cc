@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-23
+updated: 2026-10-16
 supersedes: []
 ---
 
@@ -37,11 +37,11 @@ frontmatter.
 
 ## Traps
 
-- **`append` reads its content from stdin, not from a flag.** `vw.py append <note> --text "..."`
+- **`append` reads its content from stdin; it has no text flag.** `vw.py append <note> --text "..."`
   exits 0 and writes nothing. Use a heredoc, or redirect a file. After an append, check with
   `grep` that the text landed.
 - **`append` adds its own timestamp.** Text that already carries one comes out stamped twice.
-- **`new` can wait on a git lock held by another session.** That is contention, not a hang.
+- **`new` can wait on a git lock held by another session.** That is contention, and it ends on its own.
   Before killing it, check whether the lock belongs to a live session and wait if it does. If
   the target file does not exist yet, killing is safe. If it does exist, a kill mid-write can
   leave a stub with empty frontmatter: check `type`, `area`, `projects`, `tags` and `title`
@@ -53,6 +53,11 @@ frontmatter.
   stub with `type: project`, empty `area`, `projects` and `tags`, and the filename as title, with no
   error. Always feed `new` something: a heredoc, `< /dev/null`, or `input=""` (or the real body) when
   calling it through `subprocess`.
+  **Fixed in the code since:** `vw.py` now reads stdin only from a regular file or a pipe, so a socket
+  on fd 0 counts as no body. `new` writes the note without one, `append` and `set` exit 2 with a
+  message, and `< /dev/null` is no longer needed. Passing the body with a heredoc, a pipe or `< file`
+  is still the normal use. The git lock wait above is a different thing and still happens: wait for
+  it, do not kill it. [[2026-10-16-runbook-vw-py-needs-stdin-closed]]
 
 ## Why
 
@@ -64,3 +69,4 @@ credential reaching a note that gets pushed.
 
 - [[2026-08-20-decision-credentials-in-keepass]]
 - [[2026-09-08-failure-scheduled-tasks-write-into-the-vault-unguarded]]
+- [[2026-10-16-runbook-vw-py-needs-stdin-closed]]

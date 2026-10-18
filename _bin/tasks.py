@@ -29,6 +29,12 @@ tick that finds it still running (an hourly routine that overruns its hour, or a
 started by hand) skips it and leaves its state alone; the next tick after it ends decides
 again. `--force` on a running one is refused with exit 75. Other tasks are not locked.
 
+Routines that share a scarce resource (an API with a small daily quota, one browser session)
+say so with `lock_group: <name>` in their front matter. A run holds the group's lock
+(<state>/task-locks/group-<name>.lock) for as long as it lasts; a due task whose group is busy
+is skipped on that tick with its state untouched, and the process that holds the group runs it
+as soon as its own task ends (as would any later tick): late rather than overlapping.
+
 A routine is killed after DEFAULT_TIMEOUT (30 min) unless its front matter sets
 `timeout_minutes: <n>`, for a routine whose job has no fixed size (a backlog to work
 through). Pair it with `single_instance: true` so an overrun never overlaps the next tick.
@@ -61,7 +67,10 @@ Task types:
               the body in an explicit order to run it now. A routine whose contract requires
               sends succeeds only if google.py send logged them under that run id.
               A failure raises an alert through the guardian's channel naming what to do; a
-              success clears it.
+              success clears it. The routine's front matter `model:` picks the model of the
+              first attempt; a failure a better model can help with gets one repair attempt on
+              `fallback_model:` (default the strongest) that also fixes the skill or routine
+              (model_fallback.py), and the alert is raised only if both attempts fail.
   claude-app  inventory only: run by the Claude app's own scheduler, never by this runner
 """
 
@@ -202,11 +211,12 @@ def task_lock_path(task_id: str) -> str:
 
 
 @contextlib.contextmanager
-def task_lock(task_id: str):
+def task_lock(task_id: str, label: str = ""):
     """Hold the task's run lock for the block: yields (True, "") or (False, who holds it).
 
     flock dies with the process that holds it, so a killed run never leaves a stale lock.
-    The file carries the holder's pid and start time, only to say who is running.
+    The file carries the holder's pid and start time (after `label`, the task holding a group
+    lock), only to say who is running.
     """
     path = task_lock_path(task_id)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -217,7 +227,7 @@ def task_lock(task_id: str):
             return
         fh.seek(0)
         fh.truncate()
-        fh.write(f"pid {os.getpid()} since {now().isoformat(timespec='seconds')}\n")
+        fh.write(f"{label + ' ' if label else ''}pid {os.getpid()} since {now().isoformat(timespec='seconds')}\n")
         fh.flush()
         try:
             yield True, ""
@@ -445,6 +455,9 @@ def run_agent(task: dict) -> tuple[int, str, str, str]:
     The command template is configuration (90-Meta/agent-command.txt); the credential is
     the token pool (90-Meta/routine-tokens.json); which token, how a failure reads and
     whether to fail over is routine_auth_core. `summary` is the one line the alert carries.
+    Only the pool tokens assigned to this machine (`machines`, matched like the registry's
+    `machine` column) or to no machine in particular are tried.
+    The model of the first attempt and the repair attempt on a stronger one are model_fallback.
     """
     from guardian_core import adapters as GA
     from routine_auth_core import adapters as RAD
@@ -488,9 +501,34 @@ def run_agent(task: dict) -> tuple[int, str, str, str]:
         run_ids=RAD.RandomRunIds(),
         sends=RAD.MailSentLog(str(MAIL_SENT_LOG)),
         run_env={RD.SEND_LOG_ENV: str(MAIL_SENT_LOG)},
+        machine=RAD.ThisMachine(host(), machine_is_mine, names=host_names()),
     )
-    res = RA.run_routine(ports, RA.Routine(task["id"], path, args, problem, contract, contract_problem, text=text),
+    import model_fallback as MF
+
+    default = MF.template_model(template)
+    model, fallback = MF.routine_model(text, args, default)
+    first_model = model or default or "the template's model"
+    first_args = MF.with_model(args, model) if model else args
+    res = RA.run_routine(ports, RA.Routine(task["id"], path, first_args, problem, contract, contract_problem, text=text),
                          routine_timeout(text))
+    if model:
+        log(RUNNER_LOG, f"{task['id']}: model {model}: kind {res.kind}, exit {res.rc}")
+    if fallback and MF.fallback_eligible(res.kind, res.rc):
+        first = res
+        prev_scratch = next((a.scratch for a in reversed(first.attempts) if a.scratch), None)
+        log(RUNNER_LOG, f"{task['id']}: {first_model} failed ({first.kind}); repair attempt on {fallback}")
+        rtext = MF.repair_text(text, task["id"], first_model, fallback, first.summary,
+                               first.stdout, first.stderr, prev_scratch)
+        rargs = MF.repair_args(MF.with_model(args, fallback), prev_scratch)
+        res = RA.run_routine(ports, RA.Routine(task["id"], path, rargs, problem, contract, contract_problem, text=rtext),
+                             routine_timeout(text))
+        res.attempts = list(first.attempts) + list(res.attempts)
+        log(RUNNER_LOG, f"{task['id']}: repair on {fallback}: kind {res.kind}, exit {res.rc}")
+        if res.rc == 0:
+            res.summary = ""
+        else:
+            res.summary = (f"failed on {first_model} ({first.summary or first.kind}) and on {fallback} "
+                           f"({res.summary or res.kind})")
     summary = res.summary
     for a in res.attempts:
         log(RUNNER_LOG, f"{task['id']}: token {a.label}: {a.kind}" + (f" (run {a.run_id})" if a.run_id else ""))
@@ -508,18 +546,29 @@ def _front_matter(text: str) -> str:
     return m.group(1) if m else ""
 
 
-def single_instance(task: dict) -> bool:
-    """True when the task's routine file asks, in its front matter, never to run twice at once."""
+def _routine_text(task: dict) -> str:
+    """The text of an agent task's routine file, "" for other types or when it cannot be read."""
     if task.get("type") != "agent":
-        return False
+        return ""
     path = task["command"]
     if not os.path.isabs(path):
         path = os.path.join(str(VAULT), path)
     try:
-        text = Path(path).read_text(encoding="utf-8")
+        return Path(path).read_text(encoding="utf-8")
     except OSError:
-        return False
+        return ""
+
+
+def single_instance(task: dict) -> bool:
+    """True when the task's routine file asks, in its front matter, never to run twice at once."""
+    text = _routine_text(task)
     return bool(re.search(r"^single_instance:\s*(true|yes)\s*$", _front_matter(text), re.M | re.I))
+
+
+def lock_group(task: dict) -> str:
+    """The `lock_group:` named in the task's routine front matter, lower case, or "" when it has none."""
+    g = re.search(r"^lock_group:\s*([A-Za-z0-9_-]+)\s*$", _front_matter(_routine_text(task)), re.M)
+    return g.group(1).lower() if g else ""
 
 
 def routine_timeout(text: str) -> int:
@@ -533,8 +582,47 @@ def run_task(task: dict, state: dict, changed: set | None = None) -> int:
 
     A single_instance task already running in another process is not run again:
     ALREADY_RUNNING is returned and `state` is left untouched, so the running one's own
-    result is what gets recorded.
+    result is what gets recorded. A task whose lock group is held by another run is skipped the
+    same way.
     """
+    group = lock_group(task)
+    if group:
+        with task_lock(f"group-{group}", label=task["id"]) as (held, holder):
+            if not held:
+                log(RUNNER_LOG, f"skipped {task['id']}: lock group {group} busy ({holder or 'holder unknown'})")
+                return ALREADY_RUNNING
+            return _run_single(task, state, changed)
+    return _run_single(task, state, changed)
+
+
+def run_group_followers(done: dict, tasks: list, state: dict, changed: set) -> int:
+    """Right after a lock_group task ends, run the tasks of its group that became due meanwhile.
+
+    Other ticks skipped them because the group was busy; running them here, one after another,
+    starts a blocked task as soon as the holder ends instead of up to a poll later. The state is
+    saved and re-read first, since other processes may have recorded runs meanwhile. Returns how
+    many ran.
+    """
+    group = lock_group(done)
+    ran = 0
+    while True:
+        save_state(state, changed)
+        fresh = load_state()
+        for k, v in fresh.items():
+            if k not in changed:
+                state[k] = v
+        nxt = next((u for u in tasks if u is not done and u["id"] not in changed
+                    and lock_group(u) == group and due(u, state)[0]), None)
+        if nxt is None:
+            return ran
+        log(RUNNER_LOG, f"running {nxt['id']} right after {done['id']} freed lock group {group}")
+        if run_task(nxt, state, changed) == ALREADY_RUNNING:
+            return ran
+        ran += 1
+        done = nxt
+
+
+def _run_single(task: dict, state: dict, changed: set | None) -> int:
     if not single_instance(task):
         return _run_task(task, state, changed)
     with task_lock(task["id"]) as (held, holder):
@@ -672,8 +760,10 @@ def main(argv=None) -> int:
             print(f"would run: {t['id']}")
             ran += 1
             continue
-        run_task(t, state, changed)
+        rc = run_task(t, state, changed)
         ran += 1
+        if rc != ALREADY_RUNNING and lock_group(t):
+            ran += run_group_followers(t, tasks, state, changed)
 
     if changed and not args.dry_run:
         save_state(state, changed)

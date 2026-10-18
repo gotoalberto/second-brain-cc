@@ -18,6 +18,11 @@ allowed-tools: Bash(python3 __VAULT__/_bin/machine_update.py:*), Bash(/usr/bin/p
 | `app` | the Claude Code bundled inside the desktop app (macOS). Local desktop sessions use it, which is why local can have a model that remote does not. | the app itself; restart the app |
 | `brew` | a Homebrew `claude-code` cask (macOS). Unused while the native install exists. | only reported; `brew uninstall --cask claude-code` if the user wants |
 
+When the vault serves several Macs, the same script and the same macOS procedure apply to each of
+them, but they do not have to match: one may have the desktop app and a Remote Control server,
+another only the CLI. The report shows which components this machine actually has; read it per
+machine and never assume one Mac looks like another.
+
 `models known to the CLI` is the newest model id per family inside the CLI binary. If the user
 expects a model and it is not listed there, the CLI is too old, whatever the account allows.
 

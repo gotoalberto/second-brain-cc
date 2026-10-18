@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-24
+updated: 2026-10-11
 supersedes: []
 ---
 
@@ -28,6 +28,10 @@ An agent routine whose front matter says `single_instance: true` holds an exclus
 run is still going the next tick sees the previous hour's timestamp and starts a second copy.
 For a routine that acts on something outside the vault (screening a queue, replying to messages),
 two copies do the same work twice.
+
+**Different routines on one resource** use a lock group instead
+([[2026-10-11-decision-lock-groups-for-routines-sharing-a-scarce-resource]]): `single_instance`
+only stops a routine from overlapping itself.
 
 **Scope is opt-in.** Every other task runs as before. Add the flag to a routine only
 where two overlapping runs would do harm, typically an `every Nh` row

@@ -487,8 +487,12 @@ def run_status(ports) -> str:
     if ports.token_pool is not None:
         try:
             tp = ports.token_pool.pool()
+            elsewhere = list(getattr(tp, "elsewhere", None) or [])
+            skipped = " (skipped, assigned to other machines: %s)" % ", ".join(elsewhere) if elsewhere else ""
             if tp.config_error:
                 lines.append("routine tokens: pool config invalid: %s" % tp.config_error)
+            elif not tp.tokens and elsewhere:
+                lines.append("routine tokens: none assigned to this machine" + skipped)
             elif not tp.tokens:
                 lines.append("routine tokens: no pool configured on this machine")
             else:
@@ -496,7 +500,7 @@ def run_status(ports) -> str:
                     "%s %s%s (expires %s)" % (t.label, t.status,
                                              " after %s" % t.last_kind if t.status != "healthy" and t.last_kind else "",
                                              t.expires or "?")
-                    for t in tp.tokens))
+                    for t in tp.tokens) + skipped)
         except Exception as exc:
             lines.append("routine tokens: (unavailable: %s)" % exc)
 

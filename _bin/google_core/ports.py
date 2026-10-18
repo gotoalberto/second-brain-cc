@@ -40,7 +40,8 @@ class ConsentReceiver(Protocol):
 
 
 class Mailer(Protocol):
-    def send(self, to: str, subject: str, body: str, html: bool = False): ...   # the message id, or None; raises
+    def send(self, to: str, subject: str, body: str, html=False, attachments=None, thread_id=None,
+             headers=None): ...                    # the message id, or None; raises
 
 
 class SendLog(Protocol):

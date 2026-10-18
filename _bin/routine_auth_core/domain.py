@@ -300,7 +300,8 @@ def next_token(labels, state: dict, current: str, kind: str, now: dt.datetime, t
 
 TOKEN_LIFETIME_DAYS = 365
 KP_GROUP = "Brain"
-_POOL_KEYS = ("label", "account", "kp_ref", "issued", "notes")
+_POOL_KEYS = ("label", "account", "kp_ref", "issued", "notes", "machines")
+RUNBOOK = "30-Knowledge/2026-09-15-runbook-brain-routine-auth.md"
 
 
 class PoolConfigError(ValueError):
@@ -314,6 +315,24 @@ class PoolEntry:
     issued: dt.date
     account: str = ""
     notes: str = ""
+    machines: tuple = ()         # the machines it may run on, as the registry's `machine` column names them; () = all
+
+
+def _parse_machines(value, where, label) -> tuple:
+    """The `machines` field: a non-empty list of non-empty names. The error names the key, never a value."""
+    problem = ("%s (%s): machines must be a non-empty list of machine names (hostname, machine key or machine "
+               "uuid)" % (where, label))
+    if not isinstance(value, list) or not value:
+        raise PoolConfigError(problem)
+    out = []
+    for name in value:
+        if not isinstance(name, str) or not name.strip():
+            raise PoolConfigError(problem)
+        if _TOKENISH.search(name) or TOKEN_PREFIX in name:
+            raise PoolConfigError("%s (%s): machines looks like it holds a token value; the pool keeps kp:// "
+                                  "references only (move the value to the kdbx)" % (where, label))
+        out.append(name.strip())
+    return tuple(out)
 
 
 def parse_pool(text: str) -> list:
@@ -342,6 +361,8 @@ def parse_pool(text: str) -> list:
             raise PoolConfigError("%s has unknown key(s) %s; allowed: %s"
                                   % (where, ", ".join(unknown), ", ".join(_POOL_KEYS)))
         for k, v in raw.items():
+            if k == "machines":
+                continue                 # a list, checked below once the label is known
             if not isinstance(v, str):
                 raise PoolConfigError("%s: %s must be a string" % (where, k))
             if _TOKENISH.search(v) or TOKEN_PREFIX in v:
@@ -360,8 +381,46 @@ def parse_pool(text: str) -> list:
             issued = dt.date.fromisoformat(raw.get("issued", ""))
         except ValueError:
             raise PoolConfigError("%s (%s): issued must be YYYY-MM-DD" % (where, label))
-        out.append(PoolEntry(label, ref, issued, raw.get("account", ""), raw.get("notes", "")))
+        machines = _parse_machines(raw["machines"], where, label) if "machines" in raw else ()
+        out.append(PoolEntry(label, ref, issued, raw.get("account", ""), raw.get("notes", ""), machines))
     return out
+
+
+def usable_on(entry, matches) -> bool:
+    """May this token run on the machine `matches` recognises? An entry with no `machines` runs anywhere.
+
+    `matches` answers whether one name in the `machines` list names this machine. The caller passes
+    the registry's own rule for its `machine` column (guardian_core.domain.machine_matches with
+    machine_identity), so the pool and scheduled-tasks.md never disagree about which machine is which.
+    A matcher that raises counts as "not this machine".
+    """
+    machines = tuple(getattr(entry, "machines", ()) or ())
+    if not machines or matches is None:
+        return True
+    for name in machines:
+        try:
+            if matches(name):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def split_by_machine(entries, matches):
+    """(here, elsewhere), both in pool order: the tokens usable on this machine and the ones assigned
+    to other machines. With no matcher every token is here, as before the field existed."""
+    here, elsewhere = [], []
+    for e in entries or ():
+        (here if usable_on(e, matches) else elsewhere).append(e)
+    return here, elsewhere
+
+
+def no_token_here_summary(machine: str, elsewhere) -> str:
+    """The config failure when no pool token is assigned to this machine. Labels only, never a value."""
+    skipped = ", ".join(getattr(e, "label", str(e)) for e in elsewhere or ()) or "none"
+    return ("no routine token in 90-Meta/routine-tokens.json is assigned to this machine (%s); skipped, assigned to "
+            "other machines: %s. Add a token whose `machines` list names this machine (its hostname, machine key "
+            "or machine uuid), or one with no `machines` list: runbook %s" % (machine or "unknown", skipped, RUNBOOK))
 
 
 def kp_entry(kp_ref: str) -> str:

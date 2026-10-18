@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real installs on a macOS laptop and a Linux server in a working vault; names and numbers are illustrative"
-updated: 2026-09-29
+updated: 2026-10-08
 supersedes: []
 ---
 
@@ -19,6 +19,13 @@ supersedes: []
 That is how you reach it: open the Claude app, pick the machine under Remote Control, and work
 in a session that runs on that machine, with its files, its credentials and its browser. A
 cloud session runs on Anthropic's infrastructure and has none of those.
+
+The machine shows up under the Claude account its CLI is logged into, and its Chrome extension
+should be signed in to that same account, because Claude in Chrome lists only the browsers on the
+session's account. Pick that account deliberately when installing: a work laptop may belong on the
+organization's account while the other machines sit on a personal one. A machine that runs agent
+routines also needs a pool token of that account, with `machines` naming it
+([[2026-09-15-runbook-brain-routine-auth]], tokens per machine).
 
 An install that does not end with the machine listed there is not finished.
 
@@ -218,7 +225,7 @@ The trust dialog still has to be accepted once for that directory, interactively
 exits with `Workspace not trusted`. Trust is saved per directory, and the home directory is no
 exception: `~/.claude.json` records it as `projects["$HOME"].hasTrustDialogAccepted`.
 
-The first start asks three things a supervised job cannot answer: whether to trust the
+On its first start the server asks what a supervised job cannot answer: whether to trust the
 workspace, `Enable Remote Control? (y/n)`, then a spawn mode, `same-dir` or `worktree`.
 **Choose same-dir**; worktree is the mode that breaks against the hook above. The answers
 persist, so they are given once. That is what step 4 of the first run is for; when it says
@@ -434,7 +441,7 @@ it convincing. The environment picker separates them: Local, Cloud, Remote Contr
 
 **A session's own account of where it runs is unreliable.** Sessions served by a machine have
 described themselves as running in a cloud container while reading that machine's files. Trust
-the server log and the environment picker, not the session.
+the server log and the environment picker over what the session says.
 
 ## The label under Remote Control
 

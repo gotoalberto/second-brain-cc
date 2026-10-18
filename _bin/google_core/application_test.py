@@ -92,12 +92,13 @@ class FakeReceiver:
 
 class FakeMailer:
     def __init__(self, explode=None, message_id="m-1"):
-        self.explode, self.message_id, self.sent = explode, message_id, []
+        self.explode, self.message_id, self.sent, self.extra = explode, message_id, [], []
 
-    def send(self, to, subject, body, html=False):
+    def send(self, to, subject, body, html=False, **kw):
         if self.explode:
             raise self.explode
         self.sent.append((to, subject, body, html))
+        self.extra.append(kw)
         return self.message_id
 
 
@@ -211,6 +212,41 @@ def test_access_token():
     _, exc = outcome(A.access_token, p, "work", D.GMAIL_SEND_SCOPE)
     check("a token without the required scope is Unavailable", isinstance(exc, D.Unavailable), repr(exc))
 
+    print("\n== a refused token raises the token alert ==")
+    raised = []
+    alert = lambda account, detail: raised.append((account, detail))
+    _, exc = outcome(A.access_token, configured(D, http=FakeHttp(form=refused), alert=alert), "work")
+    check("a refused refresh alerts once, naming the account and Google's reason",
+          isinstance(exc, D.Unavailable) and len(raised) == 1 and raised[0][0] == "work"
+          and "invalid_grant" in raised[0][1], raised)
+    del raised[:]
+    p = configured(D, http=FakeHttp(form=lambda url, fields: {"access_token": "t", "scope": "x"}), alert=alert)
+    _, exc = outcome(A.access_token, p, "work", D.GMAIL_SEND_SCOPE)
+    check("a token that lost a scope it needs alerts too",
+          isinstance(exc, D.Unavailable) and len(raised) == 1 and "gmail.send" in raised[0][1], raised)
+    del raised[:]
+
+    def offline(url, fields):
+        raise P.Unavailable("network: no route to host")
+
+    _, exc = outcome(A.access_token, configured(D, http=FakeHttp(form=offline), alert=alert), "work")
+    check("a network blip never alerts", isinstance(exc, D.Unavailable) and raised == [], raised)
+
+    def server_error(url, fields):
+        raise P.HttpError(503, "backend error")
+
+    _, exc = outcome(A.access_token, configured(D, http=FakeHttp(form=server_error), alert=alert), "work")
+    check("nor does a server error on Google's side", isinstance(exc, D.Unavailable) and raised == [], raised)
+    _, exc = outcome(A.access_token, configured(D, secrets=FakeSecrets(locked=True), alert=alert), "work")
+    check("nor a locked KeePass", isinstance(exc, D.Unavailable) and raised == [], raised)
+
+    def broken_alert(account, detail):
+        raise RuntimeError("the alert itself failed")
+
+    _, exc = outcome(A.access_token, configured(D, http=FakeHttp(form=refused), alert=broken_alert), "work")
+    check("an alert that fails never changes how the caller fails",
+          isinstance(exc, D.Unavailable) and "google.py auth --account work" in str(exc), repr(exc))
+
 
 def test_api():
     print("\n== api ==")
@@ -296,6 +332,71 @@ def test_send():
           exc is None and rec.get("log_error"), (rec, repr(exc)))
 
 
+def _b64(text):
+    import base64
+    return base64.urlsafe_b64encode(text.encode("utf-8")).decode("ascii")
+
+
+ORIGINAL = {"id": "18f0f0f0f0f0f0f0", "threadId": "thread-77", "payload": {
+    "mimeType": "multipart/alternative",
+    "headers": [{"name": "From", "value": "Ana Ruiz <ana@example.org>"}, {"name": "To", "value": "me@example.com"},
+                {"name": "Subject", "value": "Spring timetable"},
+                {"name": "Date", "value": "Sat, 17 Oct 2026 09:13:00 +0000"},
+                {"name": "Message-ID", "value": "<orig-1@example.com>"}],
+    "parts": [{"mimeType": "text/plain", "body": {"data": _b64("Can we move the class?\n")}},
+              {"mimeType": "text/html", "body": {"data": _b64("<p>Can we move the class?</p>")}}]}}
+
+
+def test_reply():
+    print("\n== replies and attachments ==")
+    p = configured(D, http=FakeHttp(request=lambda method, url, token, body: ORIGINAL))
+    reply = A.reply_context(p, "work", "18f0f0f0f0f0f0f0", tz="Europe/Paris")
+    check("the original is fetched in full by id", p.http.requests and p.http.requests[-1][0] == "GET"
+          and "/gmail/v1/users/me/messages/18f0f0f0f0f0f0f0?format=full" in p.http.requests[-1][1], p.http.requests)
+    check("the reply keeps the thread, the subject with Re: and the threading headers",
+          reply["thread_id"] == "thread-77" and reply["subject"] == "Re: Spring timetable"
+          and reply["headers"] == {"In-Reply-To": "<orig-1@example.com>", "References": "<orig-1@example.com>"}, reply)
+    check("it goes to the other party", reply["to"] == "ana@example.org", reply["to"])
+    check("the attribution line is in the zone asked for",
+          reply["attribution"] == "On Sat, 17 Oct 2026 at 11:13, Ana Ruiz <ana@example.org> wrote:", reply["attribution"])
+
+    mailer = FakeMailer()
+    rec = A.send(p, mailer, "work", None, None, "Thursday suits me.", reply=reply)
+    to, subject, body, html = mailer.sent[0] if mailer.sent else (None,) * 4
+    extra = mailer.extra[0] if mailer.extra else {}
+    check("a reply is sent to the other party under the reply subject",
+          to == "ana@example.org" and subject == "Re: Spring timetable", (to, subject))
+    check("in the same thread, with In-Reply-To and References",
+          extra.get("thread_id") == "thread-77" and extra.get("headers", {}).get("In-Reply-To") == "<orig-1@example.com>",
+          extra)
+    check("the plain part quotes the original, the HTML part is a gmail_quote blockquote",
+          body.startswith("Thursday suits me.") and "> Can we move the class?" in body
+          and isinstance(html, str) and 'class="gmail_quote"' in html and "<p>Can we move the class?</p>" in html,
+          (body, html))
+    check("and the send log records the reply", rec["subject"] == "Re: Spring timetable" and rec["to"] == "ana@example.org",
+          rec)
+    m = FakeMailer()
+    _, exc = outcome(A.send, p, m, "work", None, "Another subject", "x", reply=reply)
+    check("a reply never renames the subject", isinstance(exc, D.UsageError) and "subject" in str(exc)
+          and m.sent == [], repr(exc))
+    m = FakeMailer()
+    A.send(p, m, "work", "bookings@example.org", "Re: Spring timetable", "x", reply=reply)
+    check("an explicit --to wins for a reply", m.sent and m.sent[0][0] == "bookings@example.org", m.sent)
+
+    m = FakeMailer()
+    A.send(configured(D), m, "work", "you@example.com", "Timetable", "attached",
+           attachments=[("timetable.pdf", b"%PDF-1.4 x")])
+    check("attachments are handed to the mailer", m.extra and m.extra[0].get("attachments") == [("timetable.pdf", b"%PDF-1.4 x")],
+          m.extra)
+    check("a plain send carries no thread", m.extra and not m.extra[0].get("thread_id"), m.extra)
+
+    p = configured(D, http=FakeHttp(request=lambda method, url, token, body: (_ for _ in ()).throw(
+        P.HttpError(404, "Requested entity was not found."))))
+    _, exc = outcome(A.reply_context, p, "work", "nope", tz="UTC")
+    check("an original that cannot be read is a GoogleError", isinstance(exc, D.GoogleError) and "404" in str(exc),
+          repr(exc))
+
+
 def main():
     global A, D, P
     try:
@@ -305,7 +406,8 @@ def main():
     except Exception as exc:
         check("google_core.application, domain and ports import", False, "%s: %s" % (type(exc).__name__, exc))
     else:
-        for t in (test_add_and_list, test_authorize, test_access_token, test_api, test_api_retries, test_send):
+        for t in (test_add_and_list, test_authorize, test_access_token, test_api, test_api_retries, test_send,
+                  test_reply):
             try:
                 t()
             except Exception as exc:

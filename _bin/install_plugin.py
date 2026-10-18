@@ -29,6 +29,13 @@ Nothing is overwritten without its previous content going to
 <brain state>/plugin-backups/ first. The backup command follows
 30-Knowledge/2026-09-12-convention-back-up-a-skill-before-rewriting-it.md (tar.gz of the
 skill directory).
+
+A backup only lives while it is the one copy of what it holds. Once a step has succeeded and
+the vault's git holds the skill exactly as it is on disk (tracked, nothing changed), every
+backup and diff of that skill is removed: the old content is in the vault's history. They
+stay when the step failed, while a conflict is unresolved, while the vault copy is not
+committed, and for skills that no longer exist on either side. Without this rule the backups
+of skills synced several times a day grow without bound.
 """
 
 import argparse
@@ -36,7 +43,9 @@ import difflib
 import hashlib
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 import tarfile
 import time
@@ -71,6 +80,46 @@ def decide(vault, live, base):
     if vault == base:
         return "backport"
     return "conflict"
+
+
+def backup_owner(filename, kind, names):
+    """The skill or agent a plugin-backups file belongs to, or None.
+
+    Files are `<stamp>-<kind>-<name>-<side>[-N].tar.gz` and `<stamp>-<kind>-<name>[-N].diff`.
+    A name can itself end in `-vault` or a number, so it is resolved against the names that
+    exist: only a match there counts."""
+    m = re.match(r"^\d{8}-\d{6}-%s-(.+)\.(tar\.gz|diff)$" % re.escape(kind), filename)
+    if not m:
+        return None
+    rest, ext = m.groups()
+    stems = [rest]
+    numbered = re.match(r"^(.+)-\d+$", rest)
+    if numbered:
+        stems.append(numbered.group(1))
+    for stem in stems:
+        if ext == "diff" and stem in names:
+            return stem
+        side = re.match(r"^(.+)-(vault|live)$", stem)
+        if ext == "tar.gz" and side and side.group(1) in names:
+            return side.group(1)
+    return None
+
+
+def committed(path):
+    """True when git holds path exactly as it is on disk: tracked, and nothing changed or added."""
+    if not os.path.exists(path):
+        return False
+    where = path if os.path.isdir(path) else os.path.dirname(path)
+    try:
+        tracked = subprocess.run(["git", "-C", where, "ls-files", "--", path],
+                                 capture_output=True, text=True, timeout=60)
+        if tracked.returncode or not tracked.stdout.strip():
+            return False
+        status = subprocess.run(["git", "-C", where, "status", "--porcelain", "--", path],
+                                capture_output=True, text=True, timeout=60)
+        return status.returncode == 0 and not status.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 # ---------------------------------------------------------------- disk
@@ -211,6 +260,28 @@ class Syncer:
                     filter=lambda ti: None if _ignored(os.path.basename(ti.name)) else ti)
         return dest
 
+    def _backup_files(self, names):
+        """{(kind, name): [paths]} of every backup and diff in plugin-backups with a known owner."""
+        d = os.path.join(self.state_dir, "plugin-backups")
+        out = {}
+        for f in os.listdir(d) if os.path.isdir(d) else []:
+            for kind in KINDS:
+                owner = backup_owner(f, kind, names[kind])
+                if owner is not None:
+                    out.setdefault((kind, owner), []).append(os.path.join(d, f))
+        return out
+
+    def _discard(self, kind, name, names, entry):
+        """Remove every backup and diff of one skill or agent, the ones this run wrote included."""
+        for path in self._backup_files({k: (names if k == kind else set()) for k in KINDS}).get((kind, name), []):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        for field in ("backup", "diff"):
+            if field in entry and not os.path.exists(entry[field]):
+                del entry[field]
+
     def _diff(self, kind, name):
         vault, live = self._path(self.plugin_dir, kind, name), self._path(self.claude_dir, kind, name)
         if kind == "agents":
@@ -263,10 +334,15 @@ class Syncer:
             return [{"kind": i["kind"], "name": i["name"], "action": i["action"]} for i in items]
         manifest = self._manifest()
         report = []
+        names = {kind: {i["name"] for i in items if i["kind"] == kind} for kind in KINDS}
+        backed_up = self._backup_files(names)
         for i in items:
             kind, name, key, action = i["kind"], i["name"], i["key"], i["action"]
             vault_path, live_path = self._path(self.plugin_dir, kind, name), self._path(self.claude_dir, kind, name)
             entry = {"kind": kind, "name": name, "action": action}
+            # A back-port rewrites the vault copy, so whether git holds the content its backup
+            # keeps has to be asked before; every other step leaves the vault copy as it was.
+            held_before = action == "backport" and not install_only and committed(vault_path)
             try:
                 if action == "same":
                     manifest[key] = i["vault"]
@@ -291,6 +367,10 @@ class Syncer:
                     entry["diff"] = self._diff(kind, name)
             except Exception as exc:
                 entry["error"] = "%s: %s" % (type(exc).__name__, exc)
+            done = "error" not in entry and entry["action"] in ("same", "install", "backport")
+            if done and ((kind, name) in backed_up or "backup" in entry):
+                if held_before if action == "backport" else committed(vault_path):
+                    self._discard(kind, name, names[kind], entry)
             if action not in ("same", "none"):
                 self.log("plugin %s %s%s" % (entry["action"], key, (" — " + entry["error"]) if "error" in entry else ""))
             report.append(entry)

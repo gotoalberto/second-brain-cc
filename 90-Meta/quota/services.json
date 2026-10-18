@@ -1,0 +1,46 @@
+{
+ "antigravity": {
+  "name": "Google Antigravity (the agy CLI), on the signed-in Google account's plan",
+  "unit": "percent",
+  "limits": [
+   "the plan's own usage allowance, shared by every Antigravity run on that account; the plan decides its size and its reset"
+  ],
+  "check": "the usage agy reports after each run (the `usage` field of agy_run.py's JSON)",
+  "skills": [
+   "antigravity"
+  ]
+ },
+ "chatgpt-images": {
+  "name": "ChatGPT image generation on chatgpt.com, on the signed-in account's plan",
+  "unit": "images",
+  "limits": [
+   "the plan's image allowance per time window; ChatGPT says when it is reached and when it resets"
+  ],
+  "check": "the message ChatGPT shows when the limit is reached, with its reset time",
+  "skills": [
+   "chatgpt-image"
+  ]
+ },
+ "grok-imagine": {
+  "name": "Grok Imagine image and video generation on grok.com, on the signed-in account's plan",
+  "unit": "generations",
+  "limits": [
+   "the plan's generation allowance per time window; Grok says when it is reached and when it resets"
+  ],
+  "check": "the notice grok.com shows when the limit is reached, with its reset time",
+  "skills": [
+   "grok-browser"
+  ]
+ },
+ "twitterapi-io": {
+  "name": "twitterapi.io, the paid X/Twitter read API",
+  "unit": "credits",
+  "limits": [
+   "prepaid credits, spent per call by the number of items returned; the price list is on twitterapi.io"
+  ],
+  "check": "the twitterapi.io dashboard, which shows the balance",
+  "skills": [
+   "twitterapi-io"
+  ]
+ }
+}

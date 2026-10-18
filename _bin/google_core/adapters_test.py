@@ -203,6 +203,12 @@ def test_wiring():
     ports = AD.build_ports(environ={"HOME": root, "BRAIN_STATE": os.path.join(root, "state")}, open_browser=False)
     check("the real ports wait between API retries with the real sleep", getattr(ports, "sleep", None) is time.sleep,
           getattr(ports, "sleep", None))
+    state = os.path.join(root, "state")
+    ports = AD.build_ports(environ={"HOME": root, "BRAIN_STATE": state}, open_browser=False)
+    check("a refused token is reported through token_alert", callable(getattr(ports, "alert", None)))
+    res = ports.alert("work", "refresh refused (400): invalid_grant") if callable(getattr(ports, "alert", None)) else None
+    check("which, with no alert address configured, sends nothing and never raises",
+          res == "no-route" and not os.path.exists(os.path.join(state, "token-alert.json")), res)
 
 def test_receiver():
     print("\n== LoopbackReceiver ==")

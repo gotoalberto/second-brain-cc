@@ -372,6 +372,23 @@ def test_raw_log_run_id(A, D):
     check("a failed attempt's entry carries its run id, whole", "run=" + rid in text, text)
 
 
+def test_this_machine(A):
+    print("\n== ThisMachine ==")
+    mine = {"box-1a2b3c4d", "0f0f0f0f-1a2b-3c4d-5e6f-0a1b2c3d4e5f"}
+    m = A.ThisMachine("box", lambda v: v.strip().casefold() in mine, names=["box", "box-1a2b3c4d"])
+    check("its name lists what it answers to", m.name() == "box (box-1a2b3c4d)", m.name())
+    check("it matches like the registry's machine column: the hostname, *, and what machine identity accepts",
+          m.matches("box") and m.matches("*") and m.matches("BOX-1A2B3C4D")
+          and m.matches("0f0f0f0f-1a2b-3c4d-5e6f-0a1b2c3d4e5f"))
+    check("and not another machine", not m.matches("studio-box") and not m.matches(""))
+    raising = A.ThisMachine("box", lambda v: 1 / 0, names=["box"])
+    check("a machine identity that raises is not a match, never a crash",
+          raising.matches("box") and not raising.matches("box-1a2b3c4d"))
+    d = A.ThisMachine()
+    check("with no arguments it answers to this host's own name",
+          d.matches(d.names()[0]) and d.name().startswith(d.names()[0]), d.names())
+
+
 def main():
     try:
         from routine_auth_core import adapters as A
@@ -382,7 +399,7 @@ def main():
         for t, args in ((test_kp_token_source, (A, D)), (test_pool_file, (A, D)), (test_state_store, (A,)),
                         (test_raw_log, (A, D)), (test_cli_resolver, (A, D)), (test_cli_attempt, (A, D)),
                         (test_scratch_dirs, (A, D)), (test_run_ids, (A, D)), (test_mail_sent_log, (A, D)),
-                        (test_raw_log_run_id, (A, D))):
+                        (test_raw_log_run_id, (A, D)), (test_this_machine, (A,))):
             try:
                 t(*args)
             except Exception as exc:

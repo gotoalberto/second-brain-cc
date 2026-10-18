@@ -202,6 +202,22 @@ def machine_is_mine(value, current=None, uuid=None, label=None, historical=None,
     return bool(frag) and v.endswith("-" + frag)
 
 
+def public_id(key=None, environ=None):
+    """An 8-hex id for this machine (or for `key`) that never carries the hostname.
+
+    For a name that travels in a git-tracked file (a per-machine ledger file in the vault): the
+    key's own uuid fragment when it has one, else the first 8 hex digits of a sha256 of the key, so
+    a machine with no readable uuid still gets a stable id without writing its hostname down.
+    """
+    import hashlib
+
+    key = str(key if key is not None else current_key(environ=environ)).strip()
+    m = _KEY_FRAGMENT.search(key.lower())
+    if m:
+        return m.group(1)
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
+
+
 def main():
     print(current_key())
     return 0

@@ -6,8 +6,8 @@ stack works out of the box. Everything else in this repository is under its own 
 
 Each vendored skill directory carries the upstream licence text (`LICENSE`, or `LICENSE.txt` for
 `frontend-design`) and a `SOURCE.md` naming the repository, path, commit and licence. The files are
-not modified here; to change one, refresh it from upstream (see "Third-party skills" in
-[README.md](README.md)).
+not modified here, except where an entry below lists what was changed; to change one, refresh it from
+upstream (see "Third-party skills" in [README.md](README.md)).
 
 All paths below are under `integrations/claude-code/plugin/brain/`.
 
@@ -77,3 +77,32 @@ it. See `skills/impeccable/SOURCE.md`.
 | Skill | Upstream path |
 |---|---|
 | `skills/frontend-design` | `skills/frontend-design` |
+
+## Animate (procedural animated video)
+
+- Upstream: https://github.com/cth9191/animate, commit `7e5eb56feb2dd573f890e1b7b34748af43d58263`
+- Licence: MIT, full text in `skills/animated-video/LICENSE` (copied from the repository root)
+- Copyright (c) 2026 cth9191
+- Changed here: the skill is renamed `animated-video` in its front matter (this plugin already has
+  Emil Kowalski's `animate`), its description is rewritten, an "Added in this repository" section is
+  appended to `SKILL.md`, and `scripts/av.sh` with its test is added. Every other file is upstream's.
+  See `skills/animated-video/SOURCE.md`.
+
+| Skill | Upstream path |
+|---|---|
+| `skills/animated-video` | `plugins/animate/skills/animate` |
+
+## Claude Code Video Toolkit (Remotion skill)
+
+- Upstream: https://github.com/digitalsamba/claude-code-video-toolkit, commit `959e0fc6c20210832078781e49daa7384cebb293`
+- Licence: MIT, full text in `skills/remotion/LICENSE`
+- Copyright (c) 2024 Digital Samba
+- Not bundled: the official Remotion skills (`remotion-dev/skills`), which the toolkit syncs as
+  `remotion-official`. They are under the Remotion License, which does not allow redistribution by
+  everyone; install them from upstream (see README). Remotion itself is under the Remotion License
+  too: https://remotion.dev/license.
+
+| File | Upstream path |
+|---|---|
+| `skills/remotion/SKILL.md`, `skills/remotion/reference.md` | `.claude/skills/remotion/` |
+| `skills/remotion/lib/` | `lib/` |

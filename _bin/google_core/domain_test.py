@@ -153,13 +153,62 @@ def test_send_rules(D):
           D.api_exit_code({"_http_error": 403, "_body": "x"}) == 1 and D.api_exit_code({"items": []}) == 0)
 
 
+def _b64(text):
+    import base64
+    return base64.urlsafe_b64encode(text.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def gmail_message(sender="Front Desk <desk@example.com>", to="ana@example.org", reply_to=None, parts=None):
+    headers = [{"name": "From", "value": sender}, {"name": "To", "value": to},
+               {"name": "Subject", "value": "Spring timetable"},
+               {"name": "Date", "value": "Sat, 17 Oct 2026 09:13:00 +0000"},
+               {"name": "Message-ID", "value": "<orig-1@example.com>"},
+               {"name": "References", "value": "<older-0@example.com>"}]
+    if reply_to:
+        headers.append({"name": "Reply-To", "value": reply_to})
+    if parts is None:
+        parts = [{"mimeType": "multipart/alternative", "parts": [
+            {"mimeType": "text/plain", "body": {"data": _b64("Hi Ana,\n\nThe class moves.\n")}},
+            {"mimeType": "text/html", "body": {"data": _b64("<p>Hi Ana,</p><p>The class moves.</p>")}}]}]
+    return {"id": "18f0f0f0f0f0f0f0", "threadId": "thread-77",
+            "payload": {"mimeType": "multipart/mixed", "headers": headers, "parts": parts}}
+
+
+def test_reply_source(D):
+    print("\n== what a reply needs from the original ==")
+    src = D.reply_source(gmail_message(), "desk@example.com")
+    check("the thread id, subject and Message-ID are read",
+          src["thread_id"] == "thread-77" and src["subject"] == "Spring timetable"
+          and src["message_id"] == "<orig-1@example.com>", src)
+    check("References chains the older ids plus the original",
+          src["references"] == "<older-0@example.com> <orig-1@example.com>", src["references"])
+    check("an own message is answered to its recipient", src["to"] == "ana@example.org", src["to"])
+    check("the date is read as an aware instant",
+          src["date"] == dt.datetime(2026, 10, 17, 9, 13, tzinfo=dt.timezone.utc), src["date"])
+    check("the bodies come from nested parts",
+          src["text"].startswith("Hi Ana,") and src["html"] == "<p>Hi Ana,</p><p>The class moves.</p>", src)
+    other = D.reply_source(gmail_message(sender="Ana Ruiz <ana@example.org>", to="desk@example.com"), "desk@example.com")
+    check("someone else's message is answered to its sender", other["to"] == "ana@example.org", other["to"])
+    check("and the sender is kept whole for the attribution line", other["sender"] == "Ana Ruiz <ana@example.org>")
+    rt = D.reply_source(gmail_message(sender="Ana <ana@example.org>", reply_to="bookings@example.org"), "desk@example.com")
+    check("a Reply-To wins over the sender", rt["to"] == "bookings@example.org", rt["to"])
+    html_only = D.reply_source(gmail_message(parts=[{"mimeType": "text/html", "body": {"data": _b64(
+        "<p>One &amp; two</p><p>three</p>")}}]), "desk@example.com")
+    check("an HTML-only original gets a plain text made from it",
+          "One & two" in html_only["text"] and "three" in html_only["text"] and "<p>" not in html_only["text"],
+          html_only["text"])
+    for why, msg in (("no payload", {"id": "x", "threadId": "t"}), ("no thread id", {"payload": {"headers": []}}),
+                     ("an HTTP error reply", {"_http_error": 404, "_body": "not found"})):
+        check("an original with %s is a GoogleError" % why, raises(D.reply_source, D.GoogleError, msg, "me@example.com"))
+
+
 def main():
     try:
         from google_core import domain as D
     except Exception as exc:
         check("google_core.domain imports", False, "%s: %s" % (type(exc).__name__, exc))
     else:
-        for t in (test_accounts, test_registry, test_consent, test_tokens, test_send_rules):
+        for t in (test_accounts, test_registry, test_consent, test_tokens, test_send_rules, test_reply_source):
             try:
                 t(D)
             except Exception as exc:

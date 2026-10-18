@@ -695,6 +695,53 @@ def test_requires(D):
               got is None and "requires is not a JSON object" in (problem or ""), (got, problem))
 
 
+def test_pool_machines(D):
+    import datetime as dt
+    import json
+
+    print("\n== the pool's machines field ==")
+    base = {"label": "routines-1", "account": "routines", "kp_ref": "kp://Brain/apis/claude-code-oauth-routines-1",
+            "issued": "2026-09-15"}
+    e = D.parse_pool(json.dumps({"tokens": [dict(base, machines=["studio-box", "0f0f0f0f-1a2b-3c4d-5e6f-0a1b2c3d4e5f"])]}))[0]
+    check("machines is read as a tuple, in order",
+          e.machines == ("studio-box", "0f0f0f0f-1a2b-3c4d-5e6f-0a1b2c3d4e5f"), e)
+    e = D.parse_pool(json.dumps({"tokens": [base]}))[0]
+    check("and is empty when omitted (usable on every machine)", e.machines == (), e)
+    for name, value in (("a string", "studio-box"), ("an empty list", []), ("a number in the list", ["box", 3]),
+                        ("an empty name", ["box", "  "]), ("an object", {"box": True}), ("a token value", [FAKE_TOKEN])):
+        try:
+            D.parse_pool(json.dumps({"tokens": [dict(base, machines=value)]}))
+            err = None
+        except D.PoolConfigError as exc:
+            err = str(exc)
+        check("machines as %s is a PoolConfigError naming the key" % name, err is not None and "machines" in err, err)
+        check("machines as %s: the error quotes no value" % name,
+              err is None or (FAKE_TOKEN not in err and "studio-box" not in err), err)
+
+    def entry(label, machines=()):
+        return D.PoolEntry(label, "kp://Brain/apis/x-" + label, dt.date(2026, 9, 15), machines=tuple(machines))
+
+    names = ["box-1a2b3c4d", "box"]
+
+    def here(cell):
+        return cell.strip().casefold() in {n.casefold() for n in names}
+
+    studio = entry("routines-1", ["studio-box", "0f0f0f0f"])
+    mine_only = entry("routines-2", ["BOX-1A2B3C4D"])
+    anywhere = entry("any")
+    mine, other = D.split_by_machine([studio, mine_only, anywhere], here)
+    check("split_by_machine keeps this machine's tokens and the unassigned ones, in pool order",
+          mine == [mine_only, anywhere] and other == [studio], (mine, other))
+    check("with no matcher every token is usable here",
+          D.split_by_machine([studio, mine_only], None) == ([studio, mine_only], []))
+    check("a matcher that raises counts as not this machine",
+          D.split_by_machine([studio], lambda cell: 1 / 0) == ([], [studio]))
+    msg = D.no_token_here_summary("box", [studio])
+    check("the no-token-here line names the machine, the field, the skipped token and the runbook",
+          "box" in msg and "machines" in msg and "routines-1" in msg
+          and "2026-09-15-runbook-brain-routine-auth" in msg, msg)
+
+
 def main():
     try:
         from routine_auth_core import domain as D
@@ -704,7 +751,7 @@ def main():
         for t in (test_classify, test_token_shape, test_redact, test_failover, test_pool_and_expiry,
                   test_cli_rules, test_run_rules, test_success_contract, test_permission_problem,
                   test_prompt_framing, test_run_identity_and_env, test_delivery_contract, test_scratch_rules,
-                  test_vault_routines, test_requires):
+                  test_vault_routines, test_requires, test_pool_machines):
             try:
                 t(D)
             except Exception as exc:

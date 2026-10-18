@@ -325,7 +325,10 @@ under which account".
   `_bin/query.py` searches it and `_bin/retrieve_core.py` renders what the prompt hook, the
   MCP `recall` tool and `brain recall` inject. No embeddings, no external service, no API key.
 - **Write path.** Every write to shared notes goes through `_bin/vw.py`: it redacts
-  credentials, serialises with a per-file lock, writes atomically and reindexes.
+  credentials, serialises with a per-file lock, writes atomically and reindexes. It reads the
+  body only from a pipe, a heredoc or `< file`; any other stdin (a terminal, the socket an agent's
+  shell tool leaves on fd 0) is no body, so `new` writes the note without one and `append` and
+  `set` exit 2 at once instead of waiting for ever.
 - **Git sync.** `_bin/vault_sync.py` keeps the vault in a git repo so memory travels between
   machines.
 - **Events.** [`90-Meta/events.json`](90-Meta/events.json) is the registry of every event
@@ -388,6 +391,7 @@ python3 _bin/google.py auth --account personal        # browser consent on 127.0
 python3 _bin/google.py auth --account work --publishing production   # app published in Google Cloud
 python3 _bin/google.py api --account personal "https://www.googleapis.com/calendar/v3/users/me/calendarList"
 python3 _bin/google.py send --account personal --to me@example.com --subject "Digest" --body-file digest.txt
+python3 _bin/google.py send --account personal --reply-to <gmail message id> --body-file answer.txt --attach timetable.pdf
 python3 _bin/google.py slots --account personal --start 2030-01-07T16:30:00+01:00 --minutes 45 --with b@example.com
 python3 _bin/google.py meeting --account work --also personal --start 2030-01-07T16:30:00+01:00 --minutes 45 --travel 20
 ```
@@ -415,6 +419,18 @@ Gmail, Calendar and Drive APIs enabled) and refresh token, both in KeePass under
 and `send` never prompt. Every delivered message is logged (never its body) to
 `<brain state>/logs/mail-sent.jsonl`, which the routine runner checks.
 
+`send --reply-to <message id>` answers a Gmail message as a real reply: the same thread,
+`In-Reply-To` and `References`, the subject `Re: <original>` (a different `--subject` is refused
+with exit 2), and the original quoted in Gmail's own quote block under an attribution line in this
+machine's time zone. `--to` defaults to the other party, and the body is only the new text. Answer
+or follow up a message this way, never with a new send and pasted `> ` lines, which lands as a
+separate conversation. `--attach FILE` (repeatable) adds a file to any send.
+
+When Google refuses an account's token (revoked, a changed password, a rotated client secret, a
+scope taken away), `_bin/token_alert.py` mails the guardian's address at once, at most once a day
+per account, through the guardian's transport or another account, never through the refused one.
+A network blip or a server error never alerts.
+
 An OAuth app left in Testing publishing status gets refresh tokens that die 7 days after
 consent. `auth` stamps the consent instant, and `_bin/google_token_watch.py` (run daily) mails
 a warning three days before the deadline, through another account when you give it one
@@ -428,7 +444,15 @@ config (backing it up, removing only Brain hooks whose script no longer exists),
 and agents, sets `core.hooksPath` to the vault's `githooks/`, reinstalls or reloads the
 scheduled jobs you accepted, probes that the hooks actually fire, and alerts you (desktop
 notification, email if configured, log) about what it could not fix. A repair run exits 0 when
-it completed, whatever it found. `guardian.py status` shows everything it watches.
+it completed, whatever it found. `guardian.py status` shows everything it watches, including the
+routine tokens assigned to this machine (and the ones skipped because they belong to others).
+
+The skills sync backs up a copy before it overwrites it, into `<brain state>/plugin-backups/`, and
+removes those backups once the step succeeded and the vault's git holds the skill exactly as it is
+on disk; they stay after a failure, during an unresolved conflict and while the vault copy is not
+committed. The interpreter probe gives a slow start (a machine that has just woken) one longer
+retry before it reports python3 broken, and the hook check skips sessions that were opened and
+never used.
 
 The same repair keeps `ENABLE_CLAUDEAI_MCP_SERVERS=false` in the `env` block of Claude Code's
 `settings.json`, leaving every other key there as it is. That switches off the vendor account
@@ -453,17 +477,45 @@ template).
   the pool in `90-Meta/routine-tokens.json` (KeePass references only, never committed), a narrow
   tool allowlist, a private scratch directory per run, a prompt framed as an order to run now, and
   a success contract checked against the send log rather than the model's last words. Failures
-  raise guardian alerts.
+  raise guardian alerts. A routine's front matter can name its `model:`; a failure a better model
+  can help with gets one repair attempt on `fallback_model:` (default `opus`), which also fixes the
+  skill or routine and logs the fix in `90-Meta/routine-model-fallback-log.md`, and the alert is
+  raised only when both attempts fail (`_bin/model_fallback.py`). Routines that share a scarce
+  resource name a `lock_group:` and never run at once: a busy group skips the routine on that tick
+  and the holder runs it as soon as it ends. A pool token may list the `machines` it may run on;
+  tokens assigned to other machines are skipped here. The keys are documented in the registry note.
 - **[`integrations/scheduler/`](integrations/scheduler/)** is the simplest option: Markdown tasks
   with a cron expression and a prompt, handed to any agent command on stdin.
 
 They coexist; a task belongs in one of them.
 
+## Quota ledger
+
+`_bin/quota.py` keeps one ledger of every service with a quota (API credits, a plan's usage window,
+a daily allowance of generations), shared by every machine through the vault. Rows go to
+`90-Meta/quota/<YYYY-MM>-<machine>.jsonl`, one file per machine and month so syncs never conflict;
+`<machine>` is `machine_identity.public_id()`, an 8-hex id that never carries the hostname. The
+files are committed like any note, which is how the other machines see them.
+
+```bash
+python3 _bin/quota.py status twitterapi-io          # last reading, spent since, estimate, per window spend
+python3 _bin/quota.py spend twitterapi-io 120 --what "weekly digest search" --skill twitterapi-io
+python3 _bin/quota.py reading antigravity --used-pct 35 --window week
+python3 _bin/quota.py services                      # the catalogue
+```
+
+Check `status` before a job that spends a quota and record one `spend` after it. A service that is
+not in the catalogue, [`90-Meta/quota/services.json`](90-Meta/quota/services.json), is refused: add
+it there first, with its unit, its limits and where its own usage page shows what is left.
+
 ## Skills
 
 Published under `integrations/claude-code/plugin/brain/skills/` and installed by
 `integrations/claude-code/install.sh`. Where a skill needs the vault's path it says `__VAULT__`,
-which the installer replaces with yours.
+which the installer replaces with yours. Environment variables a skill reads are best set in the
+`env` block of Claude Code's `settings.json`, so every session and routine sees the same values.
+Skills that spend a quota (`antigravity`, `twitterapi-io`, `chatgpt-image`, `grok-browser`) record
+it in the vault's quota ledger (`_bin/quota.py`).
 
 | Skill | What it does | What it needs |
 |---|---|---|
@@ -474,18 +526,23 @@ which the installer replaces with yours.
 | `vault-doctor` | Diagnoses the vault and the memory system | The vault; reads `guardian.py status` when the guardian is installed |
 | `kp` | Reads and files credentials in your KeePass database | KeePassXC (`keepassxc-cli`) and a database connected in the first run |
 | `dev` | The development pipeline: hexagonal architecture, tests first, design and review gates for anything with an interface, including a worst-case data pass and a phone pass before the critique rounds | The bundled third-party skills below, and a browser or preview tool for the rendered checks |
-| `job-search` | Finds and ranks openings against your own profile (remote, plus on-site or hybrid in an area you name) and LinkedIn posts from people who are hiring; report only | A Google account connected with the send scope; your own `profile.md`, `preferences.md` (recipient address, account name) and `search-queries.md` created from the skill's `templates/` under `80-Private/job-search/` (local, never pushed); `curl` and `jq`; for the LinkedIn posts step, Claude in Chrome with a browser signed in to LinkedIn (without it the report says the step was skipped) |
+| `job-search` | Finds and ranks openings against your own profile (remote, plus on-site or hybrid in an area you name) and LinkedIn posts from people who are hiring (a search pass and a pass over your whole feed); the daily run is report only, and in an interactive session it helps with an application you make yourself (salary at the top of the estimated band, the CV pitched to the role's seniority, the form's language, questions only you can answer asked one per field) | A Google account connected with the send scope; your own `profile.md`, `preferences.md` (recipient address, account name, excluded sectors, optionally a job search framework checkout to check for upstream updates) and `search-queries.md` created from the skill's `templates/` under `80-Private/job-search/` (local, never pushed); `curl` and `jq`; for the LinkedIn posts step, Claude in Chrome with a browser signed in to LinkedIn (without it the report says the step was skipped) |
 | `machine-update` | Updates Claude Code on this machine and says what is stale: the CLI, the Remote Control server still running an old binary, the desktop app's copy | `_bin/machine_update.py`; restarts the server by itself only on macOS and only when no session is open |
-| `antigravity` | Hands a task to Google's Antigravity agent (the `agy` CLI) for a second opinion or an alternative design, through a wrapper that sandboxes it, refuses autonomous mode in a main checkout and returns one JSON object; Claude reviews and verifies what comes back | **macOS only** (`agy` keeps its Google sign-in in the macOS keychain). `agy` installed at `~/.local/bin/agy` (or `AGY_BIN`) and signed in once in a terminal; `agy_run.py doctor` checks both. Uses the Google account's Antigravity plan quota |
-| `twitterapi-io` | Reads X/Twitter content (an account's tweets, a search, a list timeline, tweets by id) through the paid twitterapi.io API | A twitterapi.io API key filed in KeePass as `apis/twitterapi-io` (read with `kp.py --pipe`, never printed); `BRAIN_KP_SCRIPT` overrides where `kp.py` is found |
+| `antigravity` | Hands a task to Google's Antigravity agent (the `agy` CLI) for a second opinion or an alternative design, through a wrapper that sandboxes it, refuses autonomous mode in a main checkout and returns one JSON object; Claude reviews and verifies what comes back | macOS or Linux. `agy` installed at `~/.local/bin/agy` (or `AGY_BIN`) and signed in once per machine in a terminal, as the user the agent runs as; `agy_run.py doctor` checks both. Uses the Google account's Antigravity plan quota, recorded in the quota ledger (`_bin/quota.py`, service `antigravity`) |
+| `twitterapi-io` | Reads X/Twitter content (an account's tweets, a search, a list timeline, tweets by id) through the paid twitterapi.io API | A twitterapi.io API key filed in KeePass as `apis/twitterapi-io` (read with `kp.py --pipe`, never printed); `BRAIN_KP_SCRIPT` overrides where `kp.py` is found. Credits spent are recorded in the quota ledger (`_bin/quota.py`, service `twitterapi-io`) |
+| `chatgpt-image` | Makes images with ChatGPT on chatgpt.com: first decides whether HTML, a real image or a generated one fits, writes the prompt, judges every result, iterates or regenerates, and exports the PNG with a sidecar (prompt, chat URL, sha256) for other skills to use. Never images that carry words, figures, logos or charts | Claude in Chrome, with a Chrome signed in to ChatGPT on a plan that creates images; `xclip` on Linux (the built-in `osascript` on macOS). Optional `CHATGPT_IMAGE_PROJECT_URL` (the ChatGPT project new images start in; unset means a plain chat), `CHATGPT_IMAGE_DIR` (default `~/chatgpt-images`), `CHATGPT_IMAGE_DISPLAY` (Linux). Images are recorded in the quota ledger (service `chatgpt-images`) |
+| `grok-browser` | Grok chat and Grok Imagine (images, image to video clips) on grok.com, downloaded to disk | Claude in Chrome, with a Chrome signed in to grok.com. From a network grok.com blocks, a VPN exit through `vpn-proxy`. Images and clips are recorded in the quota ledger (service `grok-imagine`) |
+| `x-browser` | Reads and writes X as you: posts, replies, quotes, deletes, timelines, mentions, lists, and every tweet of a list or search in the last 24 hours (with `scripts/x_items.py` to collect them); checks the active account at every step | Claude in Chrome, with a Chrome signed in to X on every account you list; `X_BROWSER_ACCOUNTS` (comma separated `@handle` or `@handle=what it is for`, the first is the default) |
+| `vpn-proxy` | WireGuard exits for command line tools: a userspace tunnel (wireproxy, no root, the machine's network untouched) with a local SOCKS5 proxy per exit; also switches a VPN provider's browser extension on and off | `VPN_PROXY_EXITS` (comma separated `name` or `name=port`), one KeePass entry per exit at `kp://infra/vpn-wg-<name>` (password: the WireGuard private key; notes: the rest of the config with `{{PRIVATE_KEY}}` in its place), prefix overridable with `VPN_PROXY_KP_PREFIX`. Downloads a pinned wireproxy release on first use, sha256 checked. Tested with a commercial provider's WireGuard configs |
 
 ### Third-party skills
 
-The web stack `dev` uses is bundled with the plugin, copied verbatim from its upstream repositories
-under their own licences, and installed with everything else. Each skill directory keeps its upstream
-licence text and a `SOURCE.md` with the repository, commit and licence;
+The web stack `dev` uses and two video skills are bundled with the plugin, copied from their
+upstream repositories under their own licences, and installed with everything else. Each skill
+directory keeps its upstream licence text and a `SOURCE.md` with the repository, commit and licence;
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists them all with their copyright lines. They are
-not modified here.
+not modified here, except `animated-video`, renamed from upstream's `animate` (the name of Emil
+Kowalski's skill) and given a runtime wrapper; its `SOURCE.md` lists every change.
 
 | Skills | Upstream | Licence |
 |---|---|---|
@@ -493,6 +550,15 @@ not modified here.
 | `frontend-design` | `anthropics/skills` (Anthropic) | Apache-2.0 |
 | `design-taste-frontend` | `leonxlnx/taste-skill` (Leonxlnx) | MIT |
 | `emil-design-eng`, `animate`, `animate-expo`, `animation-vocabulary`, `apple-design`, `ask-sonner`, `break-ui`, `find-animation-opportunities`, `improve-animations`, `mobile-native`, `pick-ui-library`, `prototype`, `review-animations`, `write-swift` | `emilkowalski/skills` (Emil Kowalski) | MIT |
+| `animated-video` (procedural canvas videos with a synthesized score, rendered to MP4; needs Node 18+ and ffmpeg, and `scripts/av.sh` installs a pinned Playwright with Chromium on first use) | `cth9191/animate` (cth9191) | MIT |
+| `remotion` (Remotion patterns, shared components and transitions from the toolkit, in `lib/`) | `digitalsamba/claude-code-video-toolkit` (Digital Samba) | MIT |
+
+**The official Remotion skills are not bundled.** `remotion-dev/skills`, which the `remotion` skill
+points to for core Remotion knowledge, ships no licence of its own and comes from the Remotion
+monorepo, under the Remotion License, which does not let everyone redistribute it. Install them from
+upstream: `npx skills add remotion-dev/skills`. Remotion itself is free for individuals and small
+companies, and needs a company licence for larger for-profit organisations
+(https://remotion.dev/license).
 
 `impeccable`'s launcher downloads upstream's engine binary from upstream's GitHub releases on first
 use, when none is installed, and checks its sha256 before running it.
@@ -508,6 +574,7 @@ npx skills@latest add emilkowalski/skills -g -a claude-code -s '*' -y
 npx skills@latest add anthropics/skills -g -a claude-code -s frontend-design -y
 npx skills@latest add leonxlnx/taste-skill -g -a claude-code -s design-taste-frontend -y
 npx impeccable install
+npx skills add remotion-dev/skills
 ```
 
 Emil Kowalski's repository has no skill called `animate-pro`; motion is built with `animate`.
@@ -586,10 +653,12 @@ The deepest experience today is Claude Code with the plugin; nothing in the vaul
 | `handoff.py` | One-time handoff of a new machine's keyfile, database and settings. |
 | `google.py` | Named Google accounts: Gmail, Calendar, Drive. |
 | `google_token_watch.py` | Warns before a Testing-mode Google refresh token expires. |
+| `token_alert.py` | Mails the owner, through another channel, when Google refuses an account's token. |
+| `quota.py` | The shared ledger of every service with a quota. |
 | `files.py` / `files_core.py`, `brain_files.py` | The file store: deliverables, intermediates and material in a local directory, anchored to notes; where that directory is. |
 | `guardian.py` | Keeps hooks, git hooks and scheduled jobs wired, and alerts. |
 | `brain_watch.py` | The file watch and the generated hooks. |
-| `tasks.py` | The periodic task and routine runner. |
+| `tasks.py`, `model_fallback.py` | The periodic task and routine runner; the model a routine runs on and its repair attempt. |
 | `machine_identity.py`, `machines.py`, `machine_caps.py` | Which machine this is; the registry of machines and their Claude accounts; the `## This machine` block, including which connected Chrome is this machine's own (`machine_caps.py learn-chrome`). The block is served from a cache refreshed in the background, so the start hook never waits on probes; `machine_caps.py --fresh` probes now. |
 | `machine_update.py` | What needs updating for Claude on this machine (CLI, Remote Control server, desktop app) and the safe part of doing it (`/machine-update`). |
 | `routine_requires.py` | Preflight: the repos, programs and paths a routine needs on this machine. On Linux `here` also checks that the tasks unit runs with `KillMode=process`, so a task that detaches its work is not killed when the runner exits. |

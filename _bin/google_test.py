@@ -103,6 +103,46 @@ def in_process(GP):
         GP.A = real
 
 
+def send_in_process(GP, root):
+    """google.py send's wiring of --reply-to and --attach, with the application layer faked."""
+    import io
+    import types
+
+    calls = {}
+
+    def reply_context(ports, name, message_id, tz="UTC"):
+        calls["reply_context"] = (name, message_id, tz)
+        return {"subject": "Re: Spring timetable", "to": "ana@example.org", "thread_id": "t-1"}
+
+    def send(ports, mailer, name, to, subject, body, html=False, run_id=None, attachments=None, reply=None):
+        calls["send"] = dict(name=name, to=to, subject=subject, body=body, attachments=attachments, reply=reply)
+        return {"to": to or reply["to"], "subject": subject or reply["subject"]}
+
+    real = GP.A
+    GP.A = types.SimpleNamespace(get_account=lambda ports, name: types.SimpleNamespace(name=name, login_hint="me@example.com"),
+                                 reply_context=reply_context, send=send, access_token=lambda *a, **k: "t")
+    att = os.path.join(root, "timetable.pdf")
+    with open(att, "wb") as fh:
+        fh.write(b"%PDF-1.4 x")
+    try:
+        out = io.StringIO()
+        rc = GP.run(GP.make_parser().parse_args(["send", "--account", "work", "--reply-to", "18f0f0f0f0f0f0f0",
+                                                 "--attach", att]),
+                    None, io.StringIO("Thursday suits me."), out, {"TZ": "Europe/Paris"})
+        sent = calls.get("send", {})
+        check("send --reply-to fetches the original in this machine's zone",
+              calls.get("reply_context") == ("work", "18f0f0f0f0f0f0f0", "Europe/Paris"), calls.get("reply_context"))
+        check("and hands the reply on with no --to or --subject of its own",
+              rc == 0 and sent.get("reply", {}).get("thread_id") == "t-1" and sent.get("to") is None
+              and sent.get("subject") is None and sent.get("body") == "Thursday suits me.", (rc, sent))
+        check("--attach reads the file into (name, bytes)",
+              sent.get("attachments") == [("timetable.pdf", b"%PDF-1.4 x")], sent.get("attachments"))
+        check("and says where the reply went", "sent to ana@example.org: Re: Spring timetable" in out.getvalue(),
+              out.getvalue())
+    finally:
+        GP.A = real
+
+
 def main():
     root = tempfile.mkdtemp(prefix="google-cli-")
     try:
@@ -171,6 +211,16 @@ def main():
         rc, out, err = run("send", "--account", "work", "--to", "a@b.co", "--subject", "s", stdin="body")
         check("send that cannot get a token exits 1 with one line on stderr",
               rc == 1 and len(err.strip().splitlines()) == 1, (rc, err))
+        rc, out, err = run("send", "--account", "work", "--subject", "s", stdin="body")
+        check("send with neither --to nor --reply-to is a usage error, exit 2", rc == 2 and "--to" in err, (rc, err))
+        rc, out, err = run("send", "--account", "work", "--to", "a@b.co", stdin="body")
+        check("send with neither --subject nor --reply-to is a usage error, exit 2",
+              rc == 2 and "--subject" in err, (rc, err))
+        missing = os.path.join(root, "missing.pdf")
+        rc, out, err = run("send", "--account", "work", "--to", "a@b.co", "--subject", "s", "--attach", missing,
+                           stdin="body")
+        check("an attachment that cannot be read is a usage error naming it, before any token",
+              rc == 2 and "missing.pdf" in err, (rc, err))
         body = os.path.join(root, "event.json")
         with open(body, "w") as fh:
             json.dump({"start": {"dateTime": "2030-01-07T16:30:00+01:00"},
@@ -197,6 +247,10 @@ def main():
                            "--tz", "UTC")
         check("meeting that cannot get a token exits 1, nothing written", rc == 1 and out == "", (rc, out, err))
         in_process(GP)
+        try:
+            send_in_process(GP, root)
+        except Exception as exc:
+            check("send_in_process ran to the end", False, "%s: %s" % (type(exc).__name__, exc))
     finally:
         shutil.rmtree(root, ignore_errors=True)
     print("\nRESULT: %d passed, %d failed" % (len(ok), len(fail)))

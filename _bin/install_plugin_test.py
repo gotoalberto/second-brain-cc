@@ -246,6 +246,99 @@ def test_cli():
           and "skills/cli-skill" in json.load(open(os.path.join(state, "plugin-manifest.json"))))
 
 
+def git(root, *args):
+    subprocess.run(["git", "-C", root, "-c", "user.name=t", "-c", "user.email=t@example.com",
+                    "-c", "commit.gpgsign=false", *args], check=True, capture_output=True)
+
+
+def backups_of(state, name):
+    d = os.path.join(state, "plugin-backups")
+    if not os.path.isdir(d):
+        return []
+    return sorted(f for f in os.listdir(d) if "-skills-%s-" % name in f or f.endswith("-skills-%s.diff" % name))
+
+
+def test_backup_owner(IP):
+    print("\n== whose backup a file is ==")
+    names = {"foo", "foo-vault", "class-planner", "v2"}
+    cases = {
+        "20261016-095658-skills-class-planner-vault.tar.gz": "class-planner",
+        "20261016-095658-skills-class-planner-live-2.tar.gz": "class-planner",
+        "20261016-095658-skills-class-planner.diff": "class-planner",
+        "20261016-095658-skills-class-planner-1.diff": "class-planner",
+        "20261016-095658-skills-foo-vault.tar.gz": "foo",
+        "20261016-095658-skills-foo-vault-live.tar.gz": "foo-vault",
+        "20261016-095658-skills-foo-vault.diff": "foo-vault",
+        "20261016-095658-skills-v2.diff": "v2",
+        "20261016-095658-skills-gone-vault.tar.gz": None,
+        "20261016-095658-agents-foo.diff": None,
+        "notes.txt": None,
+    }
+    got = {f: IP.backup_owner(f, "skills", names) for f in cases}
+    check("a backup file is matched to exactly one skill, side and -N suffix included", got == cases,
+          {f: g for f, g in got.items() if g != cases[f]})
+
+
+def test_backups_go_once_git_holds_them(IP):
+    print("\n== backups are removed once the vault's git holds what they hold ==")
+    plugin, claude, state = world()
+    vault_repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(plugin))))
+    git(vault_repo, "init", "-q")
+    skill(plugin, "edited", "old wording")
+    skill(claude, "edited", "old wording")
+    skill(plugin, "dirty", "committed wording")
+    skill(claude, "dirty", "committed wording")
+    git(vault_repo, "add", "-A")
+    git(vault_repo, "commit", "-qm", "base")
+    s = IP.Syncer(plugin, claude, state)
+    s.apply()
+
+    skill(claude, "edited", "new wording, edited live")
+    skill(plugin, "dirty", "vault wording nobody committed")
+    skill(claude, "dirty", "live wording")
+    report = {r["name"]: r for r in s.apply()}
+    check("a back-port over a committed vault copy leaves no backup behind",
+          read(os.path.join(plugin, "skills", "edited", "SKILL.md")).endswith("new wording, edited live\n")
+          and not backups_of(state, "edited") and not report["edited"].get("backup"),
+          (backups_of(state, "edited"), report["edited"]))
+    check("a conflict keeps both backups and the diff",
+          report["dirty"]["action"] == "conflict" and len(backups_of(state, "dirty")) == 3, backups_of(state, "dirty"))
+
+    skill(plugin, "dirty", "settled wording")
+    skill(claude, "dirty", "settled wording")
+    s.apply()
+    check("once resolved but not committed, the conflict backups stay", len(backups_of(state, "dirty")) == 3,
+          backups_of(state, "dirty"))
+    git(vault_repo, "add", "-A")
+    git(vault_repo, "commit", "-qm", "resolved")
+    s.apply()
+    check("and they go on the first sync after the vault commits the resolution", not backups_of(state, "dirty"),
+          backups_of(state, "dirty"))
+
+    skill(plugin, "edited", "wording from another machine")
+    git(vault_repo, "add", "-A")
+    git(vault_repo, "commit", "-qm", "other machine")
+    report = {r["name"]: r for r in s.apply()}
+    check("an install over a live copy git already holds leaves no backup behind",
+          read(os.path.join(claude, "skills", "edited", "SKILL.md")).endswith("from another machine\n")
+          and not backups_of(state, "edited"), (backups_of(state, "edited"), report["edited"]))
+
+    write(os.path.join(state, "plugin-backups", "20260919-170653-skills-gone-vault.tar.gz"), "x")
+    s.apply()
+    check("a backup of a skill that no longer exists is never removed", backups_of(state, "gone") != [],
+          backups_of(state, "gone"))
+
+    plugin2, claude2, state2 = world()
+    skill(plugin2, "loose", "vault wording")
+    skill(claude2, "loose", "vault wording")
+    s2 = IP.Syncer(plugin2, claude2, state2)
+    s2.apply()
+    skill(claude2, "loose", "edited live")
+    s2.apply()
+    check("a back-port into a vault copy git does not hold keeps its backup",
+          len(backups_of(state2, "loose")) == 2, backups_of(state2, "loose"))
+
+
 def main():
     try:
         import install_plugin as IP
@@ -253,7 +346,8 @@ def main():
     except Exception as exc:
         check("install_plugin imports", False, "%s: %s" % (type(exc).__name__, exc))
         return finish()
-    for t in (test_decide, test_digest, test_sync, test_install_only, test_vault_placeholder):
+    for t in (test_decide, test_digest, test_sync, test_install_only, test_vault_placeholder, test_backup_owner,
+              test_backups_go_once_git_holds_them):
         try:
             t(IP)
         except Exception as exc:

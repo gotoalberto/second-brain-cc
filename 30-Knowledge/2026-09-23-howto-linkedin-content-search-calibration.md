@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-30
+updated: 2026-10-14
 supersedes: []
 ---
 
@@ -46,6 +46,13 @@ https://www.linkedin.com/search/results/content/?keywords=<q>&datePosted=%22past
   dead: use the word people actually write.
 - **Some phrases belong to two languages.** `"estamos contratando"` is Portuguese as well as Spanish
   and on its own drags in the other market.
+
+## Two passes for hiring posts
+
+Title queries alone miss the posts that name no title and the ones that only show in the user's
+network feed. The hiring post review therefore runs a formula search (hiring phrases each paired with
+one domain term) and a read of the whole home feed back to the previous run:
+[[2026-10-14-decision-linkedin-hiring-two-passes-search-and-timeline]].
 
 ## The dominant false positive
 

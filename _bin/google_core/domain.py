@@ -192,6 +192,16 @@ def access_token_from(payload, required_scope=None) -> str:
     return token
 
 
+# Statuses of the token endpoint that mean Google refused the token itself (invalid_grant: revoked,
+# expired, the password changed; invalid_client: the client secret rotated). A 5xx or a lost
+# connection is a blip that the next call may not see: never a reason to tell anyone.
+REFUSAL_STATUSES = (400, 401, 403)
+
+
+def is_refusal(status) -> bool:
+    return status in REFUSAL_STATUSES
+
+
 def refresh_token_from(payload) -> str:
     token = payload.get("refresh_token") if isinstance(payload, dict) else None
     if not token:
@@ -231,3 +241,66 @@ def retry_delays(method) -> tuple:
 def api_exit_code(result) -> int:
     """`google.py api` prints Google's reply either way; an HTTP error exits 1."""
     return 1 if isinstance(result, dict) and "_http_error" in result else 0
+
+
+# ---------------------------------------------------------------- replies
+
+
+def _decode_part(data: str) -> str:
+    import base64
+
+    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4)).decode("utf-8", "replace")
+
+
+def _part_bodies(payload) -> tuple:
+    """(text, html) of a Gmail API payload, the first of each found walking nested multiparts."""
+    found = {}
+
+    def walk(part):
+        mime = part.get("mimeType", "")
+        data = (part.get("body") or {}).get("data")
+        if data and mime in ("text/plain", "text/html") and mime not in found:
+            found[mime] = _decode_part(data)
+        for sub in part.get("parts") or ():
+            walk(sub)
+
+    walk(payload or {})
+    return found.get("text/plain"), found.get("text/html")
+
+
+def html_to_text(markup: str) -> str:
+    """A rough plain text of some HTML, for the quoted plain part of a reply."""
+    import html as _html
+
+    text = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</li>", "\n", markup or "")
+    return _html.unescape(re.sub(r"<[^>]+>", "", text)).strip()
+
+
+def reply_source(message, own_address) -> dict:
+    """What a reply to a Gmail API message (format=full) needs from it.
+
+    thread_id, subject (as written), sender (whole, for the attribution line), to (the other
+    party: the recipient of an own message, else its Reply-To or sender), date (aware),
+    message_id, references (older ids plus this one), text and html. Raises GoogleError when the
+    reply is not a readable message.
+    """
+    import email.utils
+
+    payload = message.get("payload") if isinstance(message, dict) else None
+    if not isinstance(payload, dict) or not message.get("threadId"):
+        raise GoogleError("the message to reply to could not be read: %s" % str(message)[:200])
+    h = {str(x.get("name", "")).lower(): str(x.get("value", "")) for x in payload.get("headers") or ()}
+    sender = h.get("from", "")
+    own = bool(own_address) and email.utils.parseaddr(sender)[1].lower() == own_address.strip().lower()
+    to = h.get("to", "") if own else (h.get("reply-to") or sender)
+    to = email.utils.parseaddr(to.split(",")[0])[1]
+    try:
+        when = email.utils.parsedate_to_datetime(h.get("date", ""))
+    except (TypeError, ValueError):
+        when = None
+    mid = h.get("message-id", "")
+    refs = " ".join(x for x in (h.get("references", ""), mid) if x)
+    text, html = _part_bodies(payload)
+    return {"thread_id": message["threadId"], "subject": h.get("subject", ""), "sender": sender, "to": to,
+            "date": when, "message_id": mid, "references": refs,
+            "text": text if text is not None else html_to_text(html), "html": html}

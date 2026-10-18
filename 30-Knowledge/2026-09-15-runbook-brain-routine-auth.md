@@ -9,7 +9,7 @@ status: active
 confidence: medium
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative. Only the invalid-token failure shape was seen from a real CLI; the other failure patterns are best guesses until a real failure confirms them"
-updated: 2026-09-27
+updated: 2026-10-14
 supersedes: []
 ---
 
@@ -98,6 +98,37 @@ Order is failover order; labels are unique; unknown keys, or anything that looks
 invalidate the whole file. Tokens from different accounts are what keep routines running when one
 account hits a limit.
 
+## Tokens per machine
+
+Each machine runs its agent routines with tokens of the Claude account its own Claude app uses, so the
+pool can say which machine may use which token. The optional `machines` field of a pool entry is a
+non-empty list of machine names, written the way the `machine` column of `90-Meta/scheduled-tasks.md`
+writes them: the machine's label, its machine key or its uuid, in any case. The match is the
+registry's own rule (`guardian_core.domain.machine_matches`), so a token and the routines it serves
+always agree on which machine is which.
+
+```json
+{"label": "routines-3", "account": "studio", "kp_ref": "kp://apis/agent-routines-token-3",
+ "issued": "2026-01-25", "machines": ["build-box", "0f0f0f0f-1a2b-3c4d-5e6f-0a1b2c3d4e5f"]}
+```
+
+- **A token without `machines` is usable on every machine**, which is how the pool behaved before the
+  field existed.
+- **A malformed value invalidates the whole pool** (`routine-auth:config`): `machines` not a list, an
+  empty list or an empty name. The error names the key, never a value.
+- **`tasks.py` tries only the tokens assigned to this machine, or to none**, in pool order, with the
+  same failover rules. When none is left the run is a `config` failure, and `routine-auth:config`
+  names this machine and asks for a token whose `machines` includes it. A routine that makes its first
+  attempt on the CLI's own login still does; only the fallback to a pool token is missing.
+- **`guardian.py status`** lists only this machine's tokens, names the ones it skipped as assigned to
+  other machines, and says `routine tokens: none assigned to this machine` when there are none.
+
+To add a token for a new machine: sign into claude.ai with the account that machine's Claude app uses,
+run `claude setup-token` with the standalone CLI logged into that account, store the value in KeePass
+as in the setup section, and add a pool entry with a new label, today's `issued`, the new `kp_ref` and
+`machines` set to that machine's label or uuid (`python3 ~/Brain/_bin/machines.py` shows the names in
+use).
+
 ## Failure classes
 
 | kind | what it means | what the run does | what to do |
@@ -115,6 +146,10 @@ account hits a limit.
 | `contract_breach` | exit 0 but the success contract is not met | fails the run, keeps the scratch directory, token stays healthy | read the task log, the auth log and the scratch directory |
 | `no_usable_token` | every token is resting | stops | wait, or add a token |
 | `unknown` | matches nothing | stops, never fails over, logs the raw output | read the log, then calibrate |
+
+A failure of the run's own (`unknown`, `timeout`, `contract_breach`) gets one repair attempt on the
+routine's fallback model; every other kind above never does
+([[2026-10-14-decision-scheduled-task-models-and-fallback-repair]]).
 
 `auth_invalid` is the only shape seen from a real CLI when this was written. When a run fails with an
 unverified kind or `unknown`, read its redacted output, add the real example to

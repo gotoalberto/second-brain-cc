@@ -24,7 +24,9 @@
 # The model. With no --model, a scheduled run follows whatever the CLI defaults to for the account at the
 # time, which can change from one week to the next without anyone deciding it. Recommended: pin the model
 # for scheduled runs here, explicitly, with the model of your choice. A routine's own `agent_args` come
-# after this line, so a routine that passes its own --model wins over it. For example, the active line
+# after this line, so a routine that passes its own --model wins over it, and so does a routine's
+# `model:` front matter key (with `fallback_model:` for the repair attempt, see 90-Meta/scheduled-tasks.md).
+# For example, the active line
 # with a pinned model would read:
 #   ~/.local/bin/claude -p {prompt} --output-format json --model <model>
 # Runbooks: 30-Knowledge/2026-09-15-runbook-brain-guardian.md, 30-Knowledge/2026-09-15-runbook-brain-routine-auth.md

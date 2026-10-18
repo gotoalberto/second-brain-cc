@@ -250,7 +250,7 @@ class GmailSender:
         self.sender, self.token_provider = sender, token_provider
         self.urlopen, self.timeout = urlopen or urllib.request.urlopen, timeout
 
-    def send(self, to, subject, body, html=False):
+    def send(self, to, subject, body, html=False, attachments=None, thread_id=None, headers=None):
         if BIN not in sys.path:
             sys.path.insert(0, BIN)
         from guardian_core import mailer as ML
@@ -270,7 +270,7 @@ class GmailSender:
             return _Reply(data)
 
         ML.GmailApiMailer(self.sender, self.token_provider, urlopen=capturing, timeout=self.timeout).send(
-            to, subject, body, html=html)
+            to, subject, body, html=html, attachments=attachments, thread_id=thread_id, headers=headers)
         try:
             data = json.loads(replies[-1].decode("utf-8", "replace"))
             return str(data.get("id") or "") if isinstance(data, dict) else ""
@@ -293,4 +293,17 @@ def build_ports(environ=None, headless=False, open_browser=True):
     return Ports(secrets=KpSecretStore(kp_path(environ), headless=headless), http=UrllibHttp(),
                  accounts=JsonAccountStore(accounts_path(environ)), receiver=LoopbackReceiver(),
                  send_log=JsonlSendLog(sent_log_path(environ)), clock=SystemClock(), open_url=opener,
-                 sleep=time.sleep)
+                 sleep=time.sleep, alert=_token_alert(environ))
+
+
+def _token_alert(environ):
+    """application.Ports.alert: a refused token mails the owner through another channel (token_alert.py)."""
+
+    def alert(account, detail):
+        if BIN not in sys.path:
+            sys.path.insert(0, BIN)
+        import token_alert
+
+        return token_alert.alert(account, detail, environ=environ)
+
+    return alert

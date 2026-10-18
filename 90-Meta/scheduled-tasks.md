@@ -69,7 +69,7 @@ app open and no chat session. Each run:
 - succeeds only if its `success_contract` is met: a required send is proved by the send log
   `google.py send` writes, not by what the model says at the end
 
-Two optional front matter keys shape how a run is held:
+Optional front matter keys shape how a run is held and which model it runs on:
 
 - `single_instance: true` makes the runner hold a lock on `<brain state>/task-locks/<id>.lock` for
   the whole run. A tick that finds it still running skips it and leaves its state alone, and
@@ -77,6 +77,20 @@ Two optional front matter keys shape how a run is held:
   two overlapping runs would do the same work twice (an hourly routine that may overrun its hour).
 - `timeout_minutes: <n>` raises the 30-minute limit for a routine whose job has no fixed size. Pair
   it with `single_instance: true` so an overrun never overlaps the next tick.
+- `lock_group: <name>` is for routines that share a scarce resource (an API with a small daily quota,
+  one browser session). A run holds `<brain state>/task-locks/group-<name>.lock` for as long as it
+  lasts; a due routine whose group is busy is skipped on that tick with its state untouched, and the
+  runner holding the group runs it right after its own routine ends. Late, never overlapping.
+- `model: haiku | sonnet | opus` picks the model of the first attempt (`--model` appended after the
+  agent command template's own flags). With no `model:` the template's model is used.
+- `fallback_model: opus | none` is the model of the repair attempt (default `opus`, none when the
+  first attempt already runs on it). A failure a better model can help with (the run failed, timed
+  out or broke its success contract; never a refused token, a quota, the network, the configuration
+  or a missing CLI) gets one more attempt on it, with a prompt that names what failed, points at the
+  failed attempt's kept scratch directory, forbids repeating any side effect already produced, asks
+  it to fix the cause in the skill or routine and sync the plugin, log the fix in
+  `90-Meta/routine-model-fallback-log.md`, and then finish the job. The routine alert is raised only
+  when both attempts fail (`_bin/model_fallback.py`).
 
 Before any of that, the runner checks that this machine has what the routine needs
 (`_bin/routine_requires.py`). What its `agent_args` already name is checked on its own: every

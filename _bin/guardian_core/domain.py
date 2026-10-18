@@ -752,6 +752,7 @@ class TokenHealth:
 class TokenPool:
     tokens: list = field(default_factory=list)
     config_error: object = None      # why 90-Meta/routine-tokens.json is invalid, or None
+    elsewhere: list = field(default_factory=list)   # labels assigned to other machines, left out of `tokens`
 
 
 TOKEN_WARN_DAYS = 30

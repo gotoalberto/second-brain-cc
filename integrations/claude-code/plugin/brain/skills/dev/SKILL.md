@@ -237,6 +237,15 @@ deliberately, never as a default on every project:
   model's interpolation mode to animate between them, scrubbed by scroll or triggered by
   navigation).
 
+**Still images through an image generation skill.** Hero photography, product or lifestyle shots,
+textures, mood images and section art come from an image generation skill such as `chatgpt-image`,
+which writes the prompt, looks at every result, iterates and exports the file into the project's
+assets. It is what counts as "the image generation tool" for `design-taste-frontend` and the 3e
+image round. Never generate an image that carries words, figures, a logo or a chart: build those in
+HTML/SVG. Every generated image goes through the 3e image round like any other. How to choose
+between HTML, a real image and a generated one:
+`__VAULT__/30-Knowledge/2026-10-07-convention-image-generation-through-chatgpt-image.md`.
+
 Keys for image/video generation always come from `kp`, never pasted into chat or committed to the
 repo: a low-limit key dedicated to the agent's own use.
 

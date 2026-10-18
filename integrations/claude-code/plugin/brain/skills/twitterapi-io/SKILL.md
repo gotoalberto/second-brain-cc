@@ -2,17 +2,28 @@
 name: twitterapi-io
 description: Reads real, current X/Twitter content (an account's recent tweets, a keyword or topic search, an X list's timeline, or specific tweets by id) through twitterapi.io, a paid third-party API that needs no X developer account and no OAuth. Use it whenever a skill, routine or one-off task needs X/Twitter content. Always through its script, with the API key read from KeePass, never raw curl with the key inlined.
 argument-hint: [what X/Twitter content you need]
-allowed-tools: Bash(python3 ~/.claude/skills/twitterapi-io/scripts/twitterapi_io.py:*), Bash(/usr/bin/python3 ~/.claude/skills/twitterapi-io/scripts/twitterapi_io.py:*), Read
+allowed-tools: Bash(python3 ~/.claude/skills/twitterapi-io/scripts/twitterapi_io.py:*), Bash(/usr/bin/python3 ~/.claude/skills/twitterapi-io/scripts/twitterapi_io.py:*), Bash(python3 __VAULT__/_bin/quota.py:*), Read
 ---
 
 # twitterapi.io
 
 A paid third-party API (docs: https://docs.twitterapi.io/) for reading X/Twitter content without
-official X API access and without OAuth. This skill is the controlled path to X/Twitter content:
-never a logged-in browser session, never raw curl with the key inlined.
+official X API access and without OAuth. This skill is the controlled path to reading X/Twitter
+content in bulk, never raw curl with the key inlined. What only the user's own signed in account can
+do (posting, replying, deleting, the home timeline, notifications, private lists) goes through the
+`x-browser` skill instead.
 
 It is a plain HTTP API behind a script, so it runs headless and from a scheduled routine without
 changes: allowing the script's command in the routine's tool allowlist is enough.
+
+## Quota
+
+The API spends paid credits, so every use goes into the vault's global quota ledger
+(`__VAULT__/30-Knowledge/2026-10-10-convention-global-quota-ledger.md`). Before a job that spends
+many calls, `python3 __VAULT__/_bin/quota.py status twitterapi-io`. After the calls, spend what they
+cost (`python3 __VAULT__/_bin/quota.py spend twitterapi-io <credits> --what "<what was read>"
+--skill twitterapi-io`), and now and then record the balance the dashboard shows as a reading
+(`quota.py reading twitterapi-io --remaining <credits>`).
 
 ## How to call it
 
