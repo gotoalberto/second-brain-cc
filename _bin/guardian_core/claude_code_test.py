@@ -142,7 +142,7 @@ def test_agent():
     w = a.check()
     check("with no settings file every canonical hook is a change",
           sorted(k for k, _ in w.changes)
-          == ["env:ENABLE_CLAUDEAI_MCP_SERVERS", "hooks:SessionStart:compass.py", "hooks:Stop:gate_memory.py",
+          == ["env:CLAUDE_CHROME_CLASSIFIER_FLOOR", "env:ENABLE_CLAUDEAI_MCP_SERVERS", "hooks:SessionStart:compass.py", "hooks:Stop:gate_memory.py",
               "hooks:Stop:vault_sync.py --hook"],
           w.changes)
     check("the wiring is named after the agent and readable", w.name == "claude-code" and not w.unreadable)
@@ -161,10 +161,11 @@ def test_agent():
     check("repair keeps every non-hook key",
           data["model"] == "opus" and data["permissions"] == {"allow": ["Bash"]}, data)
     check("repair reports what it changed and where the backup is",
-          r.name == "claude-code" and len(r.changes) == 4 and r.backup and os.path.exists(r.backup)
+          r.name == "claude-code" and len(r.changes) == 5 and r.backup and os.path.exists(r.backup)
           and not r.errors, r)
     check("repair turns the account connectors off and keeps every other env value",
-          data.get("env") == {"FOO": "1", "ENABLE_CLAUDEAI_MCP_SERVERS": "false"}, data.get("env"))
+          data.get("env") == {"FOO": "1", "ENABLE_CLAUDEAI_MCP_SERVERS": "false", "CLAUDE_CHROME_CLASSIFIER_FLOOR": "0"},
+          data.get("env"))
     check("and says so in words", "env ENABLE_CLAUDEAI_MCP_SERVERS is not false" in r.changes, r.changes)
 
     mtime = os.path.getmtime(settings_path)

@@ -204,17 +204,23 @@ def test_required_env(D):
     check("the account connectors are off by default, as a plain dict a user can empty",
           type(getattr(D, "REQUIRED_ENV", None)) is dict
           and D.REQUIRED_ENV.get("ENABLE_CLAUDEAI_MCP_SERVERS") == "false")
+    check("the Chrome classifier floor is off by default, so allowed sites do not ask",
+          D.REQUIRED_ENV.get("CLAUDE_CHROME_CLASSIFIER_FLOOR") == "0")
     merged, changes = D.reconcile_env(None)
     check("no env block gets every required value",
-          merged == {"ENABLE_CLAUDEAI_MCP_SERVERS": "false"}
-          and [c.key for c in changes] == ["env:ENABLE_CLAUDEAI_MCP_SERVERS"], (merged, changes))
+          merged == {"ENABLE_CLAUDEAI_MCP_SERVERS": "false", "CLAUDE_CHROME_CLASSIFIER_FLOOR": "0"}
+          and [c.key for c in changes] == ["env:ENABLE_CLAUDEAI_MCP_SERVERS", "env:CLAUDE_CHROME_CLASSIFIER_FLOOR"],
+          (merged, changes))
     check("each change says what is wrong in one line",
-          [c.text for c in changes] == ["env ENABLE_CLAUDEAI_MCP_SERVERS is not false"], changes)
-    cur = {"OTHER_FLAG": "1", "ENABLE_CLAUDEAI_MCP_SERVERS": "true"}
+          [c.text for c in changes] == ["env ENABLE_CLAUDEAI_MCP_SERVERS is not false",
+                                        "env CLAUDE_CHROME_CLASSIFIER_FLOOR is not 0"], changes)
+    cur = {"OTHER_FLAG": "1", "ENABLE_CLAUDEAI_MCP_SERVERS": "true", "CLAUDE_CHROME_CLASSIFIER_FLOOR": "0"}
     merged, changes = D.reconcile_env(cur)
     check("a wrong value is corrected, other keys kept, the input untouched",
-          merged == {"OTHER_FLAG": "1", "ENABLE_CLAUDEAI_MCP_SERVERS": "false"} and len(changes) == 1
-          and cur == {"OTHER_FLAG": "1", "ENABLE_CLAUDEAI_MCP_SERVERS": "true"}, (merged, changes, cur))
+          merged == {"OTHER_FLAG": "1", "ENABLE_CLAUDEAI_MCP_SERVERS": "false", "CLAUDE_CHROME_CLASSIFIER_FLOOR": "0"}
+          and len(changes) == 1
+          and cur == {"OTHER_FLAG": "1", "ENABLE_CLAUDEAI_MCP_SERVERS": "true", "CLAUDE_CHROME_CLASSIFIER_FLOOR": "0"},
+          (merged, changes, cur))
     merged, changes = D.reconcile_env(merged)
     check("a correct env block is no change", changes == [], changes)
     merged, changes = D.reconcile_env({"OTHER_FLAG": "1"}, required={})
@@ -222,7 +228,7 @@ def test_required_env(D):
           (merged, changes))
     merged, changes = D.reconcile_env("not a dict")
     check("an env block that is not an object is replaced by the required values",
-          merged == {"ENABLE_CLAUDEAI_MCP_SERVERS": "false"} and len(changes) == 1, merged)
+          merged == {"ENABLE_CLAUDEAI_MCP_SERVERS": "false", "CLAUDE_CHROME_CLASSIFIER_FLOOR": "0"} and len(changes) == 2, merged)
 
 
 def test_localize(D):

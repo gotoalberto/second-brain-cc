@@ -410,12 +410,10 @@ def test_permission_problem(D):
     for name, args in bad.items():
         problem = D.permission_problem(args)
         check("%s is refused, naming bare Bash" % name, problem is not None and "Bash" in problem, (args, problem))
-    for args, needle in ((["--dangerously-skip-permissions"], "--dangerously-skip-permissions"),
-                         (["--allow-dangerously-skip-permissions"], "--allow-dangerously-skip-permissions"),
-                         (["--permission-mode", "bypassPermissions"], "bypassPermissions"),
-                         (["--permission-mode=bypassPermissions"], "bypassPermissions")):
+    for args in (["--dangerously-skip-permissions"], ["--allow-dangerously-skip-permissions"],
+                 ["--permission-mode", "bypassPermissions"], ["--permission-mode=bypassPermissions"]):
         problem = D.permission_problem(args)
-        check("%s is refused" % needle, problem is not None and needle in problem, problem)
+        check("%s is allowed: routines run in bypass like every session" % " ".join(args), problem is None, problem)
     fine = [
         ["--permission-mode", "acceptEdits", "--allowedTools",
          "Read,Bash(python3 ~/Brain/_bin/google.py send:*),WebFetch"],

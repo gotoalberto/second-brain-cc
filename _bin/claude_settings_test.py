@@ -59,6 +59,40 @@ def test_merge(CS):
           fresh["permissions"]["defaultMode"] == "acceptEdits" and len(fresh["permissions"]["allow"]) == 2, fresh)
 
 
+def test_env_and_kept(CS):
+    print("\n== nested keys and values kept ==")
+    ex = {"env": {"CLAUDE_CHROME_CLASSIFIER_FLOOR": "0", "A": "1"}, "permissions": {"defaultMode": "bypassPermissions"},
+          "skipDangerousModePermissionPrompt": True}
+    user = {"env": {"A": "2", "MINE": "x"}, "permissions": {"defaultMode": "acceptEdits"}}
+    merged, changes = CS.merge(user, ex, "/v")
+    check("an env value the user lacks is added next to theirs, and theirs kept",
+          merged["env"] == {"A": "2", "MINE": "x", "CLAUDE_CHROME_CLASSIFIER_FLOOR": "0"}
+          and "env.CLAUDE_CHROME_CLASSIFIER_FLOOR = \"0\"" in changes, (merged, changes))
+    lines = CS.kept(user, ex, "/v")
+    check("every recommended value set differently is listed as kept, with the recommendation",
+          sorted(lines) == ['env.A = "2" (recommended: "1")',
+                            'permissions.defaultMode = "acceptEdits" (recommended: "bypassPermissions")'], lines)
+    check("nothing is listed when the user matches", CS.kept(merged | {"env": dict(merged["env"], A="1"),
+                                                                       "permissions": ex["permissions"]}, ex, "/v") == [])
+
+
+def test_chrome_rules(CS):
+    print("\n== chrome-allow ==")
+    check("a URL becomes its exact host, www and path dropped, port kept",
+          [CS.chrome_host(h) for h in ("https://www.Example.com/a?b", "localhost:3000", "app.example.com/")]
+          == ["example.com", "localhost:3000", "app.example.com"])
+    for bad in ("*.example.com", "", "two words"):
+        try:
+            CS.chrome_host(bad)
+            check("%r is refused" % bad, False)
+        except ValueError:
+            check("%r is refused" % bad, True)
+    frag = CS.chrome_rules(["github.com", "https://github.com/x", "localhost:5173"])
+    check("one rule per host, without repeats",
+          frag == {"permissions": {"allow": ["ClaudeInChromeDomain(github.com)", "ClaudeInChromeDomain(localhost:5173)"]}},
+          frag)
+
+
 def test_example():
     print("\n== the shipped example ==")
     data = json.load(open(EXAMPLE))
@@ -67,6 +101,15 @@ def test_example():
     check("it names no absolute path except through __VAULT__",
           "/Users/" not in text and "/home/" not in text and "__VAULT__" in text, text)
     check("it carries no hooks: the guardian installs those", "hooks" not in data)
+    allow = data["permissions"].get("allow", [])
+    check("it is the reference setup: bypass by default, no dangerous mode prompt, Chrome classifier floor off",
+          data["permissions"].get("defaultMode") == "bypassPermissions"
+          and data.get("skipDangerousModePermissionPrompt") is True
+          and data.get("env", {}).get("CLAUDE_CHROME_CLASSIFIER_FLOOR") == "0", data)
+    import claude_settings as CS
+    rules = [a for a in allow if a.startswith("ClaudeInChromeDomain(")]
+    check("it lets Claude in Chrome act on sites, each rule an exact host",
+          rules and all(a == CS.CHROME_DOMAIN % CS.chrome_host(a[len("ClaudeInChromeDomain("):-1]) for a in rules), rules)
 
 
 def test_cli():
@@ -102,8 +145,18 @@ def test_cli():
         check("and backs the old file up first", len(backups) == 1 and json.load(open(backups[0])) == user, backups)
         check("the vault path is filled in", not any("__VAULT__" in a for a in after["permissions"]["allow"]), after)
         rc, out, err = run("merge", "--yes")
+        check("a second merge has nothing to add, and lists what the user set differently",
+              "kept as you have it: permissions.defaultMode" in out, out)
         check("a second merge has nothing to add", rc == 0 and "nothing to add" in out and len(glob.glob(settings + ".bak-*")) == 1,
               (out, glob.glob(settings + ".bak-*")))
+        rc, out, err = run("chrome-allow", "https://www.example.org/x", "localhost:8080", "--yes")
+        after = json.load(open(settings))
+        check("chrome-allow adds one exact-host rule per site, keeping everything else",
+              rc == 0 and "ClaudeInChromeDomain(example.org)" in after["permissions"]["allow"]
+              and "ClaudeInChromeDomain(localhost:8080)" in after["permissions"]["allow"]
+              and after["permissions"]["defaultMode"] == "plan" and after["hooks"] == {"Stop": []}, (rc, out, err))
+        rc, out, err = run("chrome-allow", "*.example.org", "--yes")
+        check("chrome-allow refuses a wildcard, exit 2", rc == 2 and "wildcard" in err, (rc, err))
         with open(settings, "w") as fh:
             fh.write("{broken")
         rc, out, err = run("merge", "--yes")
@@ -119,7 +172,8 @@ def main():
     except Exception as exc:
         check("claude_settings imports", False, "%s: %s" % (type(exc).__name__, exc))
     else:
-        for t in (lambda: test_merge(CS), test_example, test_cli):
+        for t in (lambda: test_merge(CS), lambda: test_env_and_kept(CS), lambda: test_chrome_rules(CS),
+                  test_example, test_cli):
             try:
                 t()
             except Exception as exc:

@@ -29,5 +29,14 @@
 # For example, the active line
 # with a pinned model would read:
 #   ~/.local/bin/claude -p {prompt} --output-format json --model <model>
+#
+# Permissions. Every run is bypassPermissions, the same as every interactive session and every Remote Control
+# session on the machine, so an unattended run never stops at a prompt nobody will answer. A routine's
+# `agent_args` say the same. --allow-dangerously-skip-permissions keeps bypass available if the session is
+# switched to another mode. The cost: a routine reads untrusted text (mail, web pages, posts) and in bypass a
+# prompt injection there can run any command as this user, which is why the machine runs as a normal user,
+# never root (30-Knowledge/2026-09-21-convention-machines-default-to-bypass-permissions-with-a-non-root-user.md).
+# For a narrower run, drop both flags here and give each routine `--permission-mode acceptEdits` with a narrow
+# `--allowedTools` list instead. A bare `Bash` in --allowedTools is refused either way.
 # Runbooks: 30-Knowledge/2026-09-15-runbook-brain-guardian.md, 30-Knowledge/2026-09-15-runbook-brain-routine-auth.md
-~/.local/bin/claude -p {prompt} --output-format json
+~/.local/bin/claude -p {prompt} --output-format json --permission-mode bypassPermissions --allow-dangerously-skip-permissions

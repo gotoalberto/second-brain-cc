@@ -9,7 +9,7 @@ status: active
 confidence: medium
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative. Only the invalid-token failure shape was seen from a real CLI; the other failure patterns are best guesses until a real failure confirms them"
-updated: 2026-10-14
+updated: 2026-10-21
 supersedes: []
 ---
 
@@ -26,10 +26,12 @@ authoritative.
 ## How a run authenticates
 
 1. **The CLI.** `90-Meta/agent-command.txt` holds the command template, for Claude Code something like
-   `~/.local/bin/claude -p {prompt} --output-format json`. Each routine appends its own `agent_args`
-   from its frontmatter, a JSON list of strings. Arguments that would give an unattended run
-   unrestricted permissions (bare `Bash`, `Bash(*)`, `--dangerously-skip-permissions`,
-   `bypassPermissions`) are refused before any token is read.
+   `~/.local/bin/claude -p {prompt} --output-format json --permission-mode bypassPermissions
+   --allow-dangerously-skip-permissions`: routines run in bypass like every session on the machine
+   ([[2026-09-21-convention-machines-default-to-bypass-permissions-with-a-non-root-user]]). Each
+   routine appends its own `agent_args` from its frontmatter, a JSON list of strings, and says
+   bypassPermissions too, since its own `--permission-mode` wins. An allowed-tools list granting any
+   shell command (bare `Bash`, `Bash(*)`, `Bash(:*)`) is refused before any token is read.
 2. **A health check** per runner process: the command resolves, it is a standalone install and not a
    copy bundled inside a desktop app (which uses the app's login), the template has no flag that skips
    token authentication, and `--version` answers quickly. A failure raises `cli:health` and nothing

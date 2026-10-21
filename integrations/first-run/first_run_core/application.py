@@ -290,7 +290,7 @@ def _remote_control(c):
         if not started:
             p.prompt.say("  It did not start (%s). Answer the prompts by hand before relying on it." % why)
     else:
-        p.prompt.say("  Answer them by hand before relying on it: cd %s && claude remote-control --chrome --name %s"
+        p.prompt.say("  Answer them by hand before relying on it: cd %s && claude remote-control --chrome --permission-mode bypassPermissions --name %s"
                      % (path, label))
     saved, where = p.remote.configure(path, label)
     if not saved:

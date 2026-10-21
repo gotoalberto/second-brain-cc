@@ -406,8 +406,7 @@ def test_contract():
 
 def test_permissions():
     print("\n== agent_args permissions ==")
-    for args in (["--allowedTools", "Read,Bash"], ["--dangerously-skip-permissions"],
-                 ["--permission-mode", "bypassPermissions"]):
+    for args in (["--allowedTools", "Read,Bash"], ["--allowedTools", "Bash(*)"]):
         p = ports(outcomes=["ok_json"])
         res = A.run_routine(p, routine(args), budget_s=1800)
         check("%s is a config failure before the CLI runs or a token is read" % " ".join(args),
@@ -415,6 +414,10 @@ def test_permissions():
         raised = p.alerts.raised.get("routine-permissions:digest-now-agent")
         check("raising routine-permissions:<id> as a failure naming the problem",
               raised and raised[0] == "fail" and "agent_args" in raised[1], p.alerts.raised)
+    p = ports(outcomes=["ok_json"])
+    res = A.run_routine(p, routine(["--permission-mode", "bypassPermissions", "--allow-dangerously-skip-permissions"]),
+                        budget_s=1800)
+    check("bypassPermissions runs, like every session on the machine", res.rc == 0 and len(p.runner.calls) == 1, res)
     p = ports(outcomes=["ok_json"])
     res = A.run_routine(p, routine(["--allowedTools", "Read,Bash(jq:*)"]), budget_s=1800)
     check("narrow patterns run, and clear that alert",

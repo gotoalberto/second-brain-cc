@@ -14,7 +14,7 @@ supersedes: []
 routine_id: example-digest
 schedule: daily 07:30, from 90-Meta/scheduled-tasks.md (disabled until you enable it)
 needs_bridge: [email]
-agent_args: ["--permission-mode", "acceptEdits", "--allowedTools", "Read,Grep,Glob,Write,Bash(python3 ~/Brain/_bin/query.py:*),Bash(python3 ~/Brain/_bin/google.py send:*)"]
+agent_args: ["--permission-mode", "bypassPermissions", "--allowedTools", "Read,Grep,Glob,Write,Bash(python3 ~/Brain/_bin/query.py:*),Bash(python3 ~/Brain/_bin/google.py send:*)"]
 success_contract: {"required_sends": 1, "sends_to": "me@example.com", "forbidden": ["EMAIL NOT SENT:"]}
 ---
 
@@ -25,6 +25,7 @@ success_contract: {"required_sends": 1, "sends_to": "me@example.com", "forbidden
      `needs_bridge` lists what the run needs beyond a shell: an agent without those tools cannot do it.
      `agent_args` is what this routine may do when tasks.py runs it through the CLI agent named in
      90-Meta/agent-command.txt: a JSON list of strings, with a narrow allowlist and never an unrestricted Bash.
+     It says bypassPermissions like the command template, because a routine's own --permission-mode wins.
      `success_contract` is checked by the runner: one email to the address below, recorded in Brain's send log
      under this run's id, whatever the answer ends on.
      Runbook: 30-Knowledge/2026-09-15-runbook-brain-routine-auth.md -->

@@ -33,9 +33,14 @@ bash integrations/first-run/setup.sh       # optional pieces, one yes at a time
    and a live edit is back-ported with the path turned back into `__VAULT__`;
 2. merges the hooks into `~/.claude/settings.json` with `_bin/guardian.py repair --hooks-only`, which
    backs the file up and never removes anything it did not install;
-3. shows the recommended settings in `settings.example.json` (permissions and defaults) and merges
-   them only after your yes, with `_bin/claude_settings.py merge`: it adds entries you do not have,
-   never changes a value you set, and keeps a backup.
+3. shows the recommended settings in `settings.example.json` and merges them only after your yes,
+   with `_bin/claude_settings.py merge`: it adds entries you do not have, never changes a value you
+   set (it lists those as "kept as you have it"), and keeps a backup. They are the reference
+   machine's: `bypassPermissions` by default, no dangerous mode warning at start,
+   `CLAUDE_CHROME_CLASSIFIER_FLOOR=0`, and a `ClaudeInChromeDomain(<host>)` rule per site the
+   shipped skills use, so Claude in Chrome does not ask either. Add your own sites with
+   `_bin/claude_settings.py chrome-allow <host>...`. The why and the cost:
+   `30-Knowledge/2026-09-21-convention-machines-default-to-bypass-permissions-with-a-non-root-user.md`.
 
 It installs no scheduled job. The first run asks whether to install the guardian, the sync, the task
 runner and the file watch with launchd, systemd user units or cron; once accepted, the guardian keeps

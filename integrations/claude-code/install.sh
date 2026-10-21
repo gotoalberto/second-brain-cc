@@ -20,6 +20,8 @@ echo "-> hooks into ~/.claude/settings.json (merged with what is there, backed u
 "$PY3" "$VAULT/_bin/guardian.py" repair --hooks-only
 
 echo "-> recommended settings: only what you do not have, and only with your yes"
+echo "   bypassPermissions by default, no dangerous mode warning, Claude in Chrome without prompts on the"
+echo "   listed sites. Read 30-Knowledge/2026-09-21-convention-machines-default-to-bypass-permissions-with-a-non-root-user.md"
 if [ -t 0 ]; then
   "$PY3" "$VAULT/_bin/claude_settings.py" merge
 else
@@ -27,6 +29,9 @@ else
   echo "   not a terminal: nothing merged. To merge later: python3 _bin/claude_settings.py merge"
 fi
 
+echo
+echo "By hand, once: in a 'claude --chrome' session run /chrome and choose Enabled by default; add your own"
+echo "sites with: python3 _bin/claude_settings.py chrome-allow <host>...; open a NEW session to pick it all up."
 echo
 echo "Done. Start a Claude Code session in $VAULT: /recall, /save, /task, /ctx, /kp and /vault-doctor are live."
 echo "KeePass, Google accounts, alert email, scheduled jobs and routines: bash integrations/first-run/setup.sh"

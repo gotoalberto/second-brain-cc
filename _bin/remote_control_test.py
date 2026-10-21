@@ -51,8 +51,9 @@ echo "keep=${KEEP_ME:-unset}"
 def test_command(RC):
     print("\n== the command ==")
     cmd = RC.command("workstation", "/opt/claude")
-    check("it is claude remote-control with --chrome and the machine's name",
-          cmd == ["/opt/claude", "remote-control", "--chrome", "--name", "workstation"], cmd)
+    check("it is claude remote-control with --chrome, bypassPermissions and the machine's name",
+          cmd == ["/opt/claude", "remote-control", "--chrome", "--permission-mode", "bypassPermissions",
+                  "--name", "workstation"], cmd)
     check("never --spawn: a worktree spawn mode breaks against Brain's WorktreeCreate hook",
           "--spawn" not in cmd and "worktree" not in cmd, cmd)
 
@@ -65,14 +66,18 @@ def test_env(RC):
           RC.blocking_env(env) == ["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "DISABLE_GROWTHBOOK",
                                    "DISABLE_TELEMETRY", "DO_NOT_TRACK"], RC.blocking_env(env))
     check("an empty value does not count", RC.blocking_env({"DISABLE_TELEMETRY": ""}) == [])
-    clean = RC.server_env(env)
+    clean = RC.server_env(env, wrapper=None)
     check("the server starts without them, and with everything else",
           clean == {"PATH": "/usr/bin", "HOME": "/home/u"}, clean)
+    wrapped = RC.server_env({"PATH": "/usr/bin"})
+    check("the server gets the session wrapper, which ships executable next to remote_control.py",
+          wrapped.get("CLAUDE_CODE_PROCESS_WRAPPER") == RC.SESSION_WRAPPER
+          and os.access(RC.SESSION_WRAPPER, os.X_OK), wrapped)
     creds = {"ANTHROPIC_API_KEY": "k", "CLAUDE_CODE_OAUTH_TOKEN": "t", "PATH": "/usr/bin"}
     check("an API key or setup-token in the environment would take precedence over the claude.ai login, so it goes too",
-          RC.server_env(creds) == {"PATH": "/usr/bin"} and RC.credential_env(creds) == ["ANTHROPIC_API_KEY",
+          RC.server_env(creds, wrapper=None) == {"PATH": "/usr/bin"} and RC.credential_env(creds) == ["ANTHROPIC_API_KEY",
                                                                                        "CLAUDE_CODE_OAUTH_TOKEN"],
-          RC.server_env(creds))
+          RC.server_env(creds, wrapper=None))
     check("the caller's mapping is left as it was", "DISABLE_TELEMETRY" in env)
 
 
@@ -156,6 +161,27 @@ def test_find_claude(RC):
     check("no CLI gives no warning", RC.warnings(None) == [])
 
 
+def test_session_wrapper():
+    print("\n== the session wrapper ==")
+    d = tmpdir()
+    fake = os.path.join(d, "claude")
+    with open(fake, "w") as fh:
+        fh.write("#!/bin/sh\necho \"$*\"\n")
+    os.chmod(fake, 0o755)
+    wrapper = os.path.join(HERE, "claude_session_wrapper.sh")
+
+    def run(*args):
+        return subprocess.run([wrapper, fake] + list(args), capture_output=True, text=True, timeout=30).stdout.strip()
+
+    out = run("--print", "--sdk-url", "wss://x", "--permission-mode", "bypassPermissions")
+    check("a Remote Control session gets --allow-dangerously-skip-permissions first",
+          out == "--allow-dangerously-skip-permissions --print --sdk-url wss://x --permission-mode bypassPermissions", out)
+    out = run("--allow-dangerously-skip-permissions", "--print", "--sdk-url", "wss://x")
+    check("never twice", out.count("--allow-dangerously-skip-permissions") == 1, out)
+    out = run("--print", "hello")
+    check("any other self-spawn passes through untouched", out == "--print hello", out)
+
+
 def test_serve():
     print("\n== serve, for real, against a fake claude ==")
     d = tmpdir()
@@ -179,13 +205,13 @@ def test_serve():
     check("serve runs claude from a dedicated repository, when that is what is recorded",
           p.returncode == 0 and _cwd(out) == os.path.realpath(repo),
           (p.returncode, out, p.stderr))
-    check("with --chrome and the recorded name", "args=remote-control --chrome --name workstation" in out, out)
+    check("with --chrome and the recorded name", "args=remote-control --chrome --permission-mode bypassPermissions --name workstation" in out, out)
     check("and without the variables that break it", "telemetry=unset traffic=unset" in out, out)
     check("keeping the rest of the environment", "keep=yes" in out, out)
     check("and warns that the claude it found is a shell wrapper", "wrapper" in p.stderr, p.stderr)
     p = subprocess.run([sys.executable, script, "show"], capture_output=True, text=True, env=env, timeout=30)
     check("show prints the directory and the command it would run",
-          p.returncode == 0 and repo in p.stdout and "remote-control --chrome --name workstation" in p.stdout,
+          p.returncode == 0 and repo in p.stdout and "remote-control --chrome --permission-mode bypassPermissions --name workstation" in p.stdout,
           (p.returncode, p.stdout, p.stderr))
     RC.save(d, "workstation", config_path=os.path.join(state, "remote-control.json"))
     p = subprocess.run([sys.executable, script, "serve"], capture_output=True, text=True, env=env, timeout=30)
@@ -246,7 +272,7 @@ def main():
                 import traceback
                 traceback.print_exc()
                 check("%s ran to the end" % t.__name__, False, "%s: %s" % (type(exc).__name__, exc))
-        for t in (test_serve, test_templates):
+        for t in (test_session_wrapper, test_serve, test_templates):
             try:
                 t()
             except Exception as exc:
