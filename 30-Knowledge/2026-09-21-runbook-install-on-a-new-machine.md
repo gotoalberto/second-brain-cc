@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real installs on a macOS laptop and a Linux server in a working vault; names and numbers are illustrative"
-updated: 2026-10-08
+updated: 2026-10-21
 supersedes: []
 ---
 
@@ -27,7 +27,8 @@ organization's account while the other machines sit on a personal one. A machine
 routines also needs a pool token of that account, with `machines` naming it
 ([[2026-09-15-runbook-brain-routine-auth]], tokens per machine).
 
-An install that does not end with the machine listed there is not finished.
+An install that does not end with the machine listed there is not finished. Nor is one whose
+sessions still ask for permissions: step 2a gives every machine the same setup.
 
 ## Order
 
@@ -64,6 +65,38 @@ depends on.
 Run everything as a normal user with passwordless sudo, never as root. Claude Code refuses to
 skip permission prompts under root, which blocks the mode that makes driving a machine from a
 phone bearable. [[2026-09-21-convention-machines-default-to-bypass-permissions-with-a-non-root-user]]
+
+## 2a. Permissions, the same on every machine
+
+Once the Claude Code integration is installed (step 6), every machine gets the same permission
+setup, so no session, Remote Control session or routine stops at a prompt:
+
+```bash
+python3 ~/Brain/_bin/claude_settings.py merge      # answer y
+python3 ~/Brain/_bin/claude_settings.py show       # want: nothing to add, no "kept as you have it" line
+```
+
+That merge adds `permissions.defaultMode = "bypassPermissions"`,
+`skipDangerousModePermissionPrompt = true` (no "dangerous mode" warning at start),
+`env.CLAUDE_CHROME_CLASSIFIER_FLOOR = "0"`, the `mcp__claude-in-chrome__*` tools and one
+`ClaudeInChromeDomain(<host>)` rule per site the shipped skills use. It never changes a value you
+already set: a line `kept as you have it: permissions.defaultMode = "acceptEdits"` means you
+change that one by hand in `~/.claude/settings.json` if you want the reference setup.
+
+Then, by hand:
+
+- **Your own sites.** Claude in Chrome asks on any site without its own rule, bypass or not:
+  `python3 ~/Brain/_bin/claude_settings.py chrome-allow example.com app.example.com localhost:8080`.
+  Exact hosts only, no wildcards.
+- **`/chrome` → "Enabled by default"** in one interactive `claude --chrome` session, so plain
+  `claude` sessions get the browser too. It is kept in `~/.claude.json`; do not edit that file by
+  hand while a session runs.
+- **Sessions already running keep their old settings.** Open a new one. Remote Control picks the
+  env value up per session with no restart; restart its service (step 8) only after changing its
+  command or the login.
+
+Remote Control (step 8) and routines (`90-Meta/agent-command.txt`) carry bypass and
+`--allow-dangerously-skip-permissions` themselves; nothing to set for them.
 
 ## 3. Dependencies
 
@@ -195,8 +228,13 @@ Both templates run `_bin/remote_control.py serve`, which finds the CLI (on `PATH
 starts, from the recorded directory:
 
 ```sh
-claude remote-control --chrome --name <name>
+claude remote-control --chrome --permission-mode bypassPermissions --name <name>
 ```
+
+with `CLAUDE_CODE_PROCESS_WRAPPER` set to `_bin/claude_session_wrapper.sh`, for the server only.
+Each session the server spawns then starts with `--allow-dangerously-skip-permissions`, so
+bypass stays in the app's mode picker after the app switches a session to Auto or another mode;
+`claude remote-control` has no flag of its own to forward it.
 
 `python3 ~/Brain/_bin/remote_control.py show` prints the recorded directory and name, the
 command and anything in the way. **Not tmux or a shell left open**: the server gives up and
@@ -230,7 +268,7 @@ workspace, `Enable Remote Control? (y/n)`, then a spawn mode, `same-dir` or `wor
 **Choose same-dir**; worktree is the mode that breaks against the hook above. The answers
 persist, so they are given once. That is what step 4 of the first run is for; when it says
 Connected, stop it with Ctrl+C and the supervisor takes over. By hand, any time:
-`cd <dir> && claude remote-control --chrome --name <name>`.
+`cd <dir> && claude remote-control --chrome --permission-mode bypassPermissions --name <name>`.
 
 **Install Claude Code with the native installer, not Homebrew.** The Homebrew cask can lag
 several releases behind the latest CLI, and an old CLI is exactly what rejects `--chrome`. Use
@@ -339,7 +377,9 @@ started without it cannot acquire them mid-flight. So every entry point passes t
 ```sh
 # 1. the server runs with the flag
 ps -eo command | grep "[r]emote-control"
-#    want: .../claude remote-control --chrome --name <name>
+#    want: .../claude remote-control --chrome --permission-mode bypassPermissions --name <name>
+ps -eo args | grep -- '--sdk-url' | grep -c -- --allow-dangerously-skip-permissions
+#    want: one per live app session
 
 # 2. in a NEW session opened from the Claude app, the tools are listed
 #    mcp__claude-in-chrome__* present (deferred counts)
@@ -421,6 +461,9 @@ with `can't open file '.../_bin/...'` and installs nothing):
 - `~/.claude/settings.json` carries the Brain hooks: `grep -c '_bin/compass.py' ~/.claude/settings.json`
   is not 0.
 - `~/.claude/skills` and `~/.claude/agents` are not empty.
+- The permissions match step 2a: `python3 ~/Brain/_bin/claude_settings.py show` has nothing to add
+  and no "kept as you have it" line, and a Chrome action on an allowed site runs without asking
+  in a new session.
 - A new session starts with the Brain context block. No block means no hooks, whatever else
   looks fine.
 - The machine listed by `machines.py` proves only that it registered, not that sessions get

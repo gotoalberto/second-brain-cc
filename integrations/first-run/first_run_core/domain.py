@@ -222,7 +222,7 @@ def first_start_text(path: str, label: str) -> str:
         "    3. the spawn mode, [1] same-dir or [2] worktree: choose same-dir. A worktree spawn mode",
         "       conflicts with Brain's WorktreeCreate hook, and every session would hang on Connecting.",
         "  When it says Connected, stop it with Ctrl+C: the supervisor takes over from there.",
-        "  By hand, any time: cd %s && claude remote-control --chrome --name %s" % (path, label),
+        "  By hand, any time: cd %s && claude remote-control --chrome --permission-mode bypassPermissions --name %s" % (path, label),
     ])
 
 

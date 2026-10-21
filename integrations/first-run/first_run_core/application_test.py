@@ -364,7 +364,7 @@ def test_remote_control_step():
           p.remote.calls)
     check("declining the first start in the terminal says how to do it by hand",
           not any(c[0] == "first_start" for c in p.remote.calls)
-          and any("claude remote-control --chrome --name build-box" in t for t in p.prompt.said), p.prompt.said)
+          and any("claude remote-control --chrome --permission-mode bypassPermissions --name build-box" in t for t in p.prompt.said), p.prompt.said)
 
     p = ports(BEFORE_RC + [True, "two words", "workstation", "", True, True])
     A.run(p)

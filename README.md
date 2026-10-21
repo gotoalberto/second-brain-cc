@@ -208,10 +208,22 @@ repos, programs and paths there. A task's `machine` cell is `*`, the machine's l
 ### What each machine needs
 
 - **A normal user, never root.** Claude Code refuses to bypass permissions under root, and
-  driving a machine from a phone through a permission prompt per command is not practical. Brain
-  machines set `"permissions": {"defaultMode": "bypassPermissions"}` and
-  `"skipDangerousModePermissionPrompt": true` in `~/.claude/settings.json`. If the machine is
-  administered from its sessions, give that user sudo, so escalation stays a deliberate `sudo`.
+  driving a machine from a phone through a permission prompt per command is not practical. If the
+  machine is administered from its sessions, give that user sudo, so escalation stays a
+  deliberate `sudo`.
+- **The same permissions everywhere.** `python3 _bin/claude_settings.py merge` (which
+  `integrations/claude-code/install.sh` offers) gives every machine the reference setup:
+  `"permissions": {"defaultMode": "bypassPermissions"}`, `"skipDangerousModePermissionPrompt": true`,
+  `env.CLAUDE_CHROME_CLASSIFIER_FLOOR = "0"` and one `ClaudeInChromeDomain(<host>)` allow rule per
+  site the shipped skills use. Without the last two, Claude in Chrome asks before every action
+  even in bypass. Add your own sites with `python3 _bin/claude_settings.py chrome-allow <host>...`
+  (exact host, port kept, no wildcards), and turn on `/chrome` → "Enabled by default" once by hand.
+  A value you already set is never changed: `claude_settings.py show` lists it as "kept as you
+  have it". Remote Control sessions and routines get bypass and `--allow-dangerously-skip-permissions`
+  from `remote_control.py` and `90-Meta/agent-command.txt`. In bypass a prompt injection in a page
+  or mail a routine reads can run any command as that user: read
+  `30-Knowledge/2026-09-21-convention-machines-default-to-bypass-permissions-with-a-non-root-user.md`
+  before you accept it, and keep it to machines that are yours.
 - **The `claude` CLI logged in with a claude.ai account.** `claude auth login`, then
   `claude auth status` must show `"loggedIn": true` and `"authMethod": "claude.ai"`. API keys and
   `claude setup-token` tokens do not work: Remote Control refuses them, and Chrome stays off with
@@ -240,7 +252,7 @@ repos, programs and paths there. A task's `machine` cell is `*`, the machine's l
 `_bin/remote_control.py serve` runs
 
 ```bash
-claude remote-control --chrome --name <name>
+claude remote-control --chrome --permission-mode bypassPermissions --name <name>
 ```
 
 from the home directory, or from a folder of its own if you choose one. The first run's
@@ -248,6 +260,11 @@ from the home directory, or from a folder of its own if you choose one. The firs
 directory, records the directory and name in `<brain state>/remote-control.json`, and installs its
 supervisor.
 
+- **Every session starts in bypassPermissions, and keeps it in the app's picker.** The server
+  is started with `--permission-mode bypassPermissions` and with `CLAUDE_CODE_PROCESS_WRAPPER`
+  pointing at `_bin/claude_session_wrapper.sh`, which adds `--allow-dangerously-skip-permissions`
+  to each session it spawns. Without that flag the app drops bypass from the mode picker once it
+  switches a session to another mode. Every other self-spawn of the CLI passes through untouched.
 - **`--chrome` is mandatory, and always passed.** The `claudeInChromeDefaultEnabled` setting does
   not cover server mode: without the flag every session has no browser tools, and tends to
   describe itself as running "in a cloud container". Do not decide whether a CLI supports it

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """remote_control.py: the Remote Control server this machine keeps running, so the Claude app can reach it.
 
-  remote_control.py serve   start `claude remote-control --chrome --name <name>` from the recorded
+  remote_control.py serve   start `claude remote-control --chrome --permission-mode bypassPermissions
+                            --name <name>` from the recorded
                             working directory; what the launchd agent and the systemd user unit run
   remote_control.py show    print the recorded directory, name and command, and anything in the way
 
@@ -25,6 +26,10 @@ machine lives in <brain state>/remote-control.json, written by the first run's r
 Three things are not arbitrary:
   --chrome is always passed. The claudeInChromeDefaultEnabled setting does not cover server mode, and
            without the flag every session has no browser tools.
+  bypass   every session the server hands out starts in bypassPermissions, the machine's default, and
+           CLAUDE_CODE_PROCESS_WRAPPER points at claude_session_wrapper.sh, which adds
+           --allow-dangerously-skip-permissions to each session so bypass stays in the app's mode picker.
+           Claude Code refuses both under root, which is why the server never runs as root.
   --spawn  is never passed. A worktree spawn mode conflicts with Brain's WorktreeCreate hook
            (seed_worktree.py) and every session dies at birth, hanging on "Connecting...". It is also
            the only mode that would need the working directory to be a git repository.
@@ -51,6 +56,8 @@ EX_CONFIG = 78
 # several releases behind, and an old CLI rejects --chrome.
 CANDIDATES = ("~/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude")
 SHELLS = ("sh", "bash", "zsh", "dash", "ksh")
+WRAPPER_ENV = "CLAUDE_CODE_PROCESS_WRAPPER"
+SESSION_WRAPPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claude_session_wrapper.sh")
 
 
 def config_file(environ=None, home=None, platform=None):
@@ -89,7 +96,7 @@ def save(folder, name, config_path=None):
 
 
 def command(name, claude="claude"):
-    return [claude, "remote-control", "--chrome", "--name", name]
+    return [claude, "remote-control", "--chrome", "--permission-mode", "bypassPermissions", "--name", name]
 
 
 def blocking_env(environ):
@@ -102,8 +109,11 @@ def credential_env(environ):
     return sorted(k for k in CREDENTIAL_ENV if (environ.get(k) or "").strip())
 
 
-def server_env(environ):
-    return {k: v for k, v in environ.items() if k not in BLOCKING_ENV and k not in CREDENTIAL_ENV}
+def server_env(environ, wrapper=SESSION_WRAPPER):
+    env = {k: v for k, v in environ.items() if k not in BLOCKING_ENV and k not in CREDENTIAL_ENV}
+    if wrapper:
+        env[WRAPPER_ENV] = wrapper
+    return env
 
 
 def _read_head(path, size=256):

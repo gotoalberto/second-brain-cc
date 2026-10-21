@@ -139,7 +139,7 @@ def test_remote_control_rules(D):
     check("an answer that cannot be read is a problem too", len(out) == 1 and "claude auth status" in out[0], out)
     text = D.first_start_text("/home/u/workstation", "workstation")
     for needle in ("trust", "Enable Remote Control", "same-dir", "worktree",
-                   "claude remote-control --chrome --name workstation", "/home/u/workstation"):
+                   "claude remote-control --chrome --permission-mode bypassPermissions --name workstation", "/home/u/workstation"):
         check("the one-time prompts explain %r" % needle, needle in text, text)
     text = D.verify_text("workstation", "systemd")
     check("the closing lines say how to check the server and reach it from the phone",

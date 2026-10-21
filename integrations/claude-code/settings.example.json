@@ -1,7 +1,8 @@
 {
-  "_comment": "Recommended Claude Code settings for this harness. Merge them into ~/.claude/settings.json with: python3 _bin/claude_settings.py merge (adds only what you do not have, asks first, keeps a backup). __VAULT__ becomes the vault path. Hooks are not here: guardian.py repair --hooks-only installs and repairs them.",
+  "_comment": "Recommended Claude Code settings for this harness, the same as the reference machine. Merge them into ~/.claude/settings.json with: python3 _bin/claude_settings.py merge (adds only what you do not have, asks first, keeps a backup, lists a value you set differently as kept). __VAULT__ becomes the vault path. Hooks are not here: guardian.py repair --hooks-only installs and repairs them. bypassPermissions is for your own machine run by a normal user, never root: read 30-Knowledge/2026-09-21-convention-machines-default-to-bypass-permissions-with-a-non-root-user.md before merging.",
+  "_comment_chrome": "Claude in Chrome asks before acting even in bypassPermissions unless CLAUDE_CHROME_CLASSIFIER_FLOOR is 0 and the site has its own ClaudeInChromeDomain(<host>) rule: exact host, www dropped, port kept, no wildcards. Whole-tool mcp__claude-in-chrome__ rules do not cover sites. Add your own sites with python3 _bin/claude_settings.py chrome-allow <host>...",
   "permissions": {
-    "defaultMode": "acceptEdits",
+    "defaultMode": "bypassPermissions",
     "allow": [
       "Bash(git status*)",
       "Bash(git log *)",
@@ -18,8 +19,49 @@
       "Bash(python3 __VAULT__/_bin/guardian.py status*)",
       "Bash(python3 __VAULT__/_bin/kp.py status*)",
       "Bash(python3 __VAULT__/integrations/first-run/first_run.py status*)",
-      "Read(__VAULT__/**)"
+      "Read(__VAULT__/**)",
+      "mcp__claude-in-chrome__tabs_context_mcp",
+      "mcp__claude-in-chrome__tabs_create_mcp",
+      "mcp__claude-in-chrome__tabs_close_mcp",
+      "mcp__claude-in-chrome__navigate",
+      "mcp__claude-in-chrome__read_page",
+      "mcp__claude-in-chrome__get_page_text",
+      "mcp__claude-in-chrome__find",
+      "mcp__claude-in-chrome__computer",
+      "mcp__claude-in-chrome__browser_batch",
+      "mcp__claude-in-chrome__form_input",
+      "mcp__claude-in-chrome__javascript_tool",
+      "mcp__claude-in-chrome__file_upload",
+      "mcp__claude-in-chrome__upload_image",
+      "mcp__claude-in-chrome__read_console_messages",
+      "mcp__claude-in-chrome__read_network_requests",
+      "mcp__claude-in-chrome__gif_creator",
+      "mcp__claude-in-chrome__resize_window",
+      "mcp__claude-in-chrome__shortcuts_list",
+      "mcp__claude-in-chrome__shortcuts_execute",
+      "mcp__claude-in-chrome__list_connected_browsers",
+      "mcp__claude-in-chrome__select_browser",
+      "mcp__claude-in-chrome__switch_browser",
+      "ClaudeInChromeDomain(github.com)",
+      "ClaudeInChromeDomain(google.com)",
+      "ClaudeInChromeDomain(mail.google.com)",
+      "ClaudeInChromeDomain(calendar.google.com)",
+      "ClaudeInChromeDomain(docs.google.com)",
+      "ClaudeInChromeDomain(drive.google.com)",
+      "ClaudeInChromeDomain(claude.ai)",
+      "ClaudeInChromeDomain(chatgpt.com)",
+      "ClaudeInChromeDomain(grok.com)",
+      "ClaudeInChromeDomain(x.com)",
+      "ClaudeInChromeDomain(twitter.com)",
+      "ClaudeInChromeDomain(linkedin.com)",
+      "ClaudeInChromeDomain(localhost:3000)",
+      "ClaudeInChromeDomain(localhost:5173)",
+      "ClaudeInChromeDomain(127.0.0.1:3000)"
     ]
+  },
+  "skipDangerousModePermissionPrompt": true,
+  "env": {
+    "CLAUDE_CHROME_CLASSIFIER_FLOOR": "0"
   },
   "skipWorkflowUsageWarning": true
 }

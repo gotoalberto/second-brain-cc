@@ -211,8 +211,12 @@ def brain_hook_paths(hooks: dict, brain_dirs) -> list:
 # Brain reaches outside services only through mechanisms it controls (convention note
 # 2026-09-15-convention-never-claude-ai-connectors-only-controlled-mechanisms), and while those
 # connectors stay loaded the harness asks the session to tell the user to authorize the ones
-# that are logged out. A plain dict on purpose: a user who wants them can empty it.
-REQUIRED_ENV = {"ENABLE_CLAUDEAI_MCP_SERVERS": "false"}
+# that are logged out. CLAUDE_CHROME_CLASSIFIER_FLOOR=0 turns off a server-side floor that makes
+# every Claude in Chrome action ask, even in bypassPermissions and on allowed sites; with it at 0 a
+# site's ClaudeInChromeDomain(<host>) allow rule is honoured (2026-10-21 Chrome classifier note).
+# The CLI reads it at start, so a new session picks it up with no restart. A plain dict on purpose:
+# a user who wants either default back can remove its entry.
+REQUIRED_ENV = {"ENABLE_CLAUDEAI_MCP_SERVERS": "false", "CLAUDE_CHROME_CLASSIFIER_FLOOR": "0"}
 
 
 @dataclass(frozen=True)

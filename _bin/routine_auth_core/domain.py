@@ -537,7 +537,6 @@ def forbidden_arg_problem(tokens):
 # ---------------------------------------------------------------- permissions an unattended run may never have
 
 UNRESTRICTED_BASH = ("Bash", "Bash(*)", "Bash(:*)")
-SKIP_PERMISSION_FLAGS = ("--dangerously-skip-permissions", "--allow-dangerously-skip-permissions")
 _ALLOWED_TOOLS_FLAGS = ("--allowedTools", "--allowed-tools")
 
 
@@ -562,21 +561,16 @@ def _tool_entries(value: str) -> list:
 
 
 def permission_problem(tokens):
-    """Why these CLI arguments would give an unattended run unrestricted permissions, or None.
+    """Why these CLI arguments would give an unattended run a broken permission set, or None.
 
-    Refused: skipping permission checks (`--dangerously-skip-permissions`, its `--allow-` form,
-    `--permission-mode bypassPermissions`) and an allowed-tools list granting any shell command
-    (bare `Bash`, `Bash(*)`, `Bash(:*)`). A routine lists narrow prefix patterns instead, such
-    as `Bash(python3 ~/Brain/_bin/vw.py append:*)`.
+    Routines run in `--permission-mode bypassPermissions`, the same as every interactive session on
+    the machine (90-Meta/agent-command.txt), so skipping permission checks is not refused. Still
+    refused: an allowed-tools list granting any shell command (bare `Bash`, `Bash(*)`, `Bash(:*)`),
+    so a routine's list stays a readable record of what it uses. A routine lists narrow prefix
+    patterns instead, such as `Bash(python3 ~/Brain/_bin/vw.py append:*)`.
     """
     toks = list(tokens or ())
     for i, t in enumerate(toks):
-        for flag in SKIP_PERMISSION_FLAGS:
-            if t == flag or t.startswith(flag + "="):
-                return "%s is refused: an unattended run must never skip permission checks" % flag
-        if t == "--permission-mode=bypassPermissions" or (
-                t == "--permission-mode" and i + 1 < len(toks) and toks[i + 1] == "bypassPermissions"):
-            return "--permission-mode bypassPermissions is refused: an unattended run must never skip permission checks"
         values = []
         if t in _ALLOWED_TOOLS_FLAGS:
             for v in toks[i + 1:]:

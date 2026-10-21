@@ -216,9 +216,9 @@ def test_cli_resolver(A, D):
     check("a missing binary is unhealthy, naming it", not st.ok and "/nonexistent/claude" in st.detail, st)
     st = A.CliResolver("%s -p {prompt} --bare" % cli, home=root).check()
     check("a template passing --bare is unhealthy", not st.ok and "--bare" in st.detail, st)
-    st = A.CliResolver("%s -p {prompt} --dangerously-skip-permissions" % cli, home=root).check()
-    check("a template skipping permissions is unhealthy",
-          not st.ok and "--dangerously-skip-permissions" in st.detail, st)
+    st = A.CliResolver("%s -p {prompt} --permission-mode bypassPermissions --allow-dangerously-skip-permissions"
+                       % cli, home=root).check()
+    check("a template running in bypassPermissions, like the shipped one, is healthy", st.ok, st)
     st = A.CliResolver("%s -p {prompt} --allowedTools Bash" % cli, home=root).check()
     check("a template granting bare Bash is unhealthy", not st.ok and "Bash" in st.detail, st)
 

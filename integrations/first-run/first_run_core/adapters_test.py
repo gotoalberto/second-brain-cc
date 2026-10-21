@@ -380,7 +380,7 @@ def test_remote_control():
     cwd, _, rest = line.partition("|")
     check("the first start runs claude remote-control --chrome --name from the repository, without the telemetry switch",
           good and os.path.realpath(cwd) == os.path.realpath(path)
-          and rest == "remote-control --chrome --name workstation|unset|unset", (line, detail))
+          and rest == "remote-control --chrome --permission-mode bypassPermissions --name workstation|unset|unset", (line, detail))
 
     lc_log = os.path.join(d, "loginctl.log")
     loginctl = write(os.path.join(d, "bin", "loginctl"),
