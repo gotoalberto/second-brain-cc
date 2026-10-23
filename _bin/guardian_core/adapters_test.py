@@ -21,6 +21,7 @@ import smtplib
 import subprocess
 import sys
 import tempfile
+import time
 import types
 import urllib.error
 
@@ -363,6 +364,24 @@ def test_git_hooks():
     done, detail = gh.make_executable("pre-commit")
     mode = os.stat(os.path.join(vault, "githooks", "pre-commit")).st_mode & 0o777
     check("make_executable adds the execute bits where read bits are", done and mode == 0o755, oct(mode))
+    check("an unset merge driver reads as None", gh.status().merge_driver is None)
+    done, detail = gh.set_merge_driver()
+    s = gh.status()
+    check("set_merge_driver writes the JSON state driver", done and s.merge_driver == AD.D.MERGE_DRIVER_CMD,
+          (detail, s.merge_driver))
+    check("no rebase in progress reads as None", s.rebase is None, s.rebase)
+    rb = os.path.join(vault, ".git", "rebase-merge")
+    os.makedirs(rb)
+    old = time.time() - 3600
+    os.utime(rb, (old, old))
+    s2 = gh.status()
+    check("a rebase in progress is read with its age",
+          s2.rebase is not None and 3500 < s2.rebase.age_s < 3700 and not s2.rebase.by_sync, s2.rebase)
+    open(os.path.join(vault, ".git", "brain-sync-rebase"), "w").close()
+    check("and the sync's marker says who started it", gh.status().rebase.by_sync)
+    os.remove(os.path.join(vault, ".git", "brain-sync-rebase"))
+    os.rmdir(rb)
+    after = config_lines(os.path.join(vault, ".git"))
     s = gh.status()
     check("afterwards the repository reads healthy",
           s.hooks_path == "githooks" and AD.D.git_hooks_findings(s) == [], s)
@@ -855,6 +874,7 @@ def test_hook_liveness_source():
           [(x.sid, x.project_dir) for x in ss] == [("b5fc96bc", "-Users-me-Brain"), ("3ac18522", "-Users-me-code-app")], ss)
     check("a hook Claude Code cancelled is read from the transcript as its hook event",
           [x.cancelled for x in ss] == [frozenset({"SessionStart"}), frozenset()], ss)
+    check("a transcript that starts its own chain is not a fork", [x.forked for x in ss] == [False, False], ss)
     ss = [x for x in ss if x.sid == "3ac18522"]
     check("with a start time no later than their last write", ss and ss[0].started <= ss[0].mtime, ss)
     # Linux has no st_birthtime: a long session touched now (Claude Code appends metadata when its
@@ -872,6 +892,19 @@ def test_hook_liveness_source():
     check("an empty transcript is not a session",
           not [x for x in src.sessions(now - 3600) if x.sid == "0000bbbb"])
     os.remove(empty)
+    # Claude Code can also leave a transcript holding only metadata and no turn.
+    meta = write(os.path.join(app, "0000cccc-0000-4000-8000-000000000005.jsonl"),
+                 '{"type":"metadata-only","sessionId":"0000cccc-0000-4000-8000-000000000005"}\n')
+    check("a transcript with metadata and no turn is not a session",
+          not [x for x in src.sessions(now - 3600) if x.sid == "0000cccc"])
+    os.remove(meta)
+    # A fork's first turn hangs off a message in the parent's transcript.
+    forked = write(os.path.join(app, "0000dddd-0000-4000-8000-000000000006.jsonl"),
+                   '{"type":"metadata-only"}\n'
+                   '{"parentUuid":"0000eeee-parent","type":"user","uuid":"u1","timestamp":"2031-05-04T09:15:00.000Z"}\n')
+    check("a transcript whose first turn hangs off another transcript's message is a fork",
+          [x.forked for x in src.sessions(now - 3600) if x.sid == "0000dddd"] == [True])
+    os.remove(forked)
     check("a missing projects directory is no sessions",
           A_.HookLivenessSource(os.path.join(d, "nope"), log, registry, os.path.join(d, "e")).sessions(0) == [])
 

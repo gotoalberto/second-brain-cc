@@ -25,12 +25,36 @@ _WRITTEN = []
 LOG_HEADING = "## Log"
 
 
+def normalize(rel, vault=None):
+    """The note's path relative to the vault, or (None, why) when it is not a note's path.
+
+    A relative path is relative to the vault root, wherever the caller stands. A session in
+    $HOME that writes `Brain/10-Projects/x.md` means `10-Projects/x.md`, and taking it as
+    typed made `<vault>/Brain/10-Projects/x.md`: a second tree inside the vault that no
+    search, project lookup or sync rule reads. So a leading `<vault folder name>/` is
+    dropped, and the first folder must be one of the vault's note folders, or the write is
+    refused.
+    """
+    vault = os.path.normpath(vault or B.VAULT)
+    rel = os.path.expanduser(rel)
+    path = os.path.normpath(rel if os.path.isabs(rel) else os.path.join(vault, rel))
+    if not B.is_within(path, vault):
+        return None, "path outside the vault: %s" % rel
+    parts = os.path.relpath(path, vault).split(os.sep)
+    while len(parts) > 1 and parts[0] == os.path.basename(vault) and parts[1] in B.VAULT_NOTES:
+        parts = parts[1:]
+    if len(parts) < 2 or parts[0] not in B.VAULT_NOTES:
+        return None, ("not inside a note folder of the vault (%s): %s"
+                      % (", ".join(B.VAULT_NOTES), rel))
+    return os.sep.join(parts), None
+
+
 def resolve(rel):
-    path = rel if os.path.isabs(rel) else os.path.join(B.VAULT, rel)
-    if not B.in_vault(path):
-        sys.stderr.write("vw: path outside the vault: %s\n" % rel)
+    norm, why = normalize(rel)
+    if norm is None:
+        sys.stderr.write("vw: %s\n" % why)
         sys.exit(1)
-    return path
+    return os.path.join(B.VAULT, norm)
 
 
 def frontmatter(title, ntype, projects, areas, tags, source="agent", provenance=""):

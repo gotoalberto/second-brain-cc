@@ -141,6 +141,8 @@ messages, documents) is written **the way a person would, as simply as possible*
   `30-Knowledge/2026-08-28-convention-clickable-links-and-send-files.md`
 - Messages in the user's name: read the end of the thread first, draft, show, and send only
   when told. `30-Knowledge/2026-09-05-convention-read-thread-end-before-outbound-message.md`
+  A public comment that backs a post opens with the supporting fact, never with "Agree" or
+  "Exactly". `30-Knowledge/2026-10-23-convention-comments-open-with-the-supporting-fact.md`
 - Before reporting status from a plan, reconcile the plan with reality.
   `30-Knowledge/2026-08-30-convention-reconcile-plan-doc-before-reporting-status.md`
 
@@ -330,6 +332,14 @@ Detail and reasoning: `30-Knowledge/2026-08-21-convention-worktree-isolation-per
   action is a stopping point to report, not an obstacle to route around. Verify by the paths
   that do not need the gate and leave the live check to the user.
   `30-Knowledge/2026-09-05-convention-agent-must-not-self-edit-access-control-to-pass-a-gate.md`
+  What the user could grant, ask for with one pasteable line that grants exactly that, never "there
+  is no command". `30-Knowledge/2026-10-17-convention-ask-for-blocked-permissions-with-a-pasteable-command.md`
+- **When a skill step fails, fix the skill and retry the same method.** Never fall back to another
+  generator, a simpler deliverable or a relaxed check on your own.
+  `30-Knowledge/2026-10-23-convention-on-a-failure-fix-the-skill-and-retry-the-same-method.md`
+- **Every generated image, frame or clip gets the question "anything strange?"**, answered in
+  writing after tracing each limb and prop.
+  `30-Knowledge/2026-10-23-convention-qa-every-generated-image-for-anything-strange.md`
 - **Memory must not assert mutable state.** A scope, a quota, a flag or a plan tier is
   written as the command that answers it now, or as a dated snapshot, never as a flat
   present-tense fact.
@@ -379,6 +389,9 @@ Detail and reasoning: `30-Knowledge/2026-08-21-convention-worktree-isolation-per
   a log the code writes, never from the model's last words.
   `30-Knowledge/2026-09-15-convention-headless-agent-prompt-must-be-framed-as-an-order.md`
   `30-Knowledge/2026-09-15-convention-success-contracts-must-check-the-log-not-the-models-final-words.md`
+  A routine that publishes states the publishing case first, as the user's explicit request, or the
+  classifier denies the click even in bypass.
+  `30-Knowledge/2026-10-23-convention-routine-that-publishes-states-it-as-the-users-request.md`
 - **Every session is told which machine it is on.** The `## This machine` block at startup
   (`_bin/machine_caps.py`) names the machine key, its scheduler, the tools on its PATH, whether its
   own Chrome is paired with Claude Code and which agent tasks run there. Decide what a machine can

@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real installs on a macOS laptop and a Linux server in a working vault; names and numbers are illustrative"
-updated: 2026-10-21
+updated: 2026-10-23
 supersedes: []
 ---
 
@@ -170,6 +170,19 @@ bash ~/Brain/integrations/claude-code/install.sh
 
 The first run is where the kdbx path, the files directory, the shared directory and the
 scheduled jobs are chosen. Re-running it resumes where it stopped.
+
+Before the first sync, set the vault's git config:
+
+```sh
+python3 ~/Brain/_bin/guardian.py repair --git-only
+```
+
+It sets `core.hooksPath` (the secret scan) and the `brain-json-state` merge driver that
+`.gitattributes` names for the JSON state files several machines write. Git does not sync
+`.git/config`, so every machine needs it. Without the driver every pull between two machines that both
+wrote one of those files conflicts, and one such conflict is enough to leave a vault mid-rebase for
+days ([[2026-10-23-decision-sync-never-rebases-on-a-deadline]]). The guardian's scheduled `repair`
+checks and fixes both settings afterwards.
 
 ## 7. Periodic jobs
 

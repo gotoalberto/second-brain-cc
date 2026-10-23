@@ -120,6 +120,11 @@ def build_sections(con, sid=None, cwd=None):
     is ever dropped (see fit)."""
     secs = [("header", "# Brain — the user's memory (vault: ~/Brain)", 100)]
 
+    if sid is not None:                   # a session starting: is the vault syncing at all?
+        sync = sync_section()
+        if sync:
+            secs.append(sync)
+
     # Which machine this is and what it has, read from machine_caps' cache (probed behind the session).
     # Before the protocol, so no rule is read as if it applied to some other machine.
     machine = machine_section()
@@ -154,6 +159,67 @@ def build_sections(con, sid=None, cwd=None):
     secs.append(("footer", "\n%d notes indexed. Search with `/recall`, run with "
                  "`/task`, save with `/save`." % total, 80))
     return secs
+
+
+UNPUSHED_WARN_S = 60 * 60          # the daemon pushes every 10 min; an hour means it is not
+
+
+def _ago(seconds):
+    mins = int(seconds // 60)
+    if mins < 120:
+        return "%d min" % mins
+    if mins < 48 * 60:
+        return "%d h" % (mins // 60)
+    return "%d days" % (mins // 1440)
+
+
+def sync_section(vault=None, now=None, run=None):
+    """Whether this machine's vault is syncing, read LIVE, first thing in the startup block.
+
+    The guardian's health notice below is a cache of its last run: "last run failed" says
+    nothing about a vault stuck mid-rebase, which sends and receives nothing for as long as
+    it lasts. Two stats and, only when nothing is in progress, one local git call: no
+    network, a few tens of ms. Never raises; nothing is added while the vault syncs.
+    """
+    try:
+        vault = vault or B.VAULT
+        now = now or time.time()
+        git_dir = os.path.join(vault, ".git")
+        lines = []
+        for name in ("rebase-merge", "rebase-apply"):
+            path = os.path.join(git_dir, name)
+            if os.path.isdir(path):
+                age = now - os.path.getmtime(path)
+                by_sync = os.path.exists(os.path.join(git_dir, "brain-sync-rebase"))
+                lines.append(
+                    "- **Stuck mid-rebase for %s** (since %s). Nothing on this machine is committed, "
+                    "pushed or pulled until it ends. %s"
+                    % (_ago(age), time.strftime("%Y-%m-%d %H:%M", time.localtime(now - age)),
+                       "The sync started it: its next pass saves the work written since and "
+                       "recovers it once it is 20 min old." if by_sync else
+                       "It was not started by the sync: tell the user, and finish it with "
+                       "`git rebase --continue` or abort it with `git rebase --abort` in %s "
+                       "(an abort drops what was written since unless it is saved first)." % vault))
+                break
+        if os.path.exists(os.path.join(git_dir, "MERGE_HEAD")):
+            lines.append("- **A merge is in progress in %s**: the sync commits nothing until it ends."
+                         % vault)
+        if not lines:
+            run = run or (lambda args: B.run([B.GIT] + args, cwd=vault, timeout=1.5))
+            rc, out, _ = run(["log", "--format=%ct", "@{u}..HEAD"])
+            stamps = [int(x) for x in (out or "").split() if x.isdigit()] if rc == 0 else []
+            if stamps and now - min(stamps) >= UNPUSHED_WARN_S:
+                lines.append("- **%d commit(s) not pushed, the oldest from %s ago**: this machine's "
+                             "changes are not reaching the others. Check "
+                             "`python3 %s/_bin/guardian.py status`."
+                             % (len(stamps), _ago(now - min(stamps)), vault))
+        if not lines:
+            return None
+        return ("sync", "\n## Vault sync: BROKEN on this machine\n" + "\n".join(lines) +
+                "\nSay so to the user before anything else.", 99)
+    except Exception as e:
+        B.log_error("compass.sync_section", e)
+        return None
 
 
 def machine_section():

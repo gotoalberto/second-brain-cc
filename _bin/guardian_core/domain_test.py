@@ -771,6 +771,16 @@ def test_hook_liveness(D):
     check("but a cancelled SessionStart does not excuse a missing prompt-submit",
           ks(rep) == [("hooks:silent:prompt-submit", "warn")], rep.findings)
 
+    # A fork (`--fork-session`, a remote control fork) gets no SessionStart: the parent's
+    # startup context carries over.
+    fork = D.SessionTranscript("eeee5555", "-Users-me-Brain", now - 600, now - 60, frozenset(), True)
+    rep = D.hook_liveness([fork], [hb("eeee5555", "prompt-submit", 590),
+                                   hb("eeee5555", "stop-memory-gate", 400)], specs, now, young)
+    check("a fork without SessionStart is not hooks:silent:session-start", rep.findings == [], rep.findings)
+    rep = D.hook_liveness([fork], [hb("eeee5555", "stop-memory-gate", 400)], specs, now, young)
+    check("but a fork is still held to prompt-submit",
+          ks(rep) == [("hooks:silent:prompt-submit", "warn")], rep.findings)
+
     def runs(statuses):
         return [hb("bbbb2222", "prompt-submit", 100 + i * 10, s, "ValueError" if s == "error" else "")
                 for i, s in enumerate(statuses)]

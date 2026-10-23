@@ -216,10 +216,13 @@ class FakeGitHooks:
     """The vault repository's git hooks: core.hooksPath and the hook files' modes."""
 
     def __init__(self, hooks_path="githooks", executable=("pre-commit", "post-commit"),
-                 present=("pre-commit", "post-commit"), set_ok=True, explode=False):
+                 present=("pre-commit", "post-commit"), set_ok=True, explode=False,
+                 merge_driver="default", rebase=None):
         self.hooks_path = hooks_path
         self.executable, self.present = set(executable), set(present)
         self.set_ok, self.explode = set_ok, explode
+        self.merge_driver = D.MERGE_DRIVER_CMD if merge_driver == "default" else merge_driver
+        self.rebase = rebase
         self.calls = []
 
     def status(self):
@@ -227,7 +230,13 @@ class FakeGitHooks:
             raise RuntimeError("not a git repository")
         return D.GitHooksStatus(self.hooks_path, [
             D.GitHookFile(n, n in self.present, n in self.present and n in self.executable)
-            for n in ("pre-commit", "post-commit")])
+            for n in ("pre-commit", "post-commit")],
+            merge_driver=self.merge_driver, rebase=self.rebase)
+
+    def set_merge_driver(self):
+        self.calls.append(("set-merge-driver",))
+        self.merge_driver = D.MERGE_DRIVER_CMD
+        return True, "merge driver set"
 
     def set_hooks_path(self):
         self.calls.append(("set-hooks-path",))
@@ -533,6 +542,40 @@ def test_git_hooks():
     text = A.run_status(with_git_hooks(FakeGitHooks(hooks_path=None)))
     check("status shows the vault's core.hooksPath",
           "git hooks" in text and "core.hooksPath" in text and "unset" in text, text)
+
+    print("\n== JSON state merge driver ==")
+    gh = FakeGitHooks(merge_driver=None)
+    r = A.run_check(with_git_hooks(gh))
+    check("an unset merge driver is a repairable warning",
+          keys(r) == ["githooks:merge-driver"] and r.findings[0].severity == "warn"
+          and r.findings[0].repairable, r.findings)
+    res = A.run_repair(with_git_hooks(gh))
+    check("repair sets the merge driver", gh.calls == [("set-merge-driver",)]
+          and "githooks:merge-driver" not in keys(res.report), (gh.calls, keys(res.report)))
+    gh = FakeGitHooks(merge_driver="python3 old.py %A")
+    check("an out of date driver is repaired too",
+          D.git_hooks_repairs(gh.status()) == [("set-merge-driver", None)])
+    gh = FakeGitHooks(hooks_path=None, merge_driver=None)
+    p = with_git_hooks(gh)
+    res = A.run_repair(p, git_only=True)
+    check("the git-only repair (bootstrap) sets both git settings",
+          gh.calls == [("set-hooks-path",), ("set-merge-driver",)], gh.calls)
+    check("and reports only the git section", all(k.startswith("githooks:") for k in keys(res.report))
+          and not res.alerts, (keys(res.report), res.alerts))
+
+    print("\n== a rebase stuck in the vault ==")
+    young = FakeGitHooks(rebase=D.RebaseState(age_s=60, by_sync=True))
+    check("a rebase a minute old is not reported (a pass may be in the middle of it)",
+          keys(A.run_check(with_git_hooks(young))) == [])
+    stuck = FakeGitHooks(rebase=D.RebaseState(age_s=3 * 86400, by_sync=False))
+    r = A.run_check(with_git_hooks(stuck))
+    check("a rebase three days old is a failure that says how long and what to do",
+          keys(r) == ["githooks:rebase-stuck"] and r.findings[0].severity == "fail"
+          and "72 h" in r.findings[0].summary and "rebase --continue" in r.findings[0].summary,
+          r.findings)
+    check("and it is not something repair touches", not r.findings[0].repairable)
+    text = A.run_status(with_git_hooks(stuck))
+    check("status names it", "REBASE IN PROGRESS" in text, text)
 
 
 def last_mail(p):

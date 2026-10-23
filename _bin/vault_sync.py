@@ -397,6 +397,152 @@ def is_lock_failure(text):
     return "index.lock" in (text or "") and "File exists" in (text or "")
 
 
+# --- rebases this sync starts -----------------------------------------------------------
+# A marker in .git says "the rebase in progress is the sync's", with the pid and the time.
+# It is what lets a later pass tell a rebase the sync left behind (recover it) from one a
+# person is resolving by hand in the vault (never touch it).
+SYNC_REBASE_MARKER = "brain-sync-rebase"
+STUCK_REBASE_S = 20 * 60          # same number as guardian_core.domain.STUCK_REBASE_S
+REGENERATED = ("40-Skills/",)     # rewritten by the machinery on every pass (skills_index)
+
+
+def _marker(vault=None):
+    return os.path.join(vault or B.VAULT, ".git", SYNC_REBASE_MARKER)
+
+
+def mark_sync_rebase(vault=None):
+    try:
+        with open(_marker(vault), "w") as fh:
+            fh.write("%d %d\n" % (os.getpid(), int(time.time())))
+    except OSError:
+        pass
+
+
+def clear_sync_rebase(vault=None):
+    try:
+        os.remove(_marker(vault))
+    except OSError:
+        pass
+
+
+def stale_sync_rebase(vault=None, now_=None, alive=None, running=None):
+    """True when the rebase in progress is one this sync started and then left behind.
+
+    Three proofs together: the marker is there, the process that wrote it is gone, and it
+    is older than STUCK_REBASE_S with no git process running. Without the marker the rebase
+    is a person's, and it is left alone however old it is.
+    """
+    try:
+        with open(_marker(vault)) as fh:
+            pid, ts = (int(x) for x in fh.read().split()[:2])
+    except (OSError, ValueError):
+        return False
+    if (now_ or time.time()) - ts < STUCK_REBASE_S:
+        return False
+
+    def pid_alive(p):
+        try:
+            os.kill(p, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except OSError:
+            return True
+
+    if (alive or pid_alive)(pid) or (running or git_running)():
+        return False
+    return True
+
+
+def abort_rebase(run_git=None, in_rebase=None, attempts=3):
+    """`git rebase --abort`, CHECKED. True once no rebase is left.
+
+    An abort whose result is ignored can fail in silence: the pass says "rebase aborted",
+    the vault stays mid-rebase, and every later pass stops on "REBASE IN PROGRESS". A lock
+    in the way is cleared when it is provably stale, and the abort is tried again.
+    """
+    run_git = run_git or git
+    in_rebase = in_rebase or rebase_in_progress
+    for _ in range(attempts):
+        if not in_rebase():
+            return True
+        run_git("rebase", "--abort")
+        if not in_rebase():
+            return True
+        clear_stale_index_lock()
+        time.sleep(1)
+    return not in_rebase()
+
+
+def note_recovered_rebase(detail):
+    """One note in 00-Inbox, so the recovery is seen and the saved copy can be found."""
+    rel = "00-Inbox/sync-rebase-recovered-%s.md" % time.strftime("%Y%m%d-%H%M%S")
+    B.mark_git_touched([rel])
+    try:
+        with open(os.path.join(B.VAULT, rel), "w") as fh:
+            fh.write("---\ntitle: Sync recovered a rebase it had left behind\n"
+                     "type: reference\nstatus: active\n---\n\n"
+                     "On **%s** the vault was stuck mid-rebase, started by the sync and left behind. "
+                     "The sync saved what had been written since, aborted the rebase and applied "
+                     "the work back (%s). If a file is missing, the copy is in that folder.\n"
+                     % (MACHINE, detail))
+    except OSError:
+        pass
+
+
+def rescue_dir():
+    import brain_paths
+    d = os.path.join(brain_paths.state_dir(), "rescue", time.strftime("%Y%m%d-%H%M%S"))
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def recover_stuck_rebase(run_git=None, where=None):
+    """Ends a rebase the sync started and left behind, keeping what was written since.
+
+    While a rebase is stopped, sessions keep writing into the working tree, and vault_sync
+    commits none of it. `git rebase --abort` on its own resets the tree to where the rebase
+    began and would throw all of that away, so first everything written since is saved as a
+    patch outside the vault (plus a copy of every conflicted file), then the rebase is
+    aborted, then the patch is applied back with --3way. What the machinery regenerates
+    (REGENERATED) is left out: the next pass writes it again.
+
+    Returns (ok, detail). Never raises.
+    """
+    run_git = run_git or git
+    try:
+        where = where or rescue_dir()
+        unmerged = unmerged_paths(run_git)
+        for rel in unmerged:
+            src = os.path.join(B.VAULT, rel)
+            if os.path.isfile(src):
+                dst = os.path.join(where, "conflicted", rel)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(src, dst)
+        excludes = [":(exclude)%s" % r for r in unmerged] + \
+                   [":(exclude)%s" % p for p in REGENERATED]
+        run_git("add", "-A", "--", ".", *excludes)
+        code, patch, err = run_git("diff", "--cached", "--binary", "--full-index", "HEAD",
+                                   "--", ".", *excludes)
+        if code != 0:
+            return False, "could not save the work in progress: %s" % (err or "")[:200]
+        patch_path = os.path.join(where, "worktree.patch")
+        with open(patch_path, "w", encoding="utf-8") as fh:
+            fh.write(patch + ("\n" if patch and not patch.endswith("\n") else ""))
+        if not abort_rebase(run_git):
+            return False, "the rebase could not be aborted; the work is saved in %s" % where
+        clear_sync_rebase()
+        if patch.strip():
+            code, out, err = run_git("apply", "--3way", "--index", patch_path)
+            if code != 0 and not unmerged_paths(run_git):
+                return False, "rebase ended, but the saved work did not apply: %s (patch in %s)" \
+                    % ((err or out or "")[:200], patch_path)
+        B.log("sync", "stuck-rebase-recovered", machine=MACHINE, where=where)
+        return True, "saved in %s" % where
+    except Exception as exc:
+        return False, "%s: %s" % (type(exc).__name__, exc)
+
+
 # Paths the machinery rewrites on its own every few minutes. A conflict on one of them holds
 # nothing a person wrote, so the sync settles it itself instead of stopping. Empty here:
 # nothing in this vault is committed periodically by a machine (presence, leases and the
@@ -519,6 +665,17 @@ def fetch_from_remote():
     """
     clear_stale_index_lock()
     _, head_before, _ = git("rev-parse", "HEAD")
+    mark_sync_rebase()
+    try:
+        return _fetch_from_remote(head_before)
+    finally:
+        # Gone whenever the pass leaves no rebase behind. If one is left (an abort that did
+        # not take, a pass killed), the marker stays and tells the next pass it may recover it.
+        if not rebase_in_progress():
+            clear_sync_rebase()
+
+
+def _fetch_from_remote(head_before):
     code, out, err = git("pull", "--rebase", "--autostash")
     if code != 0 and rebase_in_progress():
         left = settle_rebase()
@@ -540,8 +697,16 @@ def fetch_from_remote():
     # as long as the outage lasted. An outage is not a conflict, and a fail-open system
     # must not answer repetition with unbounded growth.
     was_conflict = rebase_in_progress()
-    if was_conflict:
-        git("rebase", "--abort")
+    aborted = abort_rebase() if was_conflict else True
+    if not aborted:
+        # Said out loud and kept apart from the ordinary conflict: the vault is now stuck,
+        # and this pass must not claim otherwise. The marker stays, so a later pass can
+        # recover it once this one is gone.
+        B.log("sync", "rebase-abort-failed", machine=MACHINE, err=(err or "")[:200])
+        print("CONFLICT with the remote and the rebase could NOT be aborted: the vault is "
+              "mid-rebase.\n  The next pass recovers it after %d min, or by hand:\n"
+              "    cd %s && git rebase --abort" % (STUCK_REBASE_S // 60, B.VAULT))
+        return False
     # A lock failure is only harmless when it left no rebase behind: if the abort itself
     # failed, the repo is mid-rebase and that has to reach the conflict note below.
     if is_lock_failure((out or "") + (err or "")) and not rebase_in_progress():
@@ -641,6 +806,16 @@ def main():
         #
         # So it neither aborts nor commits: it stops and says so loudly. A vault that
         # cannot sync has to shout about it, not paper over it.
+        # The one exception: a rebase this sync started itself and then left behind (its
+        # marker is there, its process is gone, and it is STUCK_REBASE_S old). Nobody is
+        # resolving that one, and waiting for a person can cost days of a machine that
+        # neither sends nor receives. It is recovered, saving first what was written since.
+        if rebase_in_progress() and not hook and stale_sync_rebase():
+            done, detail = recover_stuck_rebase()
+            print("%s a rebase the sync left behind: %s"
+                  % ("recovered" if done else "could NOT recover", detail))
+            if done:
+                note_recovered_rebase(detail)
         if rebase_in_progress():
             B.log("sync", "stopped-rebase-in-progress", machine=MACHINE)
             print("REBASE IN PROGRESS in %s: nothing is committed (the commits would go\n"

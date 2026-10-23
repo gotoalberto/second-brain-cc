@@ -1,0 +1,6 @@
+# JSON state that several machines write (a routine on one, a session on another) is merged
+# per key by _bin/json_state_merge.py instead of line by line. The guardian sets the
+# `brain-json-state` driver in .git/config on every machine; where it is not set yet, git
+# falls back to its ordinary merge. Detail: _bin/json_state_merge.py
+10-Projects/*-state.json merge=brain-json-state
+90-Meta/*-state.json merge=brain-json-state

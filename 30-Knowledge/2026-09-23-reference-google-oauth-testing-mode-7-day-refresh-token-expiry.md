@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from a working vault where a personal Gmail token died twice on the same 7 day cadence; names and dates are illustrative"
-updated: 2026-09-28
+updated: 2026-10-23
 supersedes: []
 ---
 
@@ -79,6 +79,19 @@ Record the change for the account: `google.py auth --account <name> --publishing
 the account as published in the registry (an account with no stamp reads as testing). From then on
 `google_token_watch.py` sets no expiry for it and only keeps the liveness probe, and its output says
 the token does not expire. Any app left in Testing keeps the 7 day clock described above.
+
+## After publishing
+
+A published app's refresh token renews access tokens by itself and has no expiry date. It still dies
+for other reasons: the user revokes access, changes the Google password, the client secret is
+rotated, or the token goes unused for about six months. None of those can be predicted, so a daily
+watch for a production account adds nothing. What covers them is `_bin/token_alert.py`: every
+`google.py` consumer gets its token through the same call, and the first one that Google refuses mails
+the guardian's address once a day, through another sender than the dead account.
+
+Diagnose with any call that needs the token: an `invalid_grant` from the token endpoint means it is
+dead, and `google.py auth --account <name>` renews it. Keep `google_token_watch.py` scheduled only for
+accounts whose app is still in Testing.
 
 ## Links
 

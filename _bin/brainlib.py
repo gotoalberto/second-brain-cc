@@ -1251,13 +1251,15 @@ def maybe_pull(force=False, timeout=None):
     pull let the lock wait, the `rev-parse` and the `diff` add up on top of it, so a hook
     that asked for a few seconds spent most of its own budget before reading the vault.
 
-    The three LOCAL calls around the pull get small fixed caps instead of shares of the
-    budget, and the PULL keeps whatever is left with a floor of `MIN_PULL`: the one place
-    the budget may overrun, on purpose. A `pull --rebase --autostash` killed between the
-    stash and the apply leaves `.git/rebase-merge/` holding nothing but the autostash, and
-    from there vault_sync refuses to commit anything until a person clears it by hand. A
-    pull cut short costs one stale read; a pull half done costs the vault. A caller whose
-    whole budget is under `MIN_PULL` gets no pull at all.
+    The pull is a `fetch` plus a fast-forward, never a rebase: a rebase cut short by the
+    deadline leaves the vault mid-rebase, and from there vault_sync refuses to commit
+    anything until a person clears it by hand. With local commits to replay, the vault is
+    left as it is and the daemon, which has no deadline, rebases on its next pass.
+
+    The LOCAL calls around the fetch get small fixed caps instead of shares of the budget,
+    and the fetch and the fast-forward keep whatever is left with a floor of `MIN_PULL`:
+    the one place the budget may overrun, on purpose. A caller whose whole budget is under
+    `MIN_PULL` gets no pull at all.
 
     `force=True` skips the `PULL_EVERY` throttle. retrieve.py calls this unforced, on
     every prompt, where a pull every few seconds would be wasteful. compass.py calls it
@@ -1293,10 +1295,26 @@ def maybe_pull(force=False, timeout=None):
                 log("sync", "pull-skipped-foreign-rebase")
                 return
             _, head_before, _ = run([GIT, "rev-parse", "HEAD"], cwd=VAULT, timeout=REVPARSE_CAP)
-            # What is left, never less than MIN_PULL: finishing a rebase a few hundred
-            # milliseconds late costs nobody anything, killing it mid-apply costs the vault.
-            code, _, err = run([GIT, "pull", "--rebase", "--autostash", "--quiet"],
-                               cwd=VAULT, timeout=max(left(), MIN_PULL))
+            # Fetch, then fast-forward only. NEVER a rebase on this path. A rebase cannot be
+            # cut short safely, and this path always runs on a deadline: a timeout that kills
+            # one between the autostash and the apply, or a short `rebase --abort` after a
+            # conflict on a vault many commits ahead, leaves the vault mid-rebase, and from
+            # there the sync commits nothing until a person clears it. A fetch killed at any
+            # point leaves nothing behind, and a fast-forward is one ref update. When this
+            # machine has commits of its own to replay, the daemon does it, with no deadline.
+            code, _, err = run([GIT, "fetch", "--quiet"], cwd=VAULT, timeout=max(left(), MIN_PULL))
+            if code == 0:
+                behind = run([GIT, "merge-base", "--is-ancestor", "HEAD", "@{u}"],
+                             cwd=VAULT, timeout=REVPARSE_CAP)[0] == 0
+                if behind:
+                    # Refuses, touching nothing, when a local edit is in the way: the daemon
+                    # settles that with its autostash on its next pass.
+                    code, _, err = run([GIT, "merge", "--ff-only", "--quiet", "@{u}"],
+                                       cwd=VAULT, timeout=max(left(), MIN_PULL))
+                else:
+                    log("sync", "pull-left-to-daemon", why="local commits to replay")
+            else:
+                log("sync", "pull-fetch-failed", err=(err or "")[:200])
             # Whatever the pull rewrote now has mtime = now. Marked so the memory gate
             # cannot read someone else's commit as this session having saved.
             if code == 0 and head_before.strip():
@@ -1306,15 +1324,6 @@ def maybe_pull(force=False, timeout=None):
                                        head_before.strip(), "HEAD"], cwd=VAULT, timeout=DIFF_CAP)
                 if rc2 == 0 and changed.strip():
                     mark_git_touched(changed.splitlines())
-            # The result canNOT be ignored. A failed pull (a conflict, or the timeout
-            # cutting the rebase mid-apply) leaves a half-finished .git/rebase-merge, and
-            # from there everything vault_sync commits lands on a detached HEAD: the vault
-            # stops converging and nobody notices. It is aborted here, with the lock still
-            # in hand; a local operation, adding no network and no wait. This one IS ours:
-            # there was no rebase on entry and this pull left it.
-            if code != 0 and _rebase_in_progress():
-                run([GIT, "rebase", "--abort"], cwd=VAULT, timeout=5)
-                log("sync", "pull-hook-rebase-aborted", err=(err or "")[:200])
         os.makedirs(STATE, exist_ok=True)
         open(marker, "w").close()
     except Exception as e:

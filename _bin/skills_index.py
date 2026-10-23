@@ -144,12 +144,23 @@ def write_index(skills):
     B.atomic_write(index_path(), "\n".join(lines) + "\n")
 
 
+def home_relative(path):
+    """`~/...` instead of this machine's home: the note is shared, the home is not.
+
+    With the absolute path, every machine rewrote all the skill notes with its own
+    `/Users/...` or `/home/...` prefix on each pass, a ping-pong of commits between them.
+    """
+    if path == HOME or path.startswith(HOME + os.sep):
+        return "~" + path[len(HOME):]
+    return path
+
+
 def write_note(s):
     today = time.strftime("%Y-%m-%d")
     path = os.path.join(B.VAULT, "40-Skills", "%s.md" % s["name"])
     auto = [AUTO_BEGIN,
             "**Scope**: %s" % s["scope"],
-            "**File**: `%s`" % s["path"],
+            "**File**: `%s`" % home_relative(s["path"]),
             "**Invocation**: `/%s`" % s["name"], ""]
     if s["desc"]:
         auto += ["**What it does**", s["desc"], ""]

@@ -106,6 +106,21 @@ def main():
         note = open(os.path.join(folder, "demo.md")).read()
         check("an excerpt with a code block inside is wrapped in a longer fence",
               "````\nRun it:" in note and note.count("````") == 2, note)
+
+        print("== skill paths are machine-neutral ==")
+        check("a skill under the home is written as ~/...",
+              S.home_relative(os.path.join(S.HOME, ".claude", "skills", "bread-timer", "SKILL.md"))
+              == "~/.claude/skills/bread-timer/SKILL.md")
+        check("a path outside the home is left alone",
+              S.home_relative("/opt/skills/x/SKILL.md") == "/opt/skills/x/SKILL.md")
+        check("a sibling of the home is not mistaken for it",
+              S.home_relative(S.HOME + "x/a") == S.HOME + "x/a")
+        S.write_note({"name": "bread-timer", "scope": "user",
+                      "path": os.path.join(S.HOME, ".claude", "skills", "bread-timer", "SKILL.md"),
+                      "desc": "d", "when": "", "tools": "", "ctx": "", "agent": "", "model": "", "body": ""})
+        note = open(os.path.join(folder, "bread-timer.md")).read()
+        check("the note carries no machine's home, so two machines write the same text",
+              "**File**: `~/.claude/skills/bread-timer/SKILL.md`" in note and S.HOME + os.sep not in note, note)
     B.VAULT = saved_vault
 
     print()

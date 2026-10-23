@@ -9,7 +9,7 @@ status: active
 confidence: medium
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-10-12
+updated: 2026-10-23
 supersedes: []
 ---
 
@@ -29,7 +29,7 @@ Commands below are the shape of the tool; `guardian.py --help` is authoritative.
 | scheduler | a job from the vault's templates not installed, not loaded, drifted from its template, or whose last run failed | install, load, reinstall |
 | interpreter | the python3 the hooks run on does not start. A timeout is retried once with a longer one before it counts: a Mac just woken from sleep can start the interpreter slowly once | no |
 | vault | commits unpushed for hours, no upstream, index not rewritten for a day | no |
-| githooks | the vault's `core.hooksPath` is not `githooks`, or a hook file is missing or not executable | the key and execute bits yes |
+| githooks | the vault's `core.hooksPath` is not `githooks`, a hook file is missing or not executable (`githooks:*`), the `brain-json-state` merge driver is not set (`githooks:merge-driver`), or a rebase has been in progress for over 20 minutes (`githooks:rebase-stuck`, fail; see [[2026-10-23-decision-sync-never-rebases-on-a-deadline]]) | the key, the driver and execute bits yes; a stuck rebase no |
 | token pool | an agent routine's token refused, malformed, resting after a limit, near expiry or expired | no |
 | permissions | a routine whose arguments would give an unattended run unrestricted permissions | no |
 | app tasks | a Claude app scheduled task enabled on this machine with no registry row (warn), with a row naming another machine (fail: it runs twice), or whose row disagrees about `enabled` (warn) | no: the app's tasks are changed by hand |
@@ -45,6 +45,7 @@ python3 ~/Brain/_bin/guardian.py status             # everything it watches; cha
 python3 ~/Brain/_bin/guardian.py check              # look and alert; exit 0 ok, 1 warn, 2 fail
 python3 ~/Brain/_bin/guardian.py repair             # rewire, install jobs, check, alert, notify changes
 python3 ~/Brain/_bin/guardian.py repair --hooks-only --settings ~/.claude/settings.json
+python3 ~/Brain/_bin/guardian.py repair --git-only  # core.hooksPath and the merge driver only (install)
 python3 ~/Brain/_bin/guardian.py run-routine <id>   # run one routine now
 ```
 
@@ -106,6 +107,12 @@ model in the loop.
   cancellations) and the last write. The per-session rule also skips a session whose last `Stop`
   heartbeat is older than the window: with no turn in it, a hook installed since its last turn never
   had a chance to fire.
+- **Transcripts that are not sessions, and forks.** A transcript with no user or assistant turn
+  (only metadata lines) is treated like an empty one: opened and never used, no hook was due. A forked
+  session (a Remote Control fork, `--fork-session`) is not held to the session-start heartbeat: its
+  first turn hangs off a message in the parent's transcript and Claude Code runs no SessionStart in
+  it. The guardian recognises a fork by its first record having `parentUuid` set. Without these two
+  rules both cases raised false `hooks:not-firing` and `hooks:silent:session-start` findings.
 - **The epoch.** Liveness starts at the first `check` or `repair` after install; sessions that started
   earlier are never judged.
 - **The rules.** A session active in the last 30 minutes, past a short grace period, with no heartbeat

@@ -684,6 +684,15 @@ def agent_findings(wiring: AgentWiring) -> list:
 
 GIT_HOOKS_DIR = "githooks"      # core.hooksPath, relative to the vault's working tree
 
+# The merge driver .gitattributes names for the machine-written JSON state files. Relative
+# to the working tree: git runs merge drivers from the top of the checkout.
+MERGE_DRIVER = "brain-json-state"
+MERGE_DRIVER_CMD = "python3 _bin/json_state_merge.py %O %A %B"
+
+# A rebase left in the vault longer than this is reported as stuck. vault_sync recovers one
+# it started itself once it is this old and its process is gone; any other is a person's.
+STUCK_REBASE_S = 20 * 60
+
 
 @dataclass(frozen=True)
 class GitHookFile:
@@ -693,9 +702,17 @@ class GitHookFile:
 
 
 @dataclass(frozen=True)
+class RebaseState:
+    age_s: float                 # since .git/rebase-merge (or rebase-apply) appeared
+    by_sync: bool                # vault_sync's marker is there: the sync started it
+
+
+@dataclass(frozen=True)
 class GitHooksStatus:
     hooks_path: object           # core.hooksPath in the vault's main repository config, or None
     files: list = field(default_factory=list)
+    merge_driver: object = MERGE_DRIVER_CMD   # merge.brain-json-state.driver, or None
+    rebase: object = None                     # RebaseState while a rebase is in progress
 
 
 def git_hooks_findings(status: GitHooksStatus) -> list:
@@ -720,6 +737,28 @@ def git_hooks_findings(status: GitHooksStatus) -> list:
             out.append(Finding("githooks:mode:" + f.name, FAIL,
                                "vault git hook %s/%s is not executable" % (GIT_HOOKS_DIR, f.name),
                                repairable=True))
+    if status.merge_driver != MERGE_DRIVER_CMD:
+        # A warning, not a failure: without it git still merges, line by line, and the two
+        # machines writing one state file go back to conflicting on every sync.
+        out.append(Finding("githooks:merge-driver", WARN,
+                           "vault merge driver %s is %s: the JSON state files merge line by line "
+                           "and conflict between machines"
+                           % (MERGE_DRIVER, "unset" if not status.merge_driver else "out of date"),
+                           repairable=True))
+    rb = status.rebase
+    if rb is not None and rb.age_s >= STUCK_REBASE_S:
+        # A failure: while it lasts vault_sync commits nothing and pushes nothing, on purpose,
+        # and the machine neither sends nor receives the vault. Without this finding the
+        # only trace is a cached "last run failed", which says nothing about why.
+        mins = int(rb.age_s // 60)
+        since = ("%d h" % (mins // 60)) if mins >= 120 else ("%d min" % mins)
+        out.append(Finding("githooks:rebase-stuck", FAIL,
+                           "vault stuck mid-rebase for %s: nothing is committed or synced until it "
+                           "ends. %s" % (since,
+                                         "vault_sync started it and recovers it on its next pass"
+                                         if rb.by_sync else
+                                         "Not started by the sync: finish it with "
+                                         "`git rebase --continue` or `--abort` in the vault")))
     return out
 
 
@@ -729,6 +768,8 @@ def git_hooks_repairs(status: GitHooksStatus) -> list:
     if status.hooks_path != GIT_HOOKS_DIR:
         out.append(("set-hooks-path", None))
     out += [("chmod", f.name) for f in status.files if f.exists and not f.executable]
+    if status.merge_driver != MERGE_DRIVER_CMD:
+        out.append(("set-merge-driver", None))
     return out
 
 
@@ -1023,6 +1064,10 @@ class SessionTranscript:
     # session, read from its `hook_cancelled` attachments. Under the SDK an unattended run's
     # queued prompt can cancel SessionStart, killing compass.py before it leaves a heartbeat.
     cancelled: frozenset = frozenset()
+    # A fork of another session (`--fork-session`, a remote control fork): its first turn hangs
+    # off a message in the parent's transcript. Claude Code runs no SessionStart in it; the
+    # parent's startup context carries over, so a missing SessionStart heartbeat is expected.
+    forked: bool = False
 
 
 @dataclass(frozen=True)
@@ -1135,8 +1180,9 @@ def hook_liveness(transcripts, heartbeats, specs, now: float, since, config: Liv
             continue
         seen = {h.event for h in mine}
         for s in session_events:
-            if s.id not in seen and s.hook_event not in t.cancelled:
-                missing.setdefault(s.id, []).append(t.sid)
+            if s.id in seen or s.hook_event in t.cancelled or (t.forked and s.hook_event == "SessionStart"):
+                continue
+            missing.setdefault(s.id, []).append(t.sid)
 
     silent = set()
     if include_silent and now - since >= config.silent_s:

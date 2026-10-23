@@ -9,7 +9,7 @@ status: active
 confidence: medium
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-09-24
+updated: 2026-10-23
 supersedes: []
 ---
 
@@ -154,6 +154,11 @@ Do not decide from the OS or the hostname. Probe:
    desktop unit's status, the keepalive log, and whether the block flags the profile picker.
 
 Never skip a browser source silently: the output says which source was skipped and why.
+
+**Run browser steps one after another after a navigation.** Calls sent in parallel right after
+`navigate` can reach a tab that has no URL yet and come back as `safetyCheck` rejections ("Can't
+interact with browser-internal or unparseable URLs"). In the transcript they read like permission
+denials, but nothing is wrong with the permissions: the same calls, repeated in order, are accepted.
 
 ## Scheduled routines
 

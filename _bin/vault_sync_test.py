@@ -220,6 +220,85 @@ def main():
     finally:
         V.EPHEMERAL_PREFIXES = ()
 
+    print("\n== a rebase the sync left behind ==")
+    # A conflict on a note, an abort that did not take, and every later pass stopping on
+    # "REBASE IN PROGRESS" while sessions keep writing into the working tree.
+    with tempfile.TemporaryDirectory() as root:
+        a, b = two_clones(root)
+        write(a, "n.md", "remote note"); sh(a, "commit", "-qam", "remote"); sh(a, "push", "-q")
+        write(b, "n.md", "local note"); sh(b, "commit", "-qam", "local")
+        mine = sh(b, "rev-parse", "HEAD").stdout.strip()
+        sh(b, "pull", "-q", "--rebase")
+        check("reproduced: the vault is mid-rebase", in_rebase(b)())
+
+        saved_vault, saved_mark = V.B.VAULT, V.B.mark_git_touched
+        V.B.VAULT, V.B.mark_git_touched = b, (lambda rels: None)
+        try:
+            check("no marker: the rebase is a person's and is left alone",
+                  not V.stale_sync_rebase(b, alive=lambda p: False, running=lambda: False))
+            with open(V._marker(b), "w") as fh:
+                fh.write("999999 %d\n" % int(time.time()))
+            check("a marker from a minute ago is still a pass at work",
+                  not V.stale_sync_rebase(b, alive=lambda p: False, running=lambda: False))
+            later = time.time() + V.STUCK_REBASE_S + 60
+            check("nor while its process is alive",
+                  not V.stale_sync_rebase(b, now_=later, alive=lambda p: True, running=lambda: False))
+            check("nor while any git runs",
+                  not V.stale_sync_rebase(b, now_=later, alive=lambda p: False, running=lambda: True))
+            check("old, with its process gone and no git running: left behind",
+                  V.stale_sync_rebase(b, now_=later, alive=lambda p: False, running=lambda: False))
+
+            # Sessions kept writing while it was stuck.
+            os.makedirs(os.path.join(b, "30-Knowledge"), exist_ok=True)
+            write(b, "30-Knowledge/opening-hours.md", "written while stuck")
+            os.makedirs(os.path.join(b, "40-Skills"), exist_ok=True)
+            write(b, "40-Skills/s.md", "regenerated")
+            where = os.path.join(root, "rescue")
+            os.makedirs(where)
+            done, detail = V.recover_stuck_rebase(git_in(b), where=where)
+            check("the rebase is recovered", done and not in_rebase(b)(), detail)
+            check("the branch is back where it was", sh(b, "rev-parse", "HEAD").stdout.strip() == mine)
+            check("the note written while stuck is still there",
+                  open(os.path.join(b, "30-Knowledge/opening-hours.md")).read() == "written while stuck")
+            check("a copy of the conflicted file is kept aside",
+                  os.path.isfile(os.path.join(where, "conflicted", "n.md")))
+            check("the saved patch leaves out what the machinery regenerates",
+                  "40-Skills/s.md" not in open(os.path.join(where, "worktree.patch")).read())
+            check("the marker is gone", not os.path.exists(V._marker(b)))
+
+            os.makedirs(os.path.join(b, "00-Inbox"), exist_ok=True)
+            V.note_recovered_rebase("saved in /scratch/rescue/1")
+            notes = os.listdir(os.path.join(b, "00-Inbox"))
+            check("the recovery leaves one note in 00-Inbox naming where the copy is",
+                  len(notes) == 1 and notes[0].startswith("sync-rebase-recovered-")
+                  and "/scratch/rescue/1" in open(os.path.join(b, "00-Inbox", notes[0])).read(), notes)
+        finally:
+            V.B.VAULT, V.B.mark_git_touched = saved_vault, saved_mark
+
+    print("\n== an abort that does not take ==")
+    calls = []
+    check("is reported as failed, not as aborted",
+          V.abort_rebase(lambda *a: calls.append(a) or (1, "", "locked"),
+                         in_rebase=lambda: True, attempts=1) is False and calls)
+    check("an abort that works is reported as such",
+          V.abort_rebase(lambda *a: (0, "", ""), in_rebase=lambda: False) is True)
+    states = iter([True, False])
+    check("and one that takes on the first try is not retried",
+          V.abort_rebase(lambda *a: calls.append(a) or (0, "", ""), in_rebase=lambda: next(states, False))
+          is True)
+
+    print("\n== the marker around a sync's own pull ==")
+    with tempfile.TemporaryDirectory() as root:
+        a, b = two_clones(root)
+        write(a, "n.md", "remote note"); sh(a, "commit", "-qam", "remote"); sh(a, "push", "-q")
+        saved = (V.B.VAULT, V.B.mark_git_touched, V.git)
+        V.B.VAULT, V.B.mark_git_touched, V.git = b, (lambda rels: None), git_in(b)
+        try:
+            check("a pull that goes through returns True", V.fetch_from_remote() is True)
+            check("and leaves no marker behind", not os.path.exists(V._marker(b)))
+        finally:
+            V.B.VAULT, V.B.mark_git_touched, V.git = saved
+
     print("== a stop on unmerged files leaves a note ==")
     with tempfile.TemporaryDirectory() as vault:
         os.makedirs(os.path.join(vault, "00-Inbox"))

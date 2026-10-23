@@ -354,6 +354,9 @@ def _repair_git_hooks(ports, res):
         if kind == "set-hooks-path":
             what = "set vault core.hooksPath to %s" % D.GIT_HOOKS_DIR
             call = gh.set_hooks_path
+        elif kind == "set-merge-driver":
+            what = "set vault merge driver %s" % D.MERGE_DRIVER
+            call = gh.set_merge_driver
         else:
             what = "make vault git hook %s/%s executable" % (D.GIT_HOOKS_DIR, name)
             call = lambda n=name: gh.make_executable(n)
@@ -367,8 +370,15 @@ def _repair_git_hooks(ports, res):
             res.errors.append("could not %s: %s" % (what, detail))
 
 
-def run_repair(ports, agents_only=False) -> RepairResult:
+def run_repair(ports, agents_only=False, git_only=False) -> RepairResult:
     res = RepairResult()
+    if git_only:
+        # The vault's git config only (core.hooksPath, the JSON state merge driver): what
+        # bootstrap.sh runs on a new machine, so the first sync already merges state files
+        # per key instead of waiting 15 minutes for the guardian's first full pass.
+        _repair_git_hooks(ports, res)
+        res.report = collect(ports, sections=("githooks",))
+        return res
     _repair_agents(ports, res)
     if agents_only:
         res.report = collect(ports, sections=("agents",))
@@ -441,11 +451,17 @@ def run_status(ports) -> str:
     if ports.git_hooks is not None:
         try:
             s = ports.git_hooks.status()
-            lines.append("git hooks: core.hooksPath %s, %s"
+            lines.append("git hooks: core.hooksPath %s, %s, merge driver %s%s"
                          % (s.hooks_path or "unset",
                             ", ".join("%s %s" % (f.name, "ok" if f.executable else
                                                  "missing" if not f.exists else "not executable")
-                                      for f in s.files) or "no hook files expected"))
+                                      for f in s.files) or "no hook files expected",
+                            "ok" if s.merge_driver == D.MERGE_DRIVER_CMD else
+                            "unset" if not s.merge_driver else "out of date",
+                            "" if s.rebase is None else
+                            ", REBASE IN PROGRESS for %s%s" % (_age(s.rebase.age_s),
+                                                               " (started by the sync)"
+                                                               if s.rebase.by_sync else "")))
         except Exception as exc:
             lines.append("git hooks: (unavailable: %s)" % exc)
 

@@ -17,6 +17,8 @@ jobs accepted at first run (<brain state>/first-run.json) are installed or reloa
                                     machine's entry in the machine registry
                                     (machines.py register --daily), once a day.
   guardian.py repair --hooks-only   agent wiring only, no launchd, no alerts (bootstrap.sh)
+  guardian.py repair --git-only     the vault's git config only: core.hooksPath and the JSON
+                                    state merge driver (bootstrap.sh)
   guardian.py status                everything it watches (the agent routines' token pool
                                     included), changes nothing
   guardian.py run-routine <id>      run one routine from 90-Meta/scheduled-tasks.md now
@@ -169,6 +171,9 @@ def make_parser():
         if name == "repair":
             p.add_argument("--hooks-only", "--agents-only", dest="hooks_only", action="store_true",
                            help="agent wiring only: no launchd, no alerts (what bootstrap.sh runs)")
+            p.add_argument("--git-only", dest="git_only", action="store_true",
+                           help="the vault's git config only: core.hooksPath and the JSON state "
+                                "merge driver (what bootstrap.sh runs)")
     r = sub.add_parser("run-routine", help="run one routine from the task registry now")
     r.add_argument("id")
     return ap
@@ -209,8 +214,8 @@ def main(argv=None) -> int:
         return report.exit_code
 
     if args.cmd == "repair":
-        res = application.run_repair(ports, agents_only=args.hooks_only)
-        if not args.hooks_only:
+        res = application.run_repair(ports, agents_only=args.hooks_only, git_only=args.git_only)
+        if not (args.hooks_only or args.git_only):     # both run from bootstrap.sh: no probes
             try:
                 log("machine registry: %s" % register_machine())
             except Exception as exc:
@@ -224,7 +229,7 @@ def main(argv=None) -> int:
         _print_findings(res.report)
         code = domain.repair_exit_code(res.errors)
         log("repair%s: exit=%d changes=%d errors=%d findings=%s"
-            % (" (agents only)" if args.hooks_only else "", code, len(res.changes), len(res.errors),
+            % (" (agents only)" if args.hooks_only else " (git only)" if args.git_only else "", code, len(res.changes), len(res.errors),
                ",".join(f.key for f in res.report.findings) or "-"))
         for line in res.changes + res.errors:
             log("  " + line)

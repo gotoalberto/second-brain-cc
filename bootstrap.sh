@@ -36,6 +36,15 @@ fi
 [ -d /Applications/Obsidian.app ] || command -v obsidian >/dev/null 2>&1 \
   || echo "   tip: Obsidian (https://obsidian.md) gives the vault a GUI; optional"
 
+if command -v git >/dev/null 2>&1 && git -C "$VAULT" rev-parse --git-dir >/dev/null 2>&1; then
+  echo "-> vault git config (git hooks, JSON state merge driver)"
+  # Before anything syncs: the first pull already has to merge the JSON state files that
+  # several machines write (.gitattributes) per key, or every pull between two machines
+  # conflicts on them. The guardian checks and repairs the same settings on every pass.
+  "$PY3" "$VAULT/_bin/guardian.py" repair --git-only </dev/null \
+    || echo "   WARNING: vault git config incomplete: run python3 $VAULT/_bin/guardian.py status"
+fi
+
 echo "-> building the initial search index"
 "$PY3" "$VAULT/_bin/index_vault.py" --full
 

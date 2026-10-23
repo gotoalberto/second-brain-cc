@@ -393,7 +393,39 @@ class GitHooksControl:
             path = self._hook(name)
             exists = os.path.isfile(path)
             files.append(D.GitHookFile(name, exists, exists and os.access(path, os.X_OK)))
-        return D.GitHooksStatus(out if rc == 0 else None, files)
+        key = "merge.%s.driver" % D.MERGE_DRIVER
+        rc2, drv, err2 = self.run([self.git, "config", "--file", config, "--get", key])
+        if rc2 not in (0, 1):
+            raise RuntimeError("git config --get %s failed on %s: %s" % (key, config, err2 or rc2))
+        return D.GitHooksStatus(out if rc == 0 else None, files,
+                                merge_driver=drv if rc2 == 0 else None,
+                                rebase=self._rebase(os.path.dirname(config)))
+
+    @staticmethod
+    def _rebase(git_dir, now=None):
+        """The vault's own checkout only: a worktree's rebase is that worktree's business."""
+        for name in ("rebase-merge", "rebase-apply"):
+            path = os.path.join(git_dir, name)
+            if os.path.isdir(path):
+                try:
+                    age = (now or time.time()) - os.path.getmtime(path)
+                except OSError:
+                    age = 0.0
+                return D.RebaseState(max(0.0, age),
+                                     os.path.exists(os.path.join(git_dir, "brain-sync-rebase")))
+        return None
+
+    def set_merge_driver(self):
+        try:
+            config = self._config_file()
+        except RuntimeError as exc:
+            return False, str(exc)
+        for key, value in (("merge.%s.name" % D.MERGE_DRIVER, "Brain JSON state, merged per key"),
+                           ("merge.%s.driver" % D.MERGE_DRIVER, D.MERGE_DRIVER_CMD)):
+            rc, _, err = self.run([self.git, "config", "--file", config, key, value])
+            if rc != 0:
+                return False, err or "git config exit %d" % rc
+        return True, "merge.%s.driver = %s in %s" % (D.MERGE_DRIVER, D.MERGE_DRIVER_CMD, config)
 
     def set_hooks_path(self):
         try:
@@ -723,29 +755,48 @@ class HookLivenessSource:
                 # Linux has no st_birthtime, so a long session touched now (Claude Code appends
                 # metadata when its process exits, with no turn and no hook) would look born now
                 # and have its earlier heartbeats cut off: its first record's timestamp says better.
-                first, cancelled = self._head(os.path.join(folder, name))
+                first, cancelled, turned, forked = self._head(os.path.join(folder, name))
+                if not turned and st.st_size <= self.HEAD_BYTES:
+                    # Only metadata and no turn: opened and never used, like an empty one.
+                    continue
                 started = min(getattr(st, "st_birthtime", None) or st.st_mtime, first or st.st_mtime)
                 out.append(D.SessionTranscript(D.session_sid(name[:-len(".jsonl")]), d,
-                                               min(started, st.st_mtime), st.st_mtime, cancelled))
+                                               min(started, st.st_mtime), st.st_mtime, cancelled, forked))
         return out
 
     HEAD_BYTES = 64 * 1024
 
     @classmethod
     def _head(cls, path):
-        """(first record's timestamp or None, hook events Claude Code cancelled) from a transcript.
+        """(first record's timestamp or None, hook events Claude Code cancelled, whether any user or
+        assistant turn appears, whether it is a fork) from a transcript.
+
+        A fork's first chained record names a parent that is not in its own transcript.
 
         Only the head is read: both are written before the first turn, and a transcript can run
         to megabytes. Lines that cannot mention a cancellation are parsed only until a timestamp
         turns up.
         """
-        first, out = None, set()
+        first, out, turned = None, set(), False
+        forked, chained = False, False
         try:
             with open(path, "rb") as fh:
                 head = fh.read(cls.HEAD_BYTES)
         except OSError:
-            return None, frozenset()
+            return None, frozenset(), True, False
         for line in head.splitlines():
+            if not chained and b'"parentUuid"' in line:
+                try:
+                    rec = json.loads(line)
+                    chained = isinstance(rec, dict) and "parentUuid" in rec
+                    forked = chained and bool(rec.get("parentUuid"))
+                except ValueError:
+                    pass
+            if not turned and (b'"user"' in line or b'"assistant"' in line):
+                try:
+                    turned = json.loads(line).get("type") in ("user", "assistant")
+                except (ValueError, AttributeError):
+                    pass
             if first is None and b'"timestamp"' in line:
                 try:
                     ts = json.loads(line).get("timestamp")
@@ -762,7 +813,7 @@ class HookLivenessSource:
                 event = att.get("hookEvent") or str(att.get("hookName") or "").split(":")[0]
                 if event:
                     out.add(str(event))
-        return first, frozenset(out)
+        return first, frozenset(out), turned, forked
 
     def heartbeats(self, since):
         out = []

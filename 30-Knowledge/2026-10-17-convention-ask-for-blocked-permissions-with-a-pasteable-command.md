@@ -9,7 +9,7 @@ status: active
 confidence: medium
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-10-17
+updated: 2026-10-23
 supersedes: []
 ---
 
@@ -49,6 +49,21 @@ agent cannot grant it itself: editing its own permissions is refused, and should
   agent user's absolute path, and rewrite the file in place so it keeps its owner.
 - A new allow rule took effect in the running session without a restart.
 
+## Anything blocked, never "there is no command"
+
+The rule covers anything the agent cannot do that the user could unblock, not only a missing allow
+rule: a service to restart, a setting, a login, a mode. The answer is always the one line or the one
+action that unblocks it, never "there is no command for this".
+
+- **Grant before the first attempt when you can see the block coming.** Once the classifier has
+  denied an outcome in a session, it can keep denying that same outcome even after a matching allow
+  rule is added. When that happens, the rule is still worth adding for next time, and the way
+  through now is a fresh session, or asking the user to leave auto mode for that task.
+- **A session's mode can belong to the app, not the machine.** A session opened from a desktop or
+  phone app takes the mode chosen in that app's mode picker, whatever the machine's settings and the
+  server's flags say. When such a session runs in auto mode, the action for the user is to switch that
+  session to bypass in the picker; no command on the machine changes it.
+
 ## Example
 
 An invented case: an agent on a build server needs to read a container's state to finish a debugging
@@ -65,3 +80,4 @@ then runs `sudo -n docker inspect web-cache` once the user says it is done.
 - [[2026-09-23-constraint-auto-mode-classifier-blocks-credential-access-and-its-own-fix]]
 - [[2026-09-30-howto-grant-claude-code-allow-rules-from-another-machine]]
 - [[2026-09-27-convention-user-handoffs-as-one-pasteable-command]]
+- [[2026-10-23-convention-routine-that-publishes-states-it-as-the-users-request]]

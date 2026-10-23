@@ -32,6 +32,8 @@ def main():
     check("bootstrap.sh never calls a scheduler", reaches == [], reaches)
     check("it checks for keepassxc-cli and offers the first run",
           "keepassxc-cli" in script and "integrations/first-run/setup.sh" in script)
+    check("it sets the vault's git config (hooks, JSON state merge driver) before any sync",
+          "guardian.py\" repair --git-only" in script)
     if reaches:
         print("\nRESULT: %d passed, %d failed" % (len(ok), len(fail)))
         return 1
@@ -42,12 +44,17 @@ def main():
         shutil.copytree(REPO, vault, ignore=shutil.ignore_patterns(".git", "_index", "__pycache__", "*.pyc"))
         home, state = os.path.join(root, "home"), os.path.join(root, "state")
         os.makedirs(home)
+        subprocess.run(["git", "init", "-q", vault], capture_output=True)
         env = {k: v for k, v in os.environ.items() if not k.startswith("BRAIN_")}
         env.update(HOME=home, BRAIN_STATE=state, BRAIN_VAULT=vault)
         p = subprocess.run(["bash", os.path.join(vault, "bootstrap.sh")], env=env, stdin=subprocess.DEVNULL,
                            capture_output=True, text=True, timeout=300)
         out = p.stdout + p.stderr
         check("bootstrap.sh exits 0 in a scratch HOME", p.returncode == 0, out[-1500:])
+        drv = subprocess.run(["git", "-C", vault, "config", "--get", "merge.brain-json-state.driver"],
+                             capture_output=True, text=True).stdout.strip()
+        check("the vault's merge driver for JSON state is set", drv.endswith("json_state_merge.py %O %A %B"),
+              (drv, out[-600:]))
         check("it builds the search index in the vault", os.path.isdir(os.path.join(vault, "_index")), out[-400:])
         check("without a terminal it only says how to start the first run", "first-run/setup.sh" in out
               and not os.path.exists(os.path.join(state, "first-run.json")), out[-600:])

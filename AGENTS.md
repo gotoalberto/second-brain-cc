@@ -34,7 +34,8 @@ The one-screen version. Full protocol: `~/Brain/90-Meta/AGENT-PROTOCOL.md`.
 - Merged or published and verified → remove its worktrees, branches, backup branches and scratch files without asking; never one a live process uses.
 - Every web runs locally with fake data; every page is reviewed and critiqued on that local build.
 - Code: tests committed red before the implementation, hexagonal, verified in the real system. Check the effect, not the exit code. Protocol §9.
-- Never edit a gate to get past it: stop and ask. Smoke checks redirect every state path, not just the input.
+- Never edit a gate to get past it: stop and ask, with one pasteable line that grants exactly what is blocked. Smoke checks redirect every state path, not just the input.
+- A skill step fails → fix the skill, retry the same method; never fall back on your own. Generated images and clips: ask "anything strange?" and trace every limb and prop.
 - Headless runs: the prompt is an order to execute now; success is judged from a log the code writes, never the model's last words.
 - Your tools: `30-Knowledge/2026-09-12-reference-tool-and-service-catalogue.md`. Read it before calling a capability missing; verify a newly granted tool or key with a real call and add it there.
 - Supported: macOS and Linux, each with its own Chrome and the Claude extension. What this machine has: the `## This machine` block or a probe, never the OS.

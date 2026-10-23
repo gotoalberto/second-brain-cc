@@ -136,6 +136,25 @@ growing and the page shows its end, or the posts fall outside the window. Then r
 then `.slice(900,1800)` and so on), or write it into the page and read it with `get_page_text`, until
 the last chunk comes back short. Reset `window.seen` before each new query.
 
+What a long run needs on top of that, when one set has to grow across many queries and the feed:
+
+- **Page storage can drop writes silently.** On some sites `localStorage.setItem` and
+  `sessionStorage.setItem` return without error and a `getItem` right after gives `null`. Check once
+  with a write and a read. When they drop, keep the set in **`window.name`** as JSON instead: it
+  survives navigation within the same tab, so one set accumulates across every query. The collector
+  can live there too (`{G: "<function body>", s: {}}`), called with
+  `await (new Function(JSON.parse(window.name).G))()`, so each step of a batch is one short line.
+- **Find the element that scrolls.** When the page scrolls inside a container (a `main` element with
+  its own overflow), `window.scrollBy` loads nothing. Set that container's `scrollTop` to its
+  `scrollHeight`, take the small screenshot, then collect again.
+- **The ancestor that holds a post can differ by page.** On search results the climb to an ancestor
+  containing "Comment" can fail. Climb instead to the last ancestor whose parent holds a single
+  "Feed post" heading.
+- **Read a large set through the page, not through `javascript_tool`.** Filter it in the page first
+  (a hiring phrase, a domain term and a seniority term present, Promoted dropped), replace
+  `document.body` with an `<article><pre>` holding the result, and read it with `get_page_text` in
+  slices that fit one response.
+
 The `await` matters: results stream in after load and an immediate read returns an empty shell. If
 the heading selector finds nothing, fall back to `get_page_text` after each scroll, which returns the
 page unbounded. **Never conclude "no more results" or "nothing relevant" from one read, or from a read

@@ -143,12 +143,12 @@ def test_one_budget_for_the_whole_call():
     # seconds spent most of its own budget before reading the vault.
     import brainlib as B
     granted = budgeted(4, 0.6)
-    pulls = [t for c, t in granted if c == "pull"]
-    check("the pull gets what is left of the caller's budget, not the full timeout",
+    pulls = [t for c, t in granted if c == "fetch"]
+    check("the fetch gets what is left of the caller's budget, not the full timeout",
           bool(pulls) and pulls[0] < 4.0, granted)
     check("no git call is given more than the caller asked for",
           bool(granted) and all(t is not None and t <= 4.0 for _, t in granted), granted)
-    check("a pull that is started never gets less than MIN_PULL",
+    check("a fetch that is started never gets less than MIN_PULL",
           bool(pulls) and all(t >= B.MIN_PULL for t in pulls), granted)
     check("the local calls around it get fixed caps, not slices of the pull's budget",
           all(t == B.REVPARSE_CAP for c, t in granted if c == "rev-parse")
@@ -163,11 +163,75 @@ def test_no_pull_below_the_floor():
     # person clears it. A caller who cannot afford MIN_PULL gets no pull at all.
     granted = budgeted(1.5, 0)
     check("a caller who cannot afford MIN_PULL does not start a pull",
-          not any(c == "pull" for c, _ in granted), granted)
+          not any(c in ("pull", "fetch") for c, _ in granted), granted)
+
+
+def sh(cwd, *a):
+    return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t"] + list(a), cwd=cwd,
+                          capture_output=True, text=True)
+
+
+def head(repo):
+    return sh(repo, "rev-parse", "HEAD").stdout.strip()
+
+
+def write(path, text):
+    with open(path, "w") as fh:
+        fh.write(text)
+
+
+def real_pull(vault, env):
+    env = dict(env, BRAIN_VAULT=vault)
+    return py("import brainlib as B\nB.maybe_pull(force=True, timeout=8)\nprint('ran')", env)
+
+
+def test_fetch_and_fast_forward_only():
+    # The prompt and session-start paths pull on a deadline. A rebase cannot be cut short
+    # safely: killed between the autostash and the apply, or aborted with too little time on
+    # a vault far ahead of its remote, it leaves the vault mid-rebase and the sync stops
+    # committing anything. So this path fetches and fast-forwards, and never rebases.
+    env, paths = scratch()
+    root = os.path.dirname(paths["vault"])
+    remote = os.path.join(root, "remote.git")
+    sh(root, "init", "-q", "--bare", "-b", "main", remote)
+    a, b, c = (os.path.join(root, n) for n in ("a", "b", "c"))
+    sh(root, "clone", "-q", remote, a)
+    write(os.path.join(a, "shelf.md"), "one\n")
+    sh(a, "add", "-A"); sh(a, "commit", "-qm", "one"); sh(a, "push", "-q", "origin", "HEAD:main")
+    for clone in (b, c):
+        sh(root, "clone", "-q", remote, clone)
+        os.makedirs(os.path.join(clone, "_index"), exist_ok=True)
+
+    write(os.path.join(a, "shelf.md"), "two\n")
+    sh(a, "commit", "-qam", "two"); sh(a, "push", "-q")
+    r = real_pull(b, env)
+    check("behind the remote, the vault fast-forwards to it", head(b) == head(a), (r.stdout + r.stderr)[-300:])
+
+    write(os.path.join(a, "shelf.md"), "three\n")
+    sh(a, "commit", "-qam", "three"); sh(a, "push", "-q")
+    write(os.path.join(b, "loans.md"), "local\n")
+    sh(b, "add", "-A"); sh(b, "commit", "-qm", "local")
+    mine = head(b)
+    r = real_pull(b, env)
+    check("with local commits of its own, no rebase is started",
+          not os.path.isdir(os.path.join(b, ".git", "rebase-merge")), (r.stdout + r.stderr)[-300:])
+    check("the local branch is not moved (the daemon replays it later)", head(b) == mine)
+    check("but the remote was fetched", sh(b, "rev-parse", "origin/main").stdout.strip() == head(a))
+
+    write(os.path.join(a, "shelf.md"), "four\n")
+    sh(a, "commit", "-qam", "four"); sh(a, "push", "-q")
+    write(os.path.join(c, "shelf.md"), "uncommitted edit\n")
+    before = head(c)
+    real_pull(c, env)
+    with open(os.path.join(c, "shelf.md")) as fh:
+        kept = fh.read() == "uncommitted edit\n"
+    check("a local edit in the way of the fast-forward is kept and nothing is left half done",
+          kept and head(c) == before and not os.path.isdir(os.path.join(c, ".git", "rebase-merge")))
+    check("the code has no rebase on this path", '"pull", "--rebase"' not in source("brainlib.py"))
 
 
 def main():
-    for t in (test_one_implementation, test_forced_pull_leaves_foreign_rebase, test_force_bypasses_throttle,
+    for t in (test_fetch_and_fast_forward_only, test_one_implementation, test_forced_pull_leaves_foreign_rebase, test_force_bypasses_throttle,
               test_one_budget_for_the_whole_call, test_no_pull_below_the_floor):
         try:
             t()

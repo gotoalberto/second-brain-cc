@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-10-21
+updated: 2026-10-23
 supersedes: []
 ---
 
@@ -58,6 +58,19 @@ same no-prompt behaviour as every other tool:
 And `/chrome` set to "Enabled by default", so plain `claude` sessions get the browser too. That
 setting lives in `~/.claude.json`, written by the CLI: change it from `/chrome`, never by hand
 while a session runs. Remote Control and routines get the browser from `--chrome`, not from it.
+
+## Keeping app sessions out of Auto, without breaking routines
+
+A desktop or phone app can switch a Remote Control session to its own picker default (Auto) as it
+opens. `"permissions": {"disableAutoMode": "disable"}` makes a session refuse that switch and stay in
+the bypass it was launched with. A person can still pick another mode by hand in the picker.
+
+Put that key only in the project settings of the directory where interactive and Remote Control
+sessions open (`<that dir>/.claude/settings.local.json`), never in `~/.claude/settings.json` and never
+in the vault's own `.claude/`. In the user settings it reaches headless runs too, and there every
+Claude in Chrome tool, `tabs_context_mcp` included, answers "Claude in Chrome requires permission.",
+which a run with nobody to ask turns into a denial. `--settings` cannot override it. Routines run with
+the vault as their working directory, so they do not read the interactive directory's settings.
 
 ## Why permissive
 
