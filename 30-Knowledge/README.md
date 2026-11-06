@@ -30,8 +30,10 @@ wikilink like `[[decision-postgres-over-sqlite]]` still resolves to the dated fi
 
 ## Frontmatter is mandatory
 
-No frontmatter, no index — the note won't be found. Every note opens with the YAML
-contract (see `90-Meta/templates/`):
+Frontmatter is required by the note-writing convention, but the indexer does not enforce
+this requirement. Notes without frontmatter are still indexed using the filename as the
+title and defaults for missing metadata. Include the YAML contract below so metadata-based
+filtering works as intended (see `90-Meta/templates/`):
 
 ```yaml
 ---
