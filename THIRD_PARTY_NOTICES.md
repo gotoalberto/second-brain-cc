@@ -106,3 +106,16 @@ it. See `skills/impeccable/SOURCE.md`.
 |---|---|
 | `skills/remotion/SKILL.md`, `skills/remotion/reference.md` | `.claude/skills/remotion/` |
 | `skills/remotion/lib/` | `lib/` |
+
+## Humanizer
+
+- Upstream: https://github.com/blader/humanizer, `SKILL.md` v3.1.0, commit `0ef9fe5`
+- Licence: MIT, full text in `skills/humanizer/LICENSE`
+- Copyright (c) 2025 Siqi Chen
+- Not modified. The house rules that win over it where they are stricter (no dashes at all, the
+  calling skill's voice and format) are written in `skills/humanizer/SOURCE.md` and in the routine
+  preamble, not in the skill.
+
+| Skill | Upstream path |
+|---|---|
+| `skills/humanizer` | `SKILL.md`, `LICENSE` |

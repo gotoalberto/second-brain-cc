@@ -122,9 +122,12 @@ class LaunchctlControl:
     template (tests, and a person running the adapter by hand)."""
 
     def __init__(self, vault, home=HOME, uid=None, agents_dir=None, launchctl="/bin/launchctl",
-                 run=subprocess.run, timeout=15, backup_dir=None, environ=None, clock=None, allowed=None):
+                 run=subprocess.run, timeout=15, backup_dir=None, environ=None, clock=None, allowed=None,
+                 sleep=None, unload_wait_s=15):
         self.vault, self.home = vault, home
         self.allowed = None if allowed is None else set(allowed)
+        self.sleep = sleep or __import__("time").sleep
+        self.unload_wait_s = unload_wait_s
         self.uid = os.getuid() if uid is None else uid
         self.agents_dir = agents_dir or os.path.join(home, "Library", "LaunchAgents")
         self.launchctl, self.run, self.timeout = launchctl, run, timeout
@@ -226,7 +229,17 @@ class LaunchctlControl:
             return False, "%s; %s" % (detail, note)
         if was_loaded:
             self._call("bootout", "gui/%d/%s" % (self.uid, label))
+            # bootout returns before a long-lived job (Remote Control) has stopped; a bootstrap
+            # sent meanwhile fails with "5: Input/output error" and left the job unloaded.
+            # Wait for launchd to let go of it, and give bootstrap one retry.
+            waited = 0.0
+            while self.is_loaded(label) and waited < self.unload_wait_s:
+                self.sleep(0.5)
+                waited += 0.5
             done, detail = self.bootstrap(label)
+            if not done:
+                self.sleep(2)
+                done, detail = self.bootstrap(label)
             return done, "; ".join(x for x in (note, detail) if x)
         return True, "rewritten (not loaded); " + note
 
@@ -719,7 +732,8 @@ class HookLivenessSource:
       (brainlib.heartbeat), rotated to `.1` ... `.5`.
     - The event registry says which hook each event is and how often it should fire.
     - The epoch file records when liveness started, so no session from before it is judged.
-    - An optional JSON config (`window_min`, `silent_days`, `ignore_dirs`) changes the windows.
+    - An optional JSON config (`window_min`, `silent_days`, `failing_hours`, `ignore_dirs`) changes
+      the windows.
     """
 
     def __init__(self, projects_dir, heartbeat_log, registry_path, epoch_path, config_path=None, keep=5):
@@ -869,6 +883,7 @@ class HookLivenessSource:
         extra = tuple(p for p in (raw.get("ignore_dirs") or []) if isinstance(p, str))
         return dataclasses.replace(base, window_s=number("window_min", 60, base.window_s),
                                    silent_s=number("silent_days", 86400, base.silent_s),
+                                   failing_s=number("failing_hours", 3600, base.failing_s),
                                    ignore_dirs=base.ignore_dirs + extra)
 
 

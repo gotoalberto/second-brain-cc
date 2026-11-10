@@ -65,8 +65,11 @@ rule came from.
 **Why a machine's Chrome goes missing.** On Linux, a second Chrome profile makes Chrome stop at
 the "Who's using Chrome?" picker: no profile loads and the extension never starts. The keepalive
 passes `--profile-directory=Default` for that reason, and the block warns when the picker would
-block. To bring Chrome back on Linux, `pkill -x chrome` and the keepalive relaunches it 5 s later;
-look at the desktop through the VNC tunnel if it still does not show. On macOS,
+block. To bring Chrome back on Linux, `python3 ~/Brain/_bin/chrome_restart.py restart`: it stops
+only the desktop Chrome and the keepalive relaunches it 5 s later. Never `pkill -x chrome`, which
+also kills the headless renders other tasks have running. It refuses while a routine or another
+session holds the `chrome` lock; take it first with `python3 ~/Brain/_bin/browser_lock.py hold`.
+Look at the desktop through the VNC tunnel if it still does not show. On macOS,
 `open -a "Google Chrome"` and open the missing profile from the profile menu.
 
 **A machine with no deviceId recorded:** find it with `list_connected_browsers` (its

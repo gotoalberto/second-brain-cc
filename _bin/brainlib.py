@@ -717,7 +717,9 @@ GLOSARIO = {
     "politica": "policy", "política": "policy", "politicas": "policy",
     "puerta": "gate", "puertas": "gate",
     "guardar": "save store", "guarda": "save store",
-    "guardan": "save store", "guardado": "save store",
+    # `guardan` is the file sense ("donde se guardan los ficheros"): with "save" beside it the
+    # credential notes won that question again.
+    "guardan": "store", "guardado": "save store",
     "almacen": "store", "almacén": "store", "almacenar": "store",
     "fichero": "file", "ficheros": "file",
     "rama": "branch", "ramas": "branch",

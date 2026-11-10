@@ -28,6 +28,39 @@ def git(*args):
                  cwd=B.VAULT, timeout=120)
 
 
+# A pull or push that cannot finish has to fail fast, not sit on the sync lock. A laptop's
+# Power Nap wake (a few seconds awake) once started a push; the machine went back to sleep
+# mid-push, the ssh connection was left hanging with nothing to notice it was dead, and the
+# pass held the lock for two hours. The commit stayed unpushed until the lid was opened.
+# ServerAlive kills a dead connection within ~30 s of the next wake, BatchMode stops ssh
+# waiting on a prompt nobody can answer, and the timeout covers the rest (an SSH agent
+# waiting to be unlocked, for one).
+NET_TIMEOUT_S = 90
+SSH_OPTS = ("-o BatchMode=yes -o ConnectTimeout=15 "
+            "-o ServerAliveInterval=15 -o ServerAliveCountMax=2")
+
+
+def ssh_command(configured=""):
+    """The repo's own ssh command (a deploy key, say), or plain ssh, with SSH_OPTS added."""
+    return "%s %s" % ((configured or "").strip() or "ssh", SSH_OPTS)
+
+
+def net_git(*args):
+    """git for the commands that reach the remote: bounded in time, never interactive."""
+    _, configured, _ = git("config", "--get", "core.sshCommand")
+    return B.run([GIT, "-c", "core.quotePath=false",
+                  "-c", "core.sshCommand=" + ssh_command(configured)] + list(args),
+                 cwd=B.VAULT, timeout=NET_TIMEOUT_S)
+
+
+def net_failure(code, out, err):
+    """Why a network git call failed, in words. B.run says only "error" on a timeout."""
+    if code != 0 and err == "error" and not out:
+        return ("no answer in %d s (asleep, offline, or the SSH agent is locked); "
+                "the next pass retries" % NET_TIMEOUT_S)
+    return ((err or "") + (out or ""))[:200]
+
+
 def prune_packs():
     base = os.path.join(B.VAULT, "60-Context-Packs")
     cutoff = time.time() - PACK_TTL_DAYS * 86400
@@ -354,17 +387,100 @@ def rebase_in_progress():
 STALE_INDEX_LOCK_S = 120
 
 
-def git_running(run=None, which=shutil.which):
-    """True when any git process is alive on this machine. When in doubt, True."""
+def git_running(run=None, vault=None, cwd_of=None, which=shutil.which):
+    """True when a git process is at work on the vault. When in doubt, True.
+
+    It used to be any git on the machine. On a Mac there is nearly always one somewhere
+    (another repo, an editor, a `git fsmonitor--daemon` that lives for days), and a laptop
+    stayed mid-rebase for over 24 h because of it: every pass saw "git running" and left
+    the rebase alone. Now a git counts only when its working
+    directory is inside the vault or the vault path is in its command line. A
+    `fsmonitor--daemon` never counts, it holds no lock. A git whose directory cannot be
+    read counts, as before.
+    """
+    import subprocess
+    run = run or subprocess.run
+    root = os.path.realpath(vault or B.VAULT)
     try:
-        import subprocess
         pgrep = which("pgrep")
         if not pgrep:
             return True
-        p = (run or subprocess.run)([pgrep, "-x", "git"], capture_output=True, timeout=5)
-        return p.returncode == 0
+        p = run([pgrep, "-x", "git"], capture_output=True, text=True, timeout=5)
+        if p.returncode != 0:
+            return False
+        for pid in (int(x) for x in p.stdout.split()):
+            cmd = run(["ps", "-o", "command=", "-p", str(pid)],
+                      capture_output=True, text=True, timeout=5).stdout.strip()
+            if not cmd:
+                continue                    # it ended in between
+            if "fsmonitor--daemon" in cmd:
+                continue
+            if root in cmd or (vault or B.VAULT) in cmd:
+                return True
+            cwd = (cwd_of or process_cwd)(pid)
+            if cwd is None or cwd == root or cwd.startswith(root + os.sep):
+                return True
+        return False
     except Exception:
         return True
+
+
+def process_cwd(pid, run=None):
+    """The working directory of a process, real path, or None when it cannot be read.
+
+    /proc on Linux, lsof on macOS."""
+    try:
+        return os.path.realpath(os.readlink("/proc/%d/cwd" % pid))
+    except OSError:
+        pass
+    try:
+        import subprocess
+        p = (run or subprocess.run)(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+                                    capture_output=True, text=True, timeout=5)
+        for line in p.stdout.splitlines():
+            if line.startswith("n/"):
+                return os.path.realpath(line[1:])
+    except Exception:
+        pass
+    return None
+
+
+def process_age_s(pid, run=None):
+    """Seconds a process has been running, or None when it cannot be read (Linux and macOS)."""
+    try:
+        import subprocess
+        out = (run or subprocess.run)(["ps", "-o", "etime=", "-p", str(pid)],
+                                      capture_output=True, text=True, timeout=5).stdout.strip()
+        if not out:
+            return None
+        days, _, rest = out.rpartition("-")
+        parts = [int(x) for x in rest.split(":")]
+        while len(parts) < 3:
+            parts.insert(0, 0)
+        h, m, sec = parts
+        return (int(days) if days else 0) * 86400 + h * 3600 + m * 60 + sec
+    except Exception:
+        return None
+
+
+def sync_pid_alive(pid, since, now_=None, run=None):
+    """True when the process that wrote the marker at `since` is still the one alive.
+
+    `os.kill(pid, 0)` alone is not enough: after a day the pid may belong to another
+    program, and the rebase was then never recovered. A process younger than the marker
+    cannot have written it. When its age cannot be read, it counts as alive.
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        pass
+    age = process_age_s(pid, run)
+    if age is None:
+        return True
+    started = (now_ or time.time()) - age
+    return started <= since + 5
 
 
 def clear_stale_index_lock(vault=None, now_=None, running=None):
@@ -373,15 +489,15 @@ def clear_stale_index_lock(vault=None, now_=None, running=None):
     A git killed mid-write (a sleeping lid, a timeout) leaves the lock behind, and every
     later pass fails on it, which used to end in a "Sync conflict with the remote" note for
     what was only a leftover file on this machine. It is removed only with two proofs
-    together: no git process alive at all, and untouched for STALE_INDEX_LOCK_S seconds.
-    Anything less and it is left alone.
+    together: no git process at work on the vault, and untouched for STALE_INDEX_LOCK_S
+    seconds. Anything less and it is left alone.
     """
     path = os.path.join(vault or B.VAULT, ".git", "index.lock")
     try:
         age = (now_ or time.time()) - os.path.getmtime(path)
     except OSError:
         return False
-    if age < STALE_INDEX_LOCK_S or (running or git_running)():
+    if age < STALE_INDEX_LOCK_S or (running or (lambda: git_running(vault=vault)))():
         return False
     try:
         os.remove(path)
@@ -440,17 +556,50 @@ def stale_sync_rebase(vault=None, now_=None, alive=None, running=None):
     if (now_ or time.time()) - ts < STUCK_REBASE_S:
         return False
 
-    def pid_alive(p):
-        try:
-            os.kill(p, 0)
-            return True
-        except ProcessLookupError:
-            return False
-        except OSError:
-            return True
-
-    if (alive or pid_alive)(pid) or (running or git_running)():
+    if alive is not None:
+        pid_is_alive = alive(pid)
+    else:
+        pid_is_alive = sync_pid_alive(pid, ts)
+    if pid_is_alive or (running or (lambda: git_running(vault=vault)))():
         return False
+    return True
+
+
+LAST_ABORT_ERROR = ""      # git's words from the last abort that did not take
+
+
+def clear_unstarted_rebase(run_git=None, vault=None):
+    """Ends a rebase that died before it began. True if it cleared one.
+
+    A laptop's `pull --rebase` was once cut off (most likely the lid closing) right after
+    it set the work in progress aside: `.git/rebase-merge` held only
+    `autostash`, no `head-name`, no `onto`. Git then sees a rebase in progress but cannot
+    abort it ("could not read .git/rebase-merge/head-name"), and the vault stayed stuck for
+    a day. Nothing was replayed and HEAD is still on its branch, so there is nothing to
+    undo: the autostash goes to `git stash list`, where it can be looked at and applied,
+    and the empty state is removed. Only in exactly that shape; anything else is left alone.
+    """
+    run_git = run_git or git
+    state = os.path.join(vault or B.VAULT, ".git", "rebase-merge")
+    if not os.path.isdir(state) or os.path.exists(os.path.join(state, "head-name")):
+        return False
+    if run_git("symbolic-ref", "-q", "HEAD")[0] != 0:
+        return False                        # detached: a rebase that did start
+    stash = os.path.join(state, "autostash")
+    if os.path.exists(stash):
+        with open(stash) as fh:
+            sha = fh.read().strip()
+        code, _, err = run_git("stash", "store", "-m",
+                               "autostash of a rebase that never started, found %s"
+                               % time.strftime("%Y-%m-%d %H:%M"), sha)
+        if code != 0:
+            return False                    # keep it where it is rather than lose it
+    shutil.rmtree(state, ignore_errors=True)
+    if os.path.isdir(state):
+        return False
+    B.log("sync", "unstarted-rebase-cleared", machine=MACHINE, autostash=os.path.exists(stash))
+    print("cleared a rebase that never started%s" %
+          ("; its autostash is in `git stash list`" if os.path.exists(stash) else ""))
     return True
 
 
@@ -461,13 +610,21 @@ def abort_rebase(run_git=None, in_rebase=None, attempts=3):
     the vault stays mid-rebase, and every later pass stops on "REBASE IN PROGRESS". A lock
     in the way is cleared when it is provably stale, and the abort is tried again.
     """
+    global LAST_ABORT_ERROR
     run_git = run_git or git
     in_rebase = in_rebase or rebase_in_progress
+    LAST_ABORT_ERROR = ""
     for _ in range(attempts):
         if not in_rebase():
             return True
-        run_git("rebase", "--abort")
+        code, out, err = run_git("rebase", "--abort")
         if not in_rebase():
+            return True
+        # Kept: a laptop once failed to abort for a day and nobody could say why, because
+        # git's own words were thrown away here.
+        LAST_ABORT_ERROR = " ".join(((err or "") + " " + (out or "")).split())[:400] \
+            or "git exited %s with no message" % code
+        if clear_unstarted_rebase(run_git):
             return True
         clear_stale_index_lock()
         time.sleep(1)
@@ -530,7 +687,8 @@ def recover_stuck_rebase(run_git=None, where=None):
         with open(patch_path, "w", encoding="utf-8") as fh:
             fh.write(patch + ("\n" if patch and not patch.endswith("\n") else ""))
         if not abort_rebase(run_git):
-            return False, "the rebase could not be aborted; the work is saved in %s" % where
+            return False, "the rebase could not be aborted (git: %s); the work is saved in %s" \
+                % (LAST_ABORT_ERROR or "no message", where)
         clear_sync_rebase()
         if patch.strip():
             code, out, err = run_git("apply", "--3way", "--index", patch_path)
@@ -676,7 +834,7 @@ def fetch_from_remote():
 
 
 def _fetch_from_remote(head_before):
-    code, out, err = git("pull", "--rebase", "--autostash")
+    code, out, err = net_git("pull", "--rebase", "--autostash")
     if code != 0 and rebase_in_progress():
         left = settle_rebase()
         if not left and not rebase_in_progress():
@@ -702,9 +860,10 @@ def _fetch_from_remote(head_before):
         # Said out loud and kept apart from the ordinary conflict: the vault is now stuck,
         # and this pass must not claim otherwise. The marker stays, so a later pass can
         # recover it once this one is gone.
-        B.log("sync", "rebase-abort-failed", machine=MACHINE, err=(err or "")[:200])
-        print("CONFLICT with the remote and the rebase could NOT be aborted: the vault is "
-              "mid-rebase.\n  The next pass recovers it after %d min, or by hand:\n"
+        B.log("sync", "rebase-abort-failed", machine=MACHINE, err=(err or "")[:200],
+              abort_err=LAST_ABORT_ERROR)
+        print("CONFLICT with the remote and the rebase could NOT be aborted (git: %s): the "
+              "vault is mid-rebase.\n  The next pass" % (LAST_ABORT_ERROR or "no message") + " recovers it after %d min, or by hand:\n"
               "    cd %s && git rebase --abort" % (STUCK_REBASE_S // 60, B.VAULT))
         return False
     # A lock failure is only harmless when it left no rebase behind: if the abort itself
@@ -748,13 +907,15 @@ def push_with_retry(attempts=3):
     next cycle" — 10 minutes — and with both machines active it might never converge.
     """
     for i in range(attempts):
-        code, out, err = git("push")
+        code, out, err = net_git("push")
         if code == 0:
             return True, ""
         text = (err or "") + (out or "")
         if "non-fast-forward" not in text and "fetch first" not in text\
            and "rejected" not in text:
-            return False, text[:200]          # not a race: do not insist
+            reason = net_failure(code, out, err)
+            B.log("sync", "push-failed", machine=MACHINE, err=reason)
+            return False, reason              # not a race: do not insist
         B.log("sync", "push-rechazado", attempt=i + 1, machine=MACHINE)
         if not fetch_from_remote():
             return False, "rebase conflict"

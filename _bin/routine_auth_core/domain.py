@@ -844,10 +844,11 @@ def parse_requires(text: str):
 
 # ---------------------------------------------------------------- the success contract
 
-_CONTRACT_KEYS = ("final_line", "required", "forbidden", "required_sends", "sends_to")
+_CONTRACT_KEYS = ("final_line", "required", "forbidden", "required_sends", "sends_to", "day_subject", "verify")
 _CONTRACT_PROBLEM = ("success_contract is not a JSON object with final_line (a string), required and forbidden "
-                     "(lists of strings), required_sends (a whole number from 1) and sends_to (one address, "
-                     "with required_sends): the run counts as failed until it is fixed")
+                     "(lists of strings), required_sends (a whole number from 1), sends_to (one address, "
+                     "with required_sends) and day_subject (a strftime subject prefix, with required_sends and "
+                     "sends_to) and verify (a shell command): the run counts as failed until it is fixed")
 _ONE_ADDRESS = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[^@\s,;<>]+$")
 SEND_LOG_NAME = "<brain state>/logs/mail-sent.jsonl"
 
@@ -858,12 +859,22 @@ class SuccessContract:
 
     The markers are checked on the model's answer. `required_sends` is checked on the send log
     google.py send writes, for this attempt's run id: a delivery that happened counts
-    whatever the answer ends on, and an answer that only claims one does not."""
+    whatever the answer ends on, and an answer that only claims one does not.
+
+    `day_subject` (a strftime format of the run's date, e.g. "Daily report %d/%m:") also counts a
+    delivery made earlier for the same day under another run id or none, e.g. the day's mail the
+    user asked for by hand the evening before: the run that then finds the day done has nothing to
+    send, and the send log, not its answer, proves the day was delivered."""
     final_line: object = None     # the last non-empty line, exactly
     required: tuple = ()          # markers that must appear
     forbidden: tuple = ()         # markers that must not appear
     required_sends: int = 0       # emails recorded as delivered under this run's id
     sends_to: object = None       # ...to this address (case-insensitive), when set
+    day_subject: object = None    # a send for the run's day with this subject prefix also counts
+    # a command the runner runs after an exit 0, in the vault, with BRAIN_RUN_STARTED set: a non zero
+    # exit is a breach whatever the answer says: a model not clever enough to get the job done can
+    # still end on ROUTINE_OK, and the repair attempt is there for exactly that
+    verify: object = None
 
 
 def _strings(value) -> bool:
@@ -902,8 +913,15 @@ def parse_success_contract(text: str):
         to = value.get("sends_to")
         if to is not None and (not isinstance(to, str) or not _ONE_ADDRESS.match(to.strip()) or not sends):
             return None, _CONTRACT_PROBLEM
+        verify = value.get("verify")
+        if verify is not None and (not isinstance(verify, str) or not verify.strip()):
+            return None, _CONTRACT_PROBLEM
+        day = value.get("day_subject")
+        if day is not None and (not isinstance(day, str) or "%" not in day or not day.strip() or not to):
+            return None, _CONTRACT_PROBLEM
         return SuccessContract(final.strip() if final else None, tuple(value.get("required") or ()),
-                               tuple(value.get("forbidden") or ()), sends, to.strip() if to else None), None
+                               tuple(value.get("forbidden") or ()), sends, to.strip() if to else None,
+                               day.strip() if day else None, verify.strip() if verify else None), None
     return None, None
 
 
@@ -928,6 +946,32 @@ def sends_for_run(records, run_id) -> list:
     if not run_id:
         return []
     return [r for r in records or () if isinstance(r, dict) and r.get("run_id") == run_id]
+
+
+DAY_SEND_WINDOW = dt.timedelta(hours=36)
+
+
+def day_sends(records, day_subject, now) -> list:
+    """The send records for the run's day: subject starting with `day_subject` formatted on `now`,
+    sent within DAY_SEND_WINDOW before it (the subject carries no year). Any run id, or none."""
+    if not day_subject or now is None:
+        return []
+    prefix = now.strftime(day_subject)
+    out = []
+    for r in records or ():
+        if not isinstance(r, dict) or not str(r.get("subject") or "").startswith(prefix):
+            continue
+        try:
+            ts = dt.datetime.fromisoformat(str(r.get("ts") or ""))
+        except ValueError:
+            continue
+        if ts.tzinfo is not None:
+            ts = ts.astimezone().replace(tzinfo=None) if now.tzinfo is None else ts
+        elif now.tzinfo is not None:
+            continue
+        if dt.timedelta(0) <= now - ts <= DAY_SEND_WINDOW:
+            out.append(r)
+    return out
 
 
 _NO_REQUEST = re.compile(

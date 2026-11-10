@@ -155,7 +155,7 @@ def test_launchd_drift():
     for label in ("com.test.loaded", "com.test.missing"):
         write(os.path.join(vault, "_bin", label + ".plist"), TEMPLATE % {"label": label})
     lc = AD.LaunchctlControl(vault=vault, home=home, uid=501, agents_dir=agents, launchctl=fake,
-                             backup_dir=backups, environ={})
+                             backup_dir=backups, environ={}, sleep=lambda s: None)
     installed = os.path.join(agents, "com.test.loaded.plist")
     write(installed, lc.render("com.test.loaded"))
     check("a plist installed from the current template has not drifted", not lc.drifted("com.test.loaded"))
@@ -1058,8 +1058,9 @@ def test_hook_probe():
                                    os.path.join(vault, "90-Meta", "events.json"), os.path.join(d, "epoch.json"))
     pairs = A_.HookProbe(canonical, events).results()
     bad = [(c.event_id, D_.probe_verdict(c, r), r.stderr[-300:]) for c, r in pairs if D_.probe_verdict(c, r)]
-    check("this checkout's twelve hooks, run the way Claude Code runs them in a scratch state, all pass",
-          len(pairs) == 12 and bad == [], (len(pairs), bad))
+    # A floor, not an exact count: a new hook must not fail a healthy tree.
+    check("every hook in this checkout (at least twelve), run the way Claude Code runs them in a scratch "
+          "state, passes", len(pairs) >= 12 and bad == [], (len(pairs), bad))
 
 
 FAKE_SYSTEMCTL = r"""#!/bin/sh

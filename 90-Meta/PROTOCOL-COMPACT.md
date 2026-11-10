@@ -14,6 +14,7 @@ The one-screen version. Full protocol: `~/Brain/90-Meta/AGENT-PROTOCOL.md`.
 - Notes go in **English**: body, `title:`, tags, filename. Quotes stay verbatim. A note in another language is unreachable by search.
 - Titles and headings name the topic, never a headline: no teaser phrasing, no "X, not Y", no triads.
 - Text for the user, any language: like a person, no dashes, no AI tells. `style_gate.py` checks replies; run `_bin/style_check.py` on documents. Detail: `30-Knowledge/2026-09-10-convention-write-like-a-person.md`
+- Every text for people goes through skill `humanizer`, then `style_check.py`. Detail: `30-Knowledge/2026-11-08-convention-every-outgoing-message-through-humanizer.md`
 - Heavy files go to the local files directory with `_bin/files.py`, cited from their note by key, never into the repo.
 - **Talk to the user in their language, always**, whatever language the question, code or note is in. Notes, commits, code and identifiers stay English; shared tools get theirs. Never assess anyone's workload.
 - Decisions as plain-text lettered lists (A, B, C, then "explain more") plus your recommendation; one at a time; never widgets.
@@ -34,6 +35,7 @@ The one-screen version. Full protocol: `~/Brain/90-Meta/AGENT-PROTOCOL.md`.
 - Your tools: `30-Knowledge/2026-09-12-reference-tool-and-service-catalogue.md`. Read it before calling a capability missing; verify a newly granted tool or key with a real call and add it there.
 - Supported: macOS and Linux, each with its own Chrome and the Claude extension. What this machine has: the `## This machine` block or a probe, never the OS.
 - A scheduled task moves to a machine only once `routine_requires.py here --fix` is ✓ there. Protocol §10.
+- Chrome outside a routine: `browser_lock.py hold` first; restart only with `chrome_restart.py`. Detail: `30-Knowledge/2026-11-08-decision-x-linkedin-tasks-share-social-lock-and-wait.md`
 - Every search also repairs broken `[[links]]` (`linkfix.py`). Links it cannot fix are shown to you: fix them in that session.
 - Before creating a new project: check whether the task belongs to an existing one and say so; if it doesn't fit, ASK.
 - Adapt these to your own setup. Project conventions (your repos, your APIs, your house style) live as notes in `30-Knowledge/`, not here.

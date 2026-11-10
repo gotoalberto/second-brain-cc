@@ -54,6 +54,16 @@
       ]
     },
     {
+      "id": "rc-approve",
+      "description": "Remote Control sessions run as bypass even when the app opened them in auto (plan mode and questions to the user excepted)",
+      "handler": "rc_approve",
+      "liveness": "conditional",
+      "triggers": [
+        {"kind": "claude-hook", "event": "PreToolUse", "matcher": "*", "command": "rc_approve.py", "timeout": 5},
+        {"kind": "cli", "command": "brain hook rc-approve"}
+      ]
+    },
+    {
       "id": "post-write-ledger",
       "description": "credit written notes to the session that wrote them",
       "handler": "vault_ledger",

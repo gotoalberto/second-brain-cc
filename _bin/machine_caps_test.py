@@ -111,7 +111,7 @@ def test_own_chrome():
     check("a running Chrome gets no restart advice", "pkill" not in text and "open -a" not in text, text)
     stopped = dict(CAPS["chrome"], running=False)
     text = M.render(dict(CAPS, chrome=stopped))
-    check("on Linux a stopped Chrome is brought back through the keepalive", "`pkill -x chrome`" in text, text)
+    check("on Linux a stopped Chrome is brought back through the keepalive", "chrome_restart.py restart" in text, text)
     text = M.render(dict(CAPS, os="macOS", scheduler="launchd", chrome=stopped))
     check("on macOS by opening it", 'open -a "Google Chrome"' in text and "pkill" not in text, text)
     text = M.render(dict(CAPS, chrome=dict(CAPS["chrome"], own=[("a", "first"), ("b", "")])))

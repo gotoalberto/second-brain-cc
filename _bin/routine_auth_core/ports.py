@@ -70,6 +70,10 @@ class SendLog(Protocol):
     def records(self) -> list: ...                    # every google.py send record, as dicts
 
 
+class Verifier(Protocol):
+    def check(self, command: str, started) -> tuple: ...   # (ok, one line of detail)
+
+
 class AlertSink(Protocol):
     def raise_alert(self, key: str, summary: str, severity: str = "fail") -> None: ...
     def clear_alert(self, key: str) -> None: ...

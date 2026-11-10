@@ -312,6 +312,26 @@ class RandomRunIds:
         return D.run_id(routine_id, now, self.token_hex(4))
 
 
+class ShellVerifier:
+    """Runs a routine's `verify` command in the vault after a successful attempt. Exit 0 is a pass;
+    the last line of its output is the detail either way."""
+
+    def __init__(self, cwd, timeout=120):
+        self.cwd, self.timeout = cwd, timeout
+
+    def check(self, command, started):
+        env = dict(os.environ)
+        if started is not None:
+            env["BRAIN_RUN_STARTED"] = started.isoformat(timespec="seconds")
+        try:
+            p = subprocess.run(os.path.expanduser(command), shell=True, cwd=self.cwd, env=env,
+                               capture_output=True, text=True, timeout=self.timeout)
+        except subprocess.TimeoutExpired:
+            return False, "verify timed out after %ds" % self.timeout
+        lines = [l for l in ((p.stdout or "") + "\n" + (p.stderr or "")).splitlines() if l.strip()]
+        return p.returncode == 0, (lines[-1][:300] if lines else "exit %d" % p.returncode)
+
+
 class MailSentLog:
     """<brain state>/logs/mail-sent.jsonl, which google.py send appends to on every
     delivered message. Read only; a missing or unreadable log is no sends."""

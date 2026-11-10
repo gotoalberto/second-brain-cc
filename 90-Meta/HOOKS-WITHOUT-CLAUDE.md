@@ -60,6 +60,15 @@ shared notes only through vw.py; credentials never committed
 - Git hook: `githooks/pre-commit` runs `_bin/events_core/git_pre_commit.py` with git's arguments
 - Handler command: `python3 _bin/gate_write.py`, stdin: the hook JSON object
 
+### `rc-approve`
+
+Remote Control sessions run as bypass even when the app opened them in auto (plan mode and questions to the user excepted)
+
+- Claude Code hook: `PreToolUse`, matcher `*`
+- Liveness: `conditional`
+- Without Claude Code: `brain hook rc-approve`
+- Handler command: `python3 _bin/rc_approve.py`, stdin: the hook JSON object
+
 ### `post-write-ledger`
 
 credit written notes to the session that wrote them

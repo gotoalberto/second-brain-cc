@@ -367,6 +367,10 @@ def test_success_contract(D):
                                           '"required": ["report at"], "forbidden": ["EMAIL NOT SENT:"]}\n'))
     check("a JSON object with final_line, required and forbidden is read",
           c == D.SuccessContract("ROUTINE_OK", ("report at",), ("EMAIL NOT SENT:",)) and p is None, (c, p))
+    c, p = D.parse_success_contract(fm % 'success_contract: {"required": ["ROUTINE_OK"], "verify": "python3 x.py check"}\n')
+    check("a verify command is read", c is not None and c.verify == "python3 x.py check" and p is None, (c, p))
+    c, p = D.parse_success_contract(fm % 'success_contract: {"required": ["ROUTINE_OK"], "verify": ""}\n')
+    check("an empty verify command is a problem", c is None and p, (c, p))
     for name, line in (("a YAML value", "success_contract: final_line ROUTINE_OK\n"),
                        ("an unknown key", 'success_contract: {"final": "ROUTINE_OK"}\n'),
                        ("a list of numbers", 'success_contract: {"forbidden": [1]}\n'),
@@ -586,6 +590,31 @@ def test_delivery_contract(D):
     check("ROUTINE_OK as a required marker is met anywhere in the answer",
           D.check_contract(D.SuccessContract(None, ("ROUTINE_OK",), ()),
                            json.dumps({"result": "ROUTINE_OK\nand then a closing remark"})) == [])
+
+    print("\n== a day already delivered under another run ==")
+    import datetime as dt
+    c, p = D.parse_success_contract(fm % ('success_contract: {"required_sends": 1, "sends_to": '
+                                          '"a@b.co", "day_subject": "Daily report %d/%m:"}\n'))
+    check("day_subject is read", p is None and c.day_subject == "Daily report %d/%m:", (c, p))
+    for name, line in (("day_subject without sends_to", 'success_contract: {"required_sends": 1, "day_subject": "X %d"}\n'),
+                       ("day_subject with no date", 'success_contract: {"required_sends": 1, "sends_to": "a@b.co", '
+                                                    '"day_subject": "Post"}\n')):
+        c2, p2 = D.parse_success_contract(fm % line)
+        check("%s is no contract, with a problem" % name, c2 is None and "success_contract" in (p2 or ""), (c2, p2))
+    now = dt.datetime(2026, 10, 24, 6, 3)
+    day_log = [
+        {"ts": "2026-10-23T20:39:27+02:00", "to": "a@b.co", "subject": "Daily report 24/10: ready", "message_id": "d-1"},
+        {"ts": "2026-10-23T06:15:32+02:00", "to": "a@b.co", "subject": "Daily report 23/10: ready", "message_id": "d-2"},
+        {"ts": "2025-10-23T20:00:00+02:00", "to": "a@b.co", "subject": "Daily report 24/10: old", "message_id": "d-3"},
+        {"ts": "2026-10-23T21:00:00+02:00", "to": "a@b.co", "subject": "Weekly digest 24/10", "message_id": "d-4"},
+    ]
+    found = D.day_sends(day_log, c.day_subject, now)
+    check("only the day's subject inside the window counts, with no run id", [r["message_id"] for r in found] == ["d-1"],
+          found)
+    check("it meets the contract", D.check_contract(c, json.dumps({"result": "guard\nROUTINE_OK"}), sends=found) == [])
+    check("no day_subject, no day sends", D.day_sends(day_log, None, now) == [])
+    check("the day before's subject does not cover today",
+          D.day_sends(day_log[1:2], c.day_subject, now) == [])
 
     print("\n== an answer that never ran the routine ==")
     from routine_auth_core.fixtures import FIXTURES

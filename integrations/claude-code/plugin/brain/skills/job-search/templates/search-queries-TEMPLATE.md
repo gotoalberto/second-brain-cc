@@ -32,6 +32,19 @@ matches people with that title who are looking for work.
 - In your second language, if you search one, last week: `"<hiring phrase in that language>" "<target title>"`
 - Network pass, 1st connections only, last week: `"we're hiring"`, `"<hiring phrase in that language>"`
 
+## LinkedIn job search
+
+Queries for step 2c, run in LinkedIn's logged in job search (see `reference/linkedin-jobs-search.md`).
+Filters are written into the text: seniority words, the target titles joined with "or", one domain
+per query. Run each once with your country's `geoId` and once, prefixed with `remote `, with the
+wider region's. About eight queries, up to two pages each.
+
+| # | geoId | keywords |
+|---|---|---|
+| 1 | <your country id> | <seniority words> <title> or <title> in <domain 1> |
+| 2 | <your country id> | <seniority words> <title> or <title> in <domain 2> |
+| 3 | <region id> | remote <seniority words> <title> or <title> in <domain 1> |
+
 ## Calibration notes
 
 Write down what you learn about each source as the searches run, so the next run does not repeat the

@@ -974,12 +974,18 @@ def app_task_registry_findings(desktop_enabled, registry_rows, host: str, is_min
     return out
 
 
-def degraded_routine_ids(rows, bridge_stale: bool) -> list:
-    """Enabled routines whose `needs_bridge` names the browser, while the browser bridge is stale."""
+def degraded_routine_ids(rows, bridge_stale: bool, host=None) -> list:
+    """Enabled routines of this machine whose `needs_bridge` names the browser, while the
+    browser bridge is stale.
+
+    Only this machine's: the bridge is per machine, and a machine used to warn about routines
+    that all run on another one. A row with no `machine` key (old callers) counts, as before.
+    """
     if not bridge_stale:
         return []
     return [r["id"] for r in rows or ()
-            if r.get("enabled") and any(n in BROWSER_NEEDS for n in (r.get("needs_bridge") or ()))]
+            if r.get("enabled") and any(n in BROWSER_NEEDS for n in (r.get("needs_bridge") or ()))
+            and (host is None or "machine" not in r or machine_matches(r.get("machine"), host))]
 
 
 def routine_permission_findings(rows) -> list:
@@ -992,12 +998,12 @@ def routine_permission_findings(rows) -> list:
             for r in rows or () if r.get("permission_problem")]
 
 
-def degraded_routine_findings(rows, bridge_stale: bool) -> list:
+def degraded_routine_findings(rows, bridge_stale: bool, host=None) -> list:
     """Detect and alert, never block: a degraded routine still runs."""
     return [Finding("degraded:%s" % rid, WARN,
                     "routine %s needs the browser, and Claude in Chrome's bridge is stale after an account "
                     "switch: it runs degraded until the Claude app is restarted" % rid)
-            for rid in degraded_routine_ids(rows, bridge_stale)]
+            for rid in degraded_routine_ids(rows, bridge_stale, host)]
 
 
 @dataclass(frozen=True)
@@ -1085,6 +1091,9 @@ class LivenessConfig:
     grace_s: float = 120.0            # a session or a turn this young is not judged yet
     failing_last: int = 5
     failing_min: int = 3
+    # Only runs this recent count towards failing. Without it, errors stayed "the last five runs"
+    # for as long as no session ran on that machine, and the finding outlived its cause.
+    failing_s: float = 86400.0
     # Sessions nobody should hold to Brain's hooks, by rule: the temporary directories tests and
     # scratch checks run in, and the guardian's own probe session.
     ignore_dirs: tuple = (r"^-private-var-folders-", r"^-var-folders-", r"^-private-tmp(-|$)", r"^-tmp(-|$)")
@@ -1127,7 +1136,8 @@ def hook_liveness(transcripts, heartbeats, specs, now: float, since, config: Liv
     - `hooks:not-firing` (fail): a session active in the window, past its grace, that started
       after liveness began, has no heartbeat at all. The hooks are dead or unwired.
     - `hooks:failing:<event>` (fail): at least `failing_min` of an event's last `failing_last`
-      heartbeats are errors. Recovers as soon as clean runs push the errors out.
+      heartbeats, within the last `failing_s`, are errors. Recovers as soon as clean runs push
+      the errors out, or once they are older than `failing_s`.
     - `hooks:silent:<event>` (warn): a `session` event missing from an active session that
       finished a turn (a Stop heartbeat older than the grace); or, over the silent window, a
       `session` or `regular` event with no heartbeat at all while other hooks fired and Claude
@@ -1161,7 +1171,7 @@ def hook_liveness(transcripts, heartbeats, specs, now: float, since, config: Liv
             "the hooks are not running or not wired" % (len(dead), config.window_s // 60, dead[0].sid, dead[0].project_dir)))
 
     for event in sorted(per_event):
-        recent = per_event[event][-config.failing_last:]
+        recent = [h for h in per_event[event] if h.ts >= now - config.failing_s][-config.failing_last:]
         errors = [h for h in recent if h.status not in HEARTBEAT_FINE]
         if len(errors) >= config.failing_min:
             findings.append(Finding(

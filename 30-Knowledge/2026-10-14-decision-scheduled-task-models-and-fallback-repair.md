@@ -82,6 +82,15 @@ and sends the summary. The next morning the cheap model handles the new column o
 - **Retry on the same model.** Cheap, but a procedure the model misreads stays misread.
 - **Fallback without the fix.** Every odd case would cost a strong model run, every time.
 
+## Update: a routine can prove its own result
+
+A model that is not clever enough for a job can still end its answer with the success line. The
+success contract therefore takes a `verify` command, run in the vault after an exit 0 with
+`BRAIN_RUN_STARTED` set to the attempt's start: a non zero exit is a contract breach whatever the
+answer says, so the repair attempt runs. Write the check against the real effect (the post exists,
+the file was written today), never against the agent's own report. A contract with `verify` and no
+verifier wired fails instead of passing silently.
+
 ## Links
 
 - [[2026-09-15-runbook-brain-routine-auth]]

@@ -4,6 +4,7 @@
   vw.py append <rel-path>            (content on stdin)
   vw.py new    <rel-path> --title T [--type decision] [--project p] [--area a] [--tag t]
   vw.py set    <rel-path> --section H | --match TEXT   (content on stdin)
+  vw.py rm     <rel-path> --yes       (refuses while another note links to it)
 
 The body is read only from a pipe, a heredoc or `< file`. Any other stdin (a terminal, a
 socket that never closes, /dev/null) is no body: `new` writes the note without one, and
@@ -247,6 +248,56 @@ def cmd_set(args):
     print(os.path.relpath(path, B.VAULT))
 
 
+def _unindex(rel):
+    """Takes a deleted note out of the index and its outgoing links out of the graph, the
+    same rows index_vault drops for a file that is gone. Best effort, like reindex_notes:
+    the periodic reindex does it anyway."""
+    try:
+        con = B.db(timeout=1.5)
+        con.execute("PRAGMA busy_timeout=1500")
+        for table, col in (("notes", "path"), ("notes_fts", "path"),
+                           ("links", "source"), ("note_ids", "path")):
+            con.execute("DELETE FROM %s WHERE %s=?" % (table, col), (rel,))
+        con.commit(); con.close()
+    except Exception as e:
+        B.log_error("vw.rm", e)
+
+
+def cmd_rm(args):
+    """Deletes a note under the same per-file lock as the writes.
+
+    Without it there was no sanctioned way to delete in a shared folder: the gate
+    refuses a raw delete there, so a stray empty file from a test could only stay.
+    git keeps the old content; vault_sync carries the deletion to every machine.
+    """
+    path = resolve(args.path)
+    rel = os.path.relpath(path, B.VAULT)
+    if not args.yes:
+        sys.stderr.write("vw: this deletes %s; repeat with --yes\n" % rel)
+        sys.exit(1)
+    stem = os.path.splitext(os.path.basename(rel))[0]
+    try:
+        con = B.db(timeout=1.5)
+        refs = sorted({s for (s,) in con.execute(
+            "SELECT source FROM links WHERE target IN (?, ?, ?) AND source != ?",
+            (stem, rel, os.path.splitext(rel)[0], rel))})
+        con.close()
+    except Exception:
+        refs = []
+    if refs:
+        sys.stderr.write("vw: not deleted, linked from: %s\n" % ", ".join(refs[:10]))
+        sys.exit(1)
+    with B.flock(path):
+        if not os.path.isfile(path):
+            sys.stderr.write("vw: does not exist: %s\n" % path)
+            sys.exit(1)
+        os.remove(path)
+    B.note_vw_write(path)
+    _unindex(rel)
+    B.mark_wrote(args.sid)
+    print("deleted %s" % rel)
+
+
 def main():
     ap = argparse.ArgumentParser(prog="vw")
     sub = ap.add_subparsers(dest="cmd")
@@ -261,8 +312,14 @@ def main():
     st.add_argument("path"); st.add_argument("--section", default="")
     st.add_argument("--match", default=""); st.add_argument("--sid", default="")
 
+    r = sub.add_parser("rm", help="delete a note (--yes); refuses while a note links to it")
+    r.add_argument("path"); r.add_argument("--yes", action="store_true")
+    r.add_argument("--sid", default="")
+
     args = ap.parse_args()
-    if args.cmd == "set":
+    if args.cmd == "rm":
+        cmd_rm(args)
+    elif args.cmd == "set":
         cmd_set(args)
     elif args.cmd == "append":
         cmd_append(args)

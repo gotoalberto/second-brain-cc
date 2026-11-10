@@ -39,3 +39,13 @@ Sectors where your experience is a real advantage. These raise a posting's score
 ## What you bring
 
 Three to five lines in your own words. The skill uses this to write the strengths column honestly.
+
+## Form answers already given
+
+Answers to application form questions that hold for every employer. The skill fills these in without
+asking and adds every new answer you give, with its date. Questions tied to one employer are asked
+every time, and diversity questions are never stored here.
+
+| Question (any wording) | Answer | Date |
+|---|---|---|
+| <for example: work permit in your country> | <your answer> | <YYYY-MM-DD> |

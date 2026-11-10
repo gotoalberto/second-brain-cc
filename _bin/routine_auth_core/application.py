@@ -55,6 +55,7 @@ class Ports:
     sends: object = None      # ports.SendLog; None: a contract requiring sends can only fail
     run_env: dict = field(default_factory=dict)   # exported to every attempt (the send log path)
     machine: object = None       # ports.Machine; None: every pool token is usable here
+    verifier: object = None      # ports.Verifier; None: a contract with verify can only fail
 
 
 @dataclass(frozen=True)
@@ -102,7 +103,7 @@ def _new_run_id(ports, routine_id, now, number):
     return rid or D.run_id(routine_id, now, str(number))
 
 
-def _apply_contract(ports, routine, cls, rc, out, run_id):
+def _apply_contract(ports, routine, cls, rc, out, run_id, started=None):
     """A CLI success that did not deliver what the routine's contract requires is a contract breach."""
     if cls.kind == D.OK and (routine.contract is not None or routine.contract_problem):
         if routine.contract_problem:
@@ -112,7 +113,16 @@ def _apply_contract(ports, routine, cls, rc, out, run_id):
             if routine.contract.required_sends:
                 records = _safe(ports.sends.records) if ports.sends is not None else None
                 sends = D.sends_for_run(records or [], run_id)
+                sends += [r for r in D.day_sends(records or [], routine.contract.day_subject, ports.clock.now())
+                          if r not in sends]
             unmet = D.check_contract(routine.contract, out, sends=sends)
+            if not unmet and routine.contract.verify:
+                if ports.verifier is None:
+                    unmet = ["the contract has a verify command and no verifier is wired"]
+                else:
+                    ok, detail = ports.verifier.check(routine.contract.verify, started)
+                    if not ok:
+                        unmet = ["verify failed: %s" % (detail or "no detail")]
         if unmet:
             return D.Classification(D.CONTRACT_BREACH, "; ".join(unmet)), D.EXIT_CODES[D.CONTRACT_BREACH]
     return cls, rc
@@ -134,7 +144,7 @@ def _browser_attempt(ports, routine, body, start, budget_s):
     remaining = budget_s - (ports.clock.monotonic() - start)
     rc, out, err = ports.runner.run(prompt, args, env, int(max(1, remaining)))
     cls = D.classify(rc, out, err)
-    cls, rc = _apply_contract(ports, routine, cls, rc, out, run_id)
+    cls, rc = _apply_contract(ports, routine, cls, rc, out, run_id, now)
     kept = None
     if scratch:
         if cls.kind == D.OK:
@@ -247,7 +257,7 @@ def run_routine(ports, routine: Routine, budget_s: int) -> RunResult:
                 rc, out, err = ports.runner.run(prompt, args, env, int(max(1, remaining)))
                 cls = D.classify(rc, out, err)
         token_cls = cls
-        cls, rc = _apply_contract(ports, routine, cls, rc, out, run_id)
+        cls, rc = _apply_contract(ports, routine, cls, rc, out, run_id, now)
         tried.append(label)
         state = D.record(state, label, token_cls, now)
         _safe(ports.state.save, state)

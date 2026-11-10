@@ -113,7 +113,8 @@ def _agent_rows(ports):
         if r.get("type") != "agent":
             continue
         m = meta(r) if meta else {}
-        rows.append({"id": r["id"], "enabled": r.get("enabled"), "app_task": m.get("app_task"),
+        rows.append({"id": r["id"], "enabled": r.get("enabled"), "machine": r.get("machine"),
+                     "app_task": m.get("app_task"),
                      "needs_bridge": list(m.get("needs_bridge") or []),
                      "permission_problem": m.get("permission_problem")})
     return rows
@@ -143,7 +144,7 @@ def _permissions(ports):
 def _degraded(ports):
     if not _bridge_stale(ports):
         return []
-    return D.degraded_routine_findings(_agent_rows(ports), True)
+    return D.degraded_routine_findings(_agent_rows(ports), True, ports.routines.host())
 
 
 def _raised(ports):
@@ -542,7 +543,7 @@ def run_status(ports) -> str:
         last = ports.routines.last_runs()
         lines.append("routines on %s:" % host)
         try:
-            degraded = set(D.degraded_routine_ids(_agent_rows(ports), True)) if _bridge_stale(ports) else set()
+            degraded = set(D.degraded_routine_ids(_agent_rows(ports), True, host)) if _bridge_stale(ports) else set()
         except Exception:
             degraded = set()
         for r in ports.routines.routines():

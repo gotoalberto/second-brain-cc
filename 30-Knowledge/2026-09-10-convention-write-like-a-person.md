@@ -130,6 +130,15 @@ again and again. So it is checked by code.
   long version separately.
 - Adapt the list to your own taste. The patterns in `style_check.py` are meant to be edited.
 
+
+## The humanizer pass
+
+Every document, post, message and email, from a session or a routine, goes through the bundled
+`humanizer` skill (from `blader/humanizer`) in embedded mode before it is delivered, and then through
+`style_check.py` as before. Where the house rules are stricter, they win: humanizer keeps dashes when a
+sample uses them, and here there are none. Routines get the rule from the `humanizer` preamble block.
+[[2026-11-08-convention-every-outgoing-message-through-humanizer]]
+
 ## Links
 
 - [[2026-09-08-convention-vault-is-written-in-english]]

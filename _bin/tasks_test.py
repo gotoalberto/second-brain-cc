@@ -99,6 +99,18 @@ class FakeTokenSource:
         return self.value
 
 
+PREAMBLE = {
+    "humanizer": "---\nid: preamble-humanizer\ntype: routine-preamble\n---\n<!-- who uses it -->\n"
+                 "HUMANIZER (test): every text for a person goes through humanizer.\n",
+    "browser_restart": "---\nid: preamble-browser\n---\nBROWSER (test): probe, restart, probe again.\n",
+}
+
+
+def write_preamble(vault, blocks=PREAMBLE):
+    for name, text in blocks.items():
+        write(os.path.join(vault, "90-Meta", "routines", "_preamble", name + ".md"), text)
+
+
 def setup(T, agent_exit=0, agent_body="echo agent-said-hello", token_value=FAKE_TOKEN):
     """A fresh temporary world wired into the tasks module."""
     root = tmpdir()
@@ -107,6 +119,7 @@ def setup(T, agent_exit=0, agent_body="echo agent-said-hello", token_value=FAKE_
     write(os.path.join(vault, "90-Meta", "scheduled-tasks.md"), REGISTRY)
     write(os.path.join(vault, "90-Meta", "routines", "routine-a.md"), ROUTINE)
     write(os.path.join(vault, "90-Meta", "routine-tokens.json"), json.dumps(POOL))
+    write_preamble(vault)
     args_file = os.path.join(root, "agent-args.txt")
     agent = write(os.path.join(root, "agent"),
                   '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "$1" >> "%s"; echo "1.0 (fake)"; exit 0; fi\n'
@@ -181,7 +194,7 @@ import fcntl, sys, time
 fh = open(sys.argv[1], "a")
 fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
 print("held", flush=True)
-time.sleep(60)
+time.sleep(float(sys.argv[2]) if len(sys.argv) > 2 else 60)
 '''
 
 # A writer killed between writing its temp file and replacing the state file.
@@ -456,36 +469,110 @@ def _state_tests(T, real_run_task):
           T.lock_group({"type": "agent", "command": "90-Meta/routines/g.md"}) == "printer")
     write(routine, "---\nid: g\n---\n\nlock_group: printer in the body does not count\n")
     check("but not from the body", T.lock_group({"type": "agent", "command": "90-Meta/routines/g.md"}) == "")
+    write(routine, "---\nid: g\nlock_group: social, Printer\n---\n\nbody\n")
+    check("several groups are read, lower case",
+          T.lock_group({"type": "agent", "command": "90-Meta/routines/g.md"}) == "social,printer")
+    check("and taken in sorted order",
+          T.lock_groups({"type": "agent", "command": "90-Meta/routines/g.md"}) == ["printer", "social"])
     rows = {t["id"]: t for t in T.read_registry()}
     check("a shell row has no lock group", T.lock_group(rows["task-s"]) == "")
+    g_task = {"type": "agent", "command": "90-Meta/routines/g.md"}
+    browser = 'agent_args: ["--chrome", "--allowedTools", "Read,mcp__claude-in-chrome"]\n'
+    write(routine, "---\nid: g\n" + browser + "---\n\nbody\n")
+    check("a routine that allows Claude in Chrome gets the chrome group by itself",
+          T.lock_groups(g_task) == ["chrome"], T.lock_groups(g_task))
+    write(routine, "---\nid: g\nlock_group: social, printer\n" + browser + "---\n\nbody\n")
+    check("added to its own groups and taken in sorted order",
+          T.lock_groups(g_task) == ["chrome", "printer", "social"], T.lock_groups(g_task))
+    write(routine, "---\nid: g\nlock_group: nightly-job, social\n" + browser + "---\n\nbody\n")
+    check("chrome goes before nightly-job and social, like every other holder",
+          T.lock_groups(g_task) == ["chrome", "nightly-job", "social"], T.lock_groups(g_task))
+    write(routine, "---\nid: g\nlock_group: chrome, social\n" + browser + "---\n\nbody\n")
+    check("named by hand it is not added twice", T.lock_group(g_task) == "chrome,social", T.lock_group(g_task))
+    write(routine, "---\nid: g\nchrome_lock: false\n" + browser + "---\n\nbody\n")
+    check("`chrome_lock: false` opts out (a routine on another machine's Chrome)", T.lock_groups(g_task) == [],
+          T.lock_groups(g_task))
+    write(routine, "---\nid: g\nagent_args: [\"--allowedTools\", \"Read,Bash(ls:*)\"]\n---\n\nmcp__claude-in-chrome in the body\n")
+    check("a routine without Claude in Chrome in its agent_args gets no chrome group", T.lock_groups(g_task) == [],
+          T.lock_groups(g_task))
     real_group = T.lock_group
     T.lock_group = lambda task: "printer" if task["id"] == "tick-a" else ""
     lock = T.task_lock_path("group-printer")
     os.makedirs(os.path.dirname(lock), exist_ok=True)
-    holder = subprocess.Popen([sys.executable, "-c", HOLD_LOCK, lock], stdout=subprocess.PIPE, universal_newlines=True)
+    holder = subprocess.Popen([sys.executable, "-c", HOLD_LOCK, lock, "3"], stdout=subprocess.PIPE, universal_newlines=True)
+    try:
+        holder.stdout.readline()
+        t0 = time.monotonic()
+        rc, exc = attempt(T.main, [])
+        waited = time.monotonic() - t0
+        st = read_json(T.STATE_FILE) or {}
+        check("a due task whose lock group is busy waits for it and then runs",
+              exc is None and rc == 0 and st.get("tick-a", {}).get("last_exit") == 0 and waited >= 2, (rc, exc, st, waited))
+        log_text = read_text(T.RUNNER_LOG)
+        check("and the runner log says it waited for which group",
+              "waiting tick-a: lock group printer busy" in log_text and "lock group printer free for tick-a" in log_text,
+              log_text[-400:])
+    finally:
+        holder.kill()
+        holder.wait()
+
+    world = state_world(T)
+    T.lock_group = lambda task: "printer,social" if task["id"] == "tick-a" else ""
+    claim = T.task_lock_path("tick-a")
+    os.makedirs(os.path.dirname(claim), exist_ok=True)
+    holder = subprocess.Popen([sys.executable, "-c", HOLD_LOCK, claim, "30"], stdout=subprocess.PIPE, universal_newlines=True)
     try:
         holder.stdout.readline()
         rc, exc = attempt(T.main, [])
         st = read_json(T.STATE_FILE) or {}
-        check("a due task whose lock group is busy is skipped with its state untouched",
+        check("a tick that finds the task already waiting or running leaves it alone",
               exc is None and rc == 0 and "tick-a" not in st, (rc, exc, st))
-        check("and the runner log says which group", "skipped tick-a: lock group printer busy" in read_text(T.RUNNER_LOG),
+        check("and says so", "skipped tick-a: already running or waiting" in read_text(T.RUNNER_LOG),
               read_text(T.RUNNER_LOG)[-300:])
         check("while a task outside the group still runs on that tick",
               st.get("tick-b", {}).get("last_exit") == 0, st)
     finally:
         holder.kill()
         holder.wait()
+
+    world = state_world(T)
+    os.makedirs(os.path.dirname(T.task_lock_path("group-social")), exist_ok=True)
+    holder = subprocess.Popen([sys.executable, "-c", HOLD_LOCK, T.task_lock_path("group-social"), "3"],
+                              stdout=subprocess.PIPE, universal_newlines=True)
+    try:
+        holder.stdout.readline()
+        t0 = time.monotonic()
+        rc, exc = attempt(T.main, [])
+        waited = time.monotonic() - t0
+        st = read_json(T.STATE_FILE) or {}
+        check("with several groups it waits for the busy one and runs",
+              exc is None and st.get("tick-a", {}).get("last_exit") == 0 and waited >= 2
+              and "waiting tick-a: lock group social busy" in read_text(T.RUNNER_LOG), (rc, exc, st, waited))
+        check("the wait does not count against the routine timeout", "timed out" not in read_text(T.RUNNER_LOG))
+    finally:
+        holder.kill()
+        holder.wait()
+
+    world = state_world(T)
+    clock = {"t": dt.datetime(2026, 9, 14, 23, 50)}
+    T.now = lambda: clock["t"]
+    real_wait = T.group_locks
+    @contextlib.contextmanager
+    def wait_past_midnight(groups, task_id):
+        with real_wait(groups, task_id):
+            clock["t"] = dt.datetime(2026, 9, 15, 1, 30)   # the holder took hours
+            yield
+    T.group_locks = wait_past_midnight
     rc, exc = attempt(T.main, [])
     st = read_json(T.STATE_FILE) or {}
-    check("once the group is free the next tick runs it", exc is None and st.get("tick-a", {}).get("last_exit") == 0,
-          (rc, exc, st))
-
-    def group_lock_label():
-        with T.task_lock("group-printer", label="tick-a") as (held, _holder):
-            return held and read_text(T.task_lock_path("group-printer")).startswith("tick-a pid %d " % os.getpid())
-    check("a group lock file names the task holding it", attempt(group_lock_label)[0] is True,
-          attempt(group_lock_label))
+    rec = st.get("tick-a", {})
+    check("a run that waits past midnight is recorded on the day it was due",
+          exc is None and rec.get("last_run_date") == "2026-09-14", (rc, exc, rec))
+    check("with its real start time", str(rec.get("last_run_at", "")).startswith("2026-09-15T01:30"), rec)
+    clock["t"] = dt.datetime(2026, 9, 15, 7, 0)
+    tick_a = next(t for t in T.read_registry() if t["id"] == "tick-a")
+    check("so the next day's run is still due", T.due(tick_a, st)[0] is True, T.due(tick_a, st))
+    T.group_locks = real_wait
     T.lock_group = real_group
 
     world = state_world(T)
@@ -602,6 +689,8 @@ def main():
     old_cmd = os.environ.get("BRAIN_AGENT_CMD")
     old_state = os.environ.get("BRAIN_STATE")
     try:
+        real_vault_preamble_tests(T, str(saved["VAULT"]))
+
         print("\n== registry and due-ness ==")
         root, args_file = setup(T)
         rows = {t["id"]: t for t in T.read_registry()}
@@ -688,6 +777,11 @@ def main():
               prompt_text.startswith('You are running the Brain routine "routine-a" unattended, right now')
               and prompt_text.rstrip().endswith("Summarise the day in one line.")
               and "needs_bridge" not in prompt_text, args)
+        check("a routine with no `preamble:` key gets the default humanizer block, before its body, once",
+              prompt_text.count("HUMANIZER (test)") == 1
+              and prompt_text.index("HUMANIZER (test)") < prompt_text.index("Summarise the day")
+              and "BROWSER (test)" not in prompt_text
+              and "preamble-humanizer" not in prompt_text and "who uses it" not in prompt_text, prompt_text)
         prompt_file = args[at + 1] if at + 1 < len(args) else ""
         check("{prompt_file} is a temporary file holding that prompt, gone after the run",
               prompt_file and prompt_file != os.path.join(T.VAULT, "90-Meta", "routines", "routine-a.md")
@@ -1039,6 +1133,8 @@ def main():
         args = read_text(args_file).splitlines()
         check("a routine with no model adds no --model of its own", rc == 0 and "--model" not in args, args[-6:])
 
+        preamble_tests(T)
+
         state_tests(T)
 
         print("\n== the real alert hook ==")
@@ -1068,6 +1164,117 @@ def main():
             else:
                 os.environ[name] = value
     return finish()
+
+
+def preamble_tests(T):
+    print("\n== the shared routine preamble ==")
+    chrome = ('agent_args: ["--chrome", "--allowedTools", "Read,mcp__claude-in-chrome__navigate"]\n')
+    fm = lambda extra="": "---\nid: routine-a\n%s---\n\nDo the work.\n" % extra
+    check("no key and no browser: the default is humanizer alone",
+          T.preamble_blocks(fm()) == (["humanizer"], None), T.preamble_blocks(fm()))
+    check("no key and Claude in Chrome allowed: humanizer and browser_restart",
+          T.preamble_blocks(fm(chrome)) == (["humanizer", "browser_restart"], None), T.preamble_blocks(fm(chrome)))
+    got = T.preamble_blocks(fm("preamble: [browser_restart, humanizer, humanizer]\n"))
+    check("an explicit list is taken as it is, in the canonical order, each block once",
+          got == (["humanizer", "browser_restart"], None), got)
+    got = T.preamble_blocks(fm(chrome + "preamble: [humanizer]\n"))
+    check("an explicit list replaces the default, browser included", got == (["humanizer"], None), got)
+    check("`preamble: []` asks for no block", T.preamble_blocks(fm("preamble: []\n")) == ([], None))
+    check("quoted names are accepted",
+          T.preamble_blocks(fm('preamble: ["humanizer", "browser_restart"]\n')) == (["humanizer", "browser_restart"], None))
+    blocks, problem = T.preamble_blocks(fm("preamble: [humaniser]\n"))
+    check("an unknown block name is a problem that names it", problem and "humaniser" in problem, problem)
+    check("`preamble:` in the body does not count",
+          T.preamble_blocks("---\nid: r\n---\npreamble: []\n") == (["humanizer"], None))
+
+    root, args_file = setup(T)
+    text = fm("preamble: [humanizer, browser_restart]\nsingle_instance: true\n")
+    out, problem = T.with_preamble(text)
+    check("with_preamble keeps the front matter as it is and puts the blocks between it and the body",
+          problem is None and out.startswith(text.split("\n---\n")[0] + "\n---\n")
+          and out.index("HUMANIZER (test)") < out.index("BROWSER (test)") < out.index("Do the work."), out)
+    check("the blocks' own front matter and HTML comments are not copied",
+          "preamble-humanizer" not in out and "who uses it" not in out, out)
+    check("the parsers still read the front matter after the blocks go in",
+          T.routine_timeout(out) == T.routine_timeout(text) and T.preamble_blocks(out) == T.preamble_blocks(text))
+    twice, _ = T.with_preamble(out)
+    check("no duplication: a text that already carries a block does not get it again",
+          twice.count("HUMANIZER (test)") == 1 and twice.count("BROWSER (test)") == 1, twice)
+    legacy = fm() .replace("Do the work.", "HUMANIZER (an older wording): the old copy.\n\nDo the work.")
+    out, _ = T.with_preamble(legacy)
+    check("a routine body that still has its own copy of a block keeps one copy only",
+          out.count("HUMANIZER (") == 1 and "the old copy" in out, out)
+    check("a block named only in prose does not count as a copy",
+          T.with_preamble(fm().replace("Do the work.", "See HUMANIZER above."))[0].count("HUMANIZER (test)") == 1)
+    out, _ = T.with_preamble("no front matter at all\n")
+    check("a routine with no front matter gets the default block before its text",
+          out.index("HUMANIZER (test)") < out.index("no front matter at all"), out)
+
+    os.remove(os.path.join(T.VAULT, "90-Meta", "routines", "_preamble", "browser_restart.md"))
+    out, problem = T.with_preamble(text)
+    check("a missing block file is a problem that names the file", problem and "browser_restart" in problem, problem)
+    write(os.path.join(T.VAULT, "90-Meta", "routines", "routine-a.md"), text)
+    rc, _ = quiet(T.main, ["--force", "routine-a"])
+    alert = [c for c in T.raise_alert.calls if c[0] == "routine:routine-a"]
+    check("and the run is refused before the agent starts, exit 2, with the alert naming the block",
+          rc == 2 and not os.path.exists(args_file) and alert and "browser_restart" in alert[-1][1], (rc, alert))
+
+    root, args_file = setup(T)
+    write(os.path.join(T.VAULT, "90-Meta", "routines", "routine-a.md"),
+          fm('preamble: [browser_restart]\n'))
+    rc, _ = quiet(T.main, ["--force", "routine-a"])
+    args = open(args_file).read() if os.path.exists(args_file) else ""
+    check("a forced run hands the agent exactly the declared blocks, each once",
+          rc == 0 and args.count("BROWSER (test)") == 1 and "HUMANIZER (test)" not in args
+          and args.index("BROWSER (test)") < args.index("Do the work."), args[:600])
+
+    root, args_file = setup(T)
+    write(os.path.join(T.VAULT, "90-Meta", "routines", "routine-a.md"), fm(chrome))
+    rc, out = quiet(T.main, ["--prompt", "routine-a"])
+    check("--prompt <id> prints the whole framed prompt with its blocks and runs nothing",
+          rc == 0 and not os.path.exists(args_file)
+          and out.startswith('You are running the Brain routine "routine-a" unattended, right now')
+          and out.count("HUMANIZER (test)") == 1 and out.count("BROWSER (test)") == 1
+          and "this run has Claude in Chrome" in out and out.rstrip().endswith("Do the work."), out[:600])
+    check("and leaves no state behind", not os.path.exists(T.STATE_FILE))
+    rc2, out2 = quiet(T.main, ["--prompt", "90-Meta/routines/routine-a.md"])
+    check("--prompt also takes a routine path, named by its file", rc2 == 0
+          and out2.startswith('You are running the Brain routine "routine-a" unattended') and "BROWSER (test)" in out2,
+          out2[:300])
+    rc3, _ = quiet(T.main, ["--prompt", "no-such-task"])
+    check("--prompt with an unknown id fails with exit 2", rc3 == 2, rc3)
+
+
+def real_vault_preamble_tests(T, vault):
+    """The real vault's blocks exist and every routine names only known blocks (read only)."""
+    print("\n== the real vault's routine preamble ==")
+    pre = os.path.join(vault, "90-Meta", "routines", "_preamble")
+    check("every block the runner knows has its file in 90-Meta/routines/_preamble",
+          all(os.path.isfile(os.path.join(pre, n + ".md")) for n in T.PREAMBLE_ORDER),
+          sorted(os.listdir(pre)) if os.path.isdir(pre) else "missing")
+    routines = os.path.join(vault, "90-Meta", "routines")
+    bad = []
+    for name in sorted(os.listdir(routines)):
+        if name.endswith(".md"):
+            _, problem = T.preamble_blocks(open(os.path.join(routines, name)).read())
+            if problem:
+                bad.append((name, problem))
+    check("every routine file names only known blocks", not bad, bad)
+    from routine_auth_core import domain as RD
+    pkill, no_tool = [], []
+    for name in sorted(os.listdir(routines)):
+        if not name.endswith(".md"):
+            continue
+        text = open(os.path.join(routines, name)).read()
+        args, _ = RD.parse_agent_args(text)
+        allowed = " ".join(args)
+        if "pkill -x chrome" in allowed:
+            pkill.append(name)
+        blocks, _ = T.preamble_blocks(text)
+        if "browser_restart" in blocks and "Bash(python3 ~/Brain/_bin/chrome_restart.py:*)" not in allowed:
+            no_tool.append(name)
+    check("no routine may run `pkill -x chrome` (it kills other tasks' headless renders)", not pkill, pkill)
+    check("every routine with browser_restart may run chrome_restart.py", not no_tool, no_tool)
 
 
 def finish():

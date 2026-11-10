@@ -30,10 +30,18 @@ started by hand) skips it and leaves its state alone; the next tick after it end
 again. `--force` on a running one is refused with exit 75. Other tasks are not locked.
 
 Routines that share a scarce resource (an API with a small daily quota, one browser session)
-say so with `lock_group: <name>` in their front matter. A run holds the group's lock
-(<state>/task-locks/group-<name>.lock) for as long as it lasts; a due task whose group is busy
-is skipped on that tick with its state untouched, and the process that holds the group runs it
-as soon as its own task ends (as would any later tick): late rather than overlapping.
+say so with `lock_group: <name>[, <name>...]` in their front matter. The group `chrome` is added
+by the runner itself to every routine whose agent_args allow Claude in Chrome, unless its front
+matter says `chrome_lock: false` (a routine that drives another machine's Chrome): one lock for
+every user of this machine's Chrome, so chrome_restart.py can restart it without breaking
+another run, and browser_lock.py lets an interactive session take the same lock. A run holds
+each group's lock (<state>/task-locks/group-<name>.lock) for as long as it lasts. A due task
+whose group is busy WAITS for it, with no time limit (the holder may take hours), and only then
+starts: its `timeout_minutes` counts from that start, never the wait. While it waits it holds
+its own task lock, so the ticks that come meanwhile see it as already running and leave it
+alone. Groups are taken in alphabetical order, so two tasks that share several never deadlock.
+Before each task the runner re-reads the state, so a process that waited does not rerun what
+other ticks ran.
 
 A routine is killed after DEFAULT_TIMEOUT (30 min) unless its front matter sets
 `timeout_minutes: <n>`, for a routine whose job has no fixed size (a backlog to work
@@ -43,6 +51,8 @@ Usage:
   tasks.py            run whatever is due on this machine
   tasks.py --list     show the registry as this machine sees it
   tasks.py --dry-run  say what would run, run nothing
+  tasks.py --prompt <id|routine path>  print the whole prompt that routine would receive
+                         (shared preamble included), run nothing
   tasks.py --force <id>  run one task now, ignoring schedule and last-run, but NOT the
                          `machine` column: a task owned by another machine is refused
                          (exit 3), because forcing one that posts somewhere from the wrong
@@ -58,7 +68,10 @@ Task types:
               followed by the routine's own `agent_args`. First, routine_requires.py checks
               that this machine has the repos, programs and paths the routine needs (its
               agent_args and its `requires:` line); a gap refuses the run, exit 2, before any
-              token is read. The run goes through
+              token is read. The shared preamble blocks (90-Meta/routines/_preamble/, chosen by
+              the front matter's `preamble:` key, default humanizer plus browser_restart for
+              Claude in Chrome) go in front of the body; a missing block refuses the run. The
+              run goes through
               routine_auth_core: a token from the pool in 90-Meta/routine-tokens.json, read
               from KeePass, is the only credential in an environment built from scratch;
               a refused or limited token fails over to the next. Each attempt gets a run id,
@@ -101,6 +114,7 @@ VAULT = Path(os.environ.get("BRAIN_VAULT") or Path(__file__).resolve().parent.pa
 REGISTRY = VAULT / "90-Meta" / "scheduled-tasks.md"
 # Resolved like brainlib.STATE: the legacy ~/.claude/state/brain until it is migrated.
 import brain_paths  # noqa: E402
+import task_locks  # noqa: E402
 
 STATE_DIR = Path(brain_paths.effective_state_dir())
 STATE_FILE = STATE_DIR / "tasks-state.json"
@@ -193,21 +207,11 @@ def state_lock_path() -> str:
 
 
 def _lock(fh, timeout: float) -> bool:
-    deadline = time.monotonic() + timeout
-    while True:
-        try:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return True
-        except OSError as exc:
-            if exc.errno not in (errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES):
-                raise
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(0.05)
+    return task_locks.try_lock(fh, timeout)
 
 
 def task_lock_path(task_id: str) -> str:
-    return os.path.join(str(STATE_DIR), "task-locks", f"{task_id}.lock")
+    return task_locks.path(task_id, STATE_DIR)
 
 
 @contextlib.contextmanager
@@ -225,10 +229,7 @@ def task_lock(task_id: str, label: str = ""):
             fh.seek(0)
             yield False, fh.read().strip()
             return
-        fh.seek(0)
-        fh.truncate()
-        fh.write(f"{label + ' ' if label else ''}pid {os.getpid()} since {now().isoformat(timespec='seconds')}\n")
-        fh.flush()
+        task_locks.mark(fh, label or task_id)
         try:
             yield True, ""
         finally:
@@ -484,6 +485,12 @@ def run_agent(task: dict) -> tuple[int, str, str, str]:
         msg = ("this machine lacks what the routine needs: " + "; ".join(gaps)
                + " (check: python3 ~/Brain/_bin/routine_requires.py here --fix)")
         return 2, "", msg, msg
+    # The shared preamble (HUMANIZER, browser restart) goes in before anything reads
+    # the text, so the first attempt and the repair attempt see the same procedure.
+    text, pre_problem = with_preamble(text)
+    if pre_problem:
+        msg = f"routine preamble: {pre_problem}"
+        return 2, "", msg, msg
     args, problem = RD.parse_agent_args(text)
     contract, contract_problem = RD.parse_success_contract(text)
     template = GA.load_agent_command(str(VAULT))
@@ -502,6 +509,7 @@ def run_agent(task: dict) -> tuple[int, str, str, str]:
         sends=RAD.MailSentLog(str(MAIL_SENT_LOG)),
         run_env={RD.SEND_LOG_ENV: str(MAIL_SENT_LOG)},
         machine=RAD.ThisMachine(host(), machine_is_mine, names=host_names()),
+        verifier=RAD.ShellVerifier(str(VAULT)),
     )
     import model_fallback as MF
 
@@ -546,6 +554,111 @@ def _front_matter(text: str) -> str:
     return m.group(1) if m else ""
 
 
+# ---------------------------------------------------------------- the shared routine preamble
+#
+# Paragraphs that many routines need word for word (HUMANIZER, the browser probe and restart) live
+# once in 90-Meta/routines/_preamble/<block>.md and are put in front of the routine body when the
+# prompt is built: copied by hand into every routine, they drift apart. A routine names its blocks
+# in its front matter, `preamble: [humanizer, browser_restart]` (`preamble: []` for none); without
+# the key it gets humanizer, plus browser_restart when it allows Claude in Chrome. The blocks
+# always go in this order.
+
+PREAMBLE_ORDER = ("humanizer", "browser_restart")
+
+
+def preamble_dir() -> Path:
+    """Where the block files live; read from VAULT at call time so a test vault is honoured."""
+    return Path(VAULT) / "90-Meta" / "routines" / "_preamble"
+
+
+def preamble_blocks(text: str):
+    """(blocks, problem): the blocks this routine gets, in PREAMBLE_ORDER, and why the
+    `preamble:` key cannot be read (None when it can)."""
+    m = re.match(r"---\n(.*?)\n---", text or "", re.S)
+    key = m and re.search(r"^preamble:\s*(.*?)\s*$", m.group(1), re.M)
+    if not key:
+        from routine_auth_core import domain as RD
+        args, _ = RD.parse_agent_args(text or "")
+        return (["humanizer", "browser_restart"] if RD.wants_browser(args) else ["humanizer"]), None
+    raw = key.group(1)
+    if raw.lower() in ("none", "[]", ""):
+        return [], None
+    if not (raw.startswith("[") and raw.endswith("]")):
+        return ["humanizer"], f"preamble: must be a list such as [humanizer, browser_restart], got {raw!r}"
+    names = [n.strip().strip("'\"").lower() for n in raw[1:-1].split(",") if n.strip().strip("'\"")]
+    unknown = [n for n in names if n not in PREAMBLE_ORDER]
+    blocks = [n for n in PREAMBLE_ORDER if n in names]
+    if unknown:
+        return blocks, (f"preamble: unknown block(s) {', '.join(unknown)}; known: {', '.join(PREAMBLE_ORDER)}")
+    return blocks, None
+
+
+def _block_marker(body: str):
+    """The block's opening words before its first `(` (`HUMANIZER`, `BROWSER`), as a
+    line-start pattern: a routine that still carries its own copy is not given a second one."""
+    first = body.splitlines()[0] if body else ""
+    head = first.split("(", 1)[0].strip()
+    return re.compile(r"^" + re.escape(head) + r" \(", re.M) if head and "(" in first else None
+
+
+def with_preamble(text: str):
+    """(text, problem): the routine file with its preamble blocks between the front matter and
+    the body. The front matter is kept as it is, so every parser reads the same keys. A block
+    file that is missing or empty is a problem: the run must not go out without it."""
+    from routine_auth_core import domain as RD
+    blocks, problem = preamble_blocks(text)
+    if problem:
+        return text, problem
+    text = text or ""
+    head, body = "", text
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 4)
+        if end != -1:
+            head, body = text[:end + 5], text[end + 5:]
+    parts = []
+    for name in blocks:
+        path = preamble_dir() / f"{name}.md"
+        try:
+            block = RD.routine_body(path.read_text(encoding="utf-8"))
+        except OSError as exc:
+            return text, f"routine preamble block {name} missing: {path}: {exc.strerror or exc}"
+        if not block:
+            return text, f"routine preamble block {name} is empty: {path}"
+        marker = _block_marker(block)
+        if marker and marker.search(body):
+            continue
+        parts.append(block)
+    if not parts:
+        return text, None
+    return head + "\n" + "\n\n".join(parts) + "\n\n" + body.lstrip("\n"), None
+
+
+def framed_prompt(task_id: str, text: str):
+    """(prompt, problem): the prompt a run of this routine file receives, as --prompt prints it;
+    the run id and scratch directory are placeholders, and the browser line is the CLI-login one."""
+    from routine_auth_core import domain as RD
+    full, problem = with_preamble(text)
+    if problem:
+        return "", problem
+    args, _ = RD.parse_agent_args(full)
+    return RD.frame_prompt(task_id, RD.routine_body(full), "<run id>", "<scratch directory>",
+                           browser=True if RD.wants_browser(args) else None), None
+
+
+CHROME_GROUP = "chrome"
+
+
+def wants_chrome_lock(text: str) -> bool:
+    """True when the routine drives this machine's Chrome: its agent_args allow Claude in Chrome and
+    its front matter does not say `chrome_lock: false` (a routine that drives another machine's
+    Chrome, picked by its device id)."""
+    from routine_auth_core import domain as RD
+    if re.search(r"^chrome_lock:\s*(false|no|off)\s*$", _front_matter(text), re.M | re.I):
+        return False
+    args, _ = RD.parse_agent_args(text or "")
+    return RD.wants_browser(args)
+
+
 def _routine_text(task: dict) -> str:
     """The text of an agent task's routine file, "" for other types or when it cannot be read."""
     if task.get("type") != "agent":
@@ -566,9 +679,16 @@ def single_instance(task: dict) -> bool:
 
 
 def lock_group(task: dict) -> str:
-    """The `lock_group:` named in the task's routine front matter, lower case, or "" when it has none."""
-    g = re.search(r"^lock_group:\s*([A-Za-z0-9_-]+)\s*$", _front_matter(_routine_text(task)), re.M)
-    return g.group(1).lower() if g else ""
+    """The `lock_group:` groups named in the routine front matter, lower case and comma joined, or
+    "" when none, plus `chrome` for every routine that drives this machine's Chrome
+    (wants_chrome_lock): one lock covers every user of that browser, so a restart
+    (chrome_restart.py) never breaks another run."""
+    text = _routine_text(task)
+    g = re.search(r"^lock_group:\s*([A-Za-z0-9_-]+(?:\s*,\s*[A-Za-z0-9_-]+)*)\s*$", _front_matter(text), re.M)
+    groups = [x.strip().lower() for x in g.group(1).split(",")] if g else []
+    if text and CHROME_GROUP not in groups and wants_chrome_lock(text):
+        groups.append(CHROME_GROUP)
+    return ",".join(groups)
 
 
 def routine_timeout(text: str) -> int:
@@ -577,42 +697,61 @@ def routine_timeout(text: str) -> int:
     return int(t.group(1)) * 60 if t and int(t.group(1)) > 0 else DEFAULT_TIMEOUT
 
 
+def lock_groups(task: dict) -> list:
+    """The task's lock groups, from `lock_group()` (comma separated), sorted and unique."""
+    return sorted({g.strip() for g in (lock_group(task) or "").split(",") if g.strip()})
+
+
+def group_locks(groups: list, task_id: str):
+    """Hold every group lock for the block, waiting as long as it takes (task_locks.wait_groups)."""
+    return task_locks.wait_groups(groups, task_id, lambda m: log(RUNNER_LOG, m), STATE_DIR)
+
+
 def run_task(task: dict, state: dict, changed: set | None = None) -> int:
     """Run one task and record it in `state`; its id is added to `changed` for save_state.
 
-    A single_instance task already running in another process is not run again:
-    ALREADY_RUNNING is returned and `state` is left untouched, so the running one's own
-    result is what gets recorded. A task whose lock group is held by another run is skipped the
-    same way.
+    A task already running (or already waiting for its lock groups) in another process is
+    not run again: ALREADY_RUNNING is returned and `state` is left untouched, so the other
+    process's own result is what gets recorded.
     """
-    group = lock_group(task)
-    if group:
-        with task_lock(f"group-{group}", label=task["id"]) as (held, holder):
-            if not held:
-                log(RUNNER_LOG, f"skipped {task['id']}: lock group {group} busy ({holder or 'holder unknown'})")
-                return ALREADY_RUNNING
-            return _run_single(task, state, changed)
-    return _run_single(task, state, changed)
+    groups = lock_groups(task)
+    if not groups:
+        return _run_single(task, state, changed)
+    with task_lock(task["id"], label="claimed") as (held, holder):
+        if not held:
+            log(RUNNER_LOG, f"skipped {task['id']}: already running or waiting ({holder or 'holder unknown'})")
+            return ALREADY_RUNNING
+        # the day it was due, taken before any wait: a 22:00 run that waits past midnight is
+        # still that day's run, and must not mark the next day as done: waiting for another
+        # task must never cost a task its run
+        due_day = now().strftime("%Y-%m-%d")
+        with group_locks(groups, task["id"]):
+            return _run_task(task, state, changed, due_day)
+
+
+def refresh_state(state: dict, changed: set) -> None:
+    """Take from disk every entry this process did not record itself (other ticks ran them)."""
+    for k, v in load_state().items():
+        if k not in changed:
+            state[k] = v
 
 
 def run_group_followers(done: dict, tasks: list, state: dict, changed: set) -> int:
-    """Right after a lock_group task ends, run the tasks of its group that became due meanwhile.
+    """Right after a lock_group task ends, run the tasks sharing one of its groups that became due
+    meanwhile.
 
-    Other ticks skipped them because the group was busy; running them here, one after another,
+    Other ticks left them alone because the group was busy; running them here, one after another,
     starts a blocked task as soon as the holder ends instead of up to a poll later. The state is
     saved and re-read first, since other processes may have recorded runs meanwhile. Returns how
     many ran.
     """
-    group = lock_group(done)
+    group = ",".join(lock_groups(done))
     ran = 0
     while True:
         save_state(state, changed)
-        fresh = load_state()
-        for k, v in fresh.items():
-            if k not in changed:
-                state[k] = v
+        refresh_state(state, changed)
         nxt = next((u for u in tasks if u is not done and u["id"] not in changed
-                    and lock_group(u) == group and due(u, state)[0]), None)
+                    and set(lock_groups(u)) & set(lock_groups(done)) and due(u, state)[0]), None)
         if nxt is None:
             return ran
         log(RUNNER_LOG, f"running {nxt['id']} right after {done['id']} freed lock group {group}")
@@ -632,7 +771,7 @@ def _run_single(task: dict, state: dict, changed: set | None) -> int:
         return _run_task(task, state, changed)
 
 
-def _run_task(task: dict, state: dict, changed: set | None) -> int:
+def _run_task(task: dict, state: dict, changed: set | None, due_day: str | None = None) -> int:
     task_log = Path(LOG_DIR) / f"{task['id']}.log"
     started = now()
     log(task_log, f"START  {task['id']}  (scheduled {task['time']}, host {host()})")
@@ -678,7 +817,7 @@ def _run_task(task: dict, state: dict, changed: set | None) -> int:
             raise_alert(key, f"routine {task['id']} failed: exit={rc}" + (f": {why}" if why else ""))
 
     entry = state.setdefault(task["id"], {})
-    entry["last_run_date"] = started.strftime("%Y-%m-%d")
+    entry["last_run_date"] = due_day or started.strftime("%Y-%m-%d")
     entry["last_run_at"] = started.isoformat(timespec="seconds")
     entry["last_exit"] = rc
     entry["host"] = host()
@@ -709,6 +848,28 @@ def cmd_list(tasks: list[dict], state: dict) -> None:
         print(f"    last run: {last}")
 
 
+def cmd_prompt(ref: str, tasks: list[dict]) -> int:
+    """Print the framed prompt of an agent row (by id) or of a routine file (by path). Reads only."""
+    row = next((t for t in tasks if t["id"] == ref and t["type"] == "agent"), None)
+    path, task_id = (row["command"], row["id"]) if row else (ref, Path(ref).stem)
+    if not os.path.isabs(path):
+        path = os.path.join(str(VAULT), path)
+    if not row and not (ref.endswith(".md") and os.path.isfile(path)):
+        print(f"no agent task or routine file '{ref}'", file=sys.stderr)
+        return 2
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"routine file unreadable: {path}: {exc}", file=sys.stderr)
+        return 2
+    prompt, problem = framed_prompt(task_id, text)
+    if problem:
+        print(f"routine preamble: {problem}", file=sys.stderr)
+        return 2
+    sys.stdout.write(prompt)
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="run the vault's periodic tasks for this machine")
     ap.add_argument("--list", action="store_true", help="show the registry as this machine sees it")
@@ -717,9 +878,15 @@ def main(argv=None) -> int:
                     help="run one task now, ignoring schedule and last-run (not ownership)")
     ap.add_argument("--anywhere", action="store_true",
                     help="with --force, run a task that belongs to another machine")
+    ap.add_argument("--prompt", metavar="ID_OR_PATH",
+                    help="print the whole prompt an agent row (or a routine file) would receive, run nothing")
     args = ap.parse_args(argv)
 
     tasks = read_registry()
+
+    if args.prompt:
+        return cmd_prompt(args.prompt, tasks)
+
     state = load_state()
     changed: set = set()  # the ids this run recorded: the only entries its save may touch
 
@@ -753,6 +920,11 @@ def main(argv=None) -> int:
 
     ran = 0
     for t in tasks:
+        if not args.dry_run and changed:
+            # an earlier task may have waited hours for a lock group: other ticks ran
+            # things meanwhile, and their records are on disk, not in this copy
+            save_state(state, changed)
+            refresh_state(state, changed)
         ok, _ = due(t, state)
         if not ok:
             continue
@@ -762,7 +934,7 @@ def main(argv=None) -> int:
             continue
         rc = run_task(t, state, changed)
         ran += 1
-        if rc != ALREADY_RUNNING and lock_group(t):
+        if rc != ALREADY_RUNNING and lock_groups(t):
             ran += run_group_followers(t, tasks, state, changed)
 
     if changed and not args.dry_run:

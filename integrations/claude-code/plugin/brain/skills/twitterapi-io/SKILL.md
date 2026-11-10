@@ -49,6 +49,32 @@ before parsing. Every subcommand that pages takes `--cursor` with the previous p
 
 An example search: `search '("heat pump" OR "solar panel") (install OR price) since_time:1700000000'`.
 
+## Window mode: every tweet of the last N hours
+
+When a task needs all the tweets of a list, a search or an account from the last N hours, use
+window mode instead of writing another paging loop. It follows `next_cursor` until the oldest tweet
+read is older than the window, the API has no more pages, a page brings nothing new, or the page cap
+is hit. Tweets come back deduped by id, unfiltered by time.
+
+On the command line, add `--hours N` (and `--max-pages`, default 5, never more than 25) to
+`list-timeline`, `search` or `user-tweets --username`. Search gets `since_time` appended by itself.
+It prints one JSON object (`tweets`, `pages`, `oldest`, `cut`, `covered`, `why`, `hours`) and a
+summary line on stderr.
+
+From Python, import it instead of shelling out:
+
+```
+sys.path.insert(0, os.path.expanduser("~/.claude/skills/twitterapi-io/scripts"))
+import twitterapi_io as tw
+r = tw.read_window("list", list_id, hours=24, max_pages=4)        # or "search", "user"
+r = tw.read_window("search", "(from:a OR from:b)", 72, 2, query_type="Latest")
+```
+
+A Top search is not ordered by time, so it only counts as covered when the API runs out of pages.
+When `covered` is false the result is partial and a missing topic proves nothing; say so in whatever
+the routine reports. An HTTP error raises `tw.TwitterApiError`. Tests pass a fake
+`page_fn(path, params)` and never call the API (`scripts/twitterapi_io_window_test.py`).
+
 ## Cost
 
 Credit based and charged on every call: on the order of fifteen cents per thousand tweets read,

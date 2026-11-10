@@ -66,11 +66,32 @@ TASK_VERBS = (
 # no such failure mode.
 
 
+# `path` is UNINDEXED in notes_fts, so `WHERE path=?` scans the whole table: about 11 ms per
+# call at about 4000 notes, 27 calls a prompt, and retrieve.py went over its 400 ms budget.
+# The path to rowid map is built with ONE scan per connection, then each note
+# is read by rowid (checked against its path, so a stale map falls back to the scan).
+_ROWIDS = {}
+
+
+def _fts_rowid(con, path):
+    m = _ROWIDS.get(id(con))
+    if m is None:
+        m = {p: r for r, p in con.execute("SELECT rowid, path FROM notes_fts")}
+        _ROWIDS.clear()
+        _ROWIDS[id(con)] = m
+    return m.get(path)
+
+
 def coverage(con, path, terms):
     """Fraction of the prompt's terms that appear in the note."""
     if not terms:
         return 0.0
-    r = con.execute("SELECT title, body FROM notes_fts WHERE path=?", (path,)).fetchone()
+    rid = _fts_rowid(con, path)
+    r = con.execute("SELECT title, body FROM notes_fts WHERE rowid=? AND path=?",
+                    (rid, path)).fetchone() if rid is not None else None
+    if not r:
+        # Indexed after the map was built, or its rowid changed: the slow lookup, never a miss.
+        r = con.execute("SELECT title, body FROM notes_fts WHERE path=?", (path,)).fetchone()
     if not r:
         return 0.0
     txt = (" ".join(x or "" for x in r)).lower()

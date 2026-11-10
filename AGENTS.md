@@ -20,6 +20,7 @@ The one-screen version. Full protocol: `~/Brain/90-Meta/AGENT-PROTOCOL.md`.
 - Notes go in **English**: body, `title:`, tags, filename. Quotes stay verbatim. A note in another language is unreachable by search.
 - Titles and headings name the topic, never a headline: no teaser phrasing, no "X, not Y", no triads.
 - Text for the user, any language: like a person, no dashes, no AI tells. `style_gate.py` checks replies; run `_bin/style_check.py` on documents. Detail: `30-Knowledge/2026-09-10-convention-write-like-a-person.md`
+- Every text for people goes through skill `humanizer`, then `style_check.py`. Detail: `30-Knowledge/2026-11-08-convention-every-outgoing-message-through-humanizer.md`
 - Heavy files go to the local files directory with `_bin/files.py`, cited from their note by key, never into the repo.
 - **Talk to the user in their language, always**, whatever language the question, code or note is in. Notes, commits, code and identifiers stay English; shared tools get theirs. Never assess anyone's workload.
 - Decisions as plain-text lettered lists (A, B, C, then "explain more") plus your recommendation; one at a time; never widgets.
@@ -40,6 +41,7 @@ The one-screen version. Full protocol: `~/Brain/90-Meta/AGENT-PROTOCOL.md`.
 - Your tools: `30-Knowledge/2026-09-12-reference-tool-and-service-catalogue.md`. Read it before calling a capability missing; verify a newly granted tool or key with a real call and add it there.
 - Supported: macOS and Linux, each with its own Chrome and the Claude extension. What this machine has: the `## This machine` block or a probe, never the OS.
 - A scheduled task moves to a machine only once `routine_requires.py here --fix` is ✓ there. Protocol §10.
+- Chrome outside a routine: `browser_lock.py hold` first; restart only with `chrome_restart.py`. Detail: `30-Knowledge/2026-11-08-decision-x-linkedin-tasks-share-social-lock-and-wait.md`
 - Every search also repairs broken `[[links]]` (`linkfix.py`). Links it cannot fix are shown to you: fix them in that session.
 - Before creating a new project: check whether the task belongs to an existing one and say so; if it doesn't fit, ASK.
 - Adapt these to your own setup. Project conventions (your repos, your APIs, your house style) live as notes in `30-Knowledge/`, not here.
@@ -56,6 +58,7 @@ Check whether this machine has had its first run: `python3 integrations/first-ru
 | `skills-catalogue` | refresh the skills catalogue in 40-Skills | nothing: call it by hand |
 | `prompt-submit` | retrieve relevant vault notes before answering | nothing: call it by hand |
 | `pre-write-gate` | shared notes only through vw.py; credentials never committed | git-hook |
+| `rc-approve` | Remote Control sessions run as bypass even when the app opened them in auto (plan mode and questions to the user excepted) | nothing: call it by hand |
 | `post-write-ledger` | credit written notes to the session that wrote them | file-watch |
 | `protocol-guard` | warn when the startup context outgrows its budget | nothing: call it by hand |
 | `subagent-log` | log which subagents finished | nothing: call it by hand |
@@ -77,6 +80,7 @@ No adapter wires these events into the agent reading this, so they do not fire o
 | `session-start` | startup context: protocol, active projects, warnings | `brain session-start` or MCP tool `session_start` |
 | `skills-catalogue` | refresh the skills catalogue in 40-Skills | `brain hook skills-catalogue` |
 | `prompt-submit` | retrieve relevant vault notes before answering | `brain recall "<terms from the question>"` or MCP tool `recall` |
+| `rc-approve` | Remote Control sessions run as bypass even when the app opened them in auto (plan mode and questions to the user excepted) | `brain hook rc-approve` |
 | `protocol-guard` | warn when the startup context outgrows its budget | `brain hook protocol-guard` |
 | `subagent-log` | log which subagents finished | `brain hook subagent-log` |
 | `stop-memory-gate` | do not end a session that changed things without saving a note | `brain hook stop-memory-gate` |

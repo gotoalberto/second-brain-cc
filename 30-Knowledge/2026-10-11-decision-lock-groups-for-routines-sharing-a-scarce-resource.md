@@ -9,7 +9,7 @@ status: active
 confidence: high
 source: agent
 provenance: "generalized from real incidents in a working vault; names and numbers are illustrative"
-updated: 2026-10-11
+updated: 2026-11-10
 supersedes: []
 ---
 
@@ -62,3 +62,12 @@ the hourly window between them, and both came back with half their images refuse
 - Pair a group with the quota ledger ([[2026-10-10-convention-global-quota-ledger]]) when the shared
   resource is a quota: the group stops the overlap, the ledger stops the second run from starting
   with too little left.
+
+## Update: groups wait, never skip, and the browser is a group of its own
+
+Superseded in part by [[2026-11-08-decision-x-linkedin-tasks-share-social-lock-and-wait]].
+Since then a routine may name several groups (`lock_group: social, image-credits`), a due routine
+whose group is busy **waits** for it with no time limit instead of being skipped, its timeout counts
+from its own start, and every routine that drives this machine's Chrome gets the `chrome` group by
+itself. Skipping cost a routine its whole day whenever its slot fell inside another one's run.
+

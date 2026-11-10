@@ -12,6 +12,13 @@ never applies, never drafts an application, never contacts anyone.** The user re
 In an interactive session the user may also ask for help with an application they are making
 themselves; that follows "Helping with an application" below, and the user is the one who submits.
 
+**Browser lock.** Before any LinkedIn step in an interactive session, take the browser with
+`python3 __VAULT__/_bin/browser_lock.py hold --label "<what you are doing>"` and let go with
+`python3 __VAULT__/_bin/browser_lock.py release` at the end, so a scheduled routine never drives
+the same Chrome at the same time. `hold` detaches by itself once it has the lock: run it with Bash
+`run_in_background`, never under `nohup` or `&` (that loses the session as owner and `release`
+then refuses). Add `--forever` when another session may have the browser for a while.
+
 ## What the user provides
 
 Everything personal lives in files the user fills in, under `80-Private/job-search/` in the vault.
@@ -107,6 +114,23 @@ git -C <framework checkout> fetch <upstream remote> --quiet && git -C <framework
    section says so in one line and the run goes on:
    `~/Brain/30-Knowledge/2026-09-21-reference-where-claude-in-chrome-is-available.md`.
 
+2c. **The logged in LinkedIn job search, in the browser.** Every run, not only when something else
+   fails. It is the page the user's own job alerts open, with semantic search, the industry pills and
+   signals on each card (already applied, early applicant, connections at the company) that the
+   boards do not show. **Read `reference/linkedin-jobs-search.md` before running it**: the URL
+   parameters, why filters must be written into the query text, the card reading snippet and its
+   traps. The queries are in `search-queries.md`, section "LinkedIn job search". Everything found goes
+   through steps 3 to 7 like any other posting. Read only: never Easy Apply, save or follow.
+
+2d. **The job notifications of LinkedIn, in the browser.** Saved alerts and recommendations often
+   arrive only as in-app notifications in the Jobs tab, never by email. Every notification since the
+   previous run is opened and its jobs read with the snippet of step 2c, even when the alert's title is
+   outside the targets: the gates decide. Method and snippet in
+   `reference/linkedin-job-notifications.md`. Read only.
+
+   Steps 2b, 2c and 2d go before the job boards: they are the ones a short run is tempted to skip
+   and postpone, and the report must say for each one what was read or why it could not be.
+
 3. **Cross with history before ranking.** Read the previous reports in `reports/`:
    - a posting already reported as rejected does not come back as new: it goes in **Already rejected**
      with the reason that killed it and the date, unless that reason could have changed (a missing
@@ -165,7 +189,16 @@ git -C <framework checkout> fetch <upstream remote> --quiet && git -C <framework
       then unverified, then hybrid or on-site anywhere else. A role the user can actually take outranks
       a better fit they cannot. Local roles carry their mode in the row (on-site, hybrid, days in the
       office).
-   2. **Fit with the profile**, within each tier, with the seniority signal from step 4 applied.
+   2. **Priority, A, B or C, in its own column**, within each tier:
+      - **A**: the domain is at the core of the profile **and** the level fits **and** at least one of:
+        posted in the last 48 hours or "Be an early applicant", or a warm path (connections or alumni
+        at the company, an earlier process there that ended well).
+      - **B**: the same domain and level without any of those, or a good fit in an adjacent domain.
+      - **C**: the domain is a stretch or the level is off (too junior, or over 30 days old with many
+        applicants). C rows are still shown.
+      Inside a letter, freshest first. The row says in a few words why it got its letter ("core
+      domain, 7 h, 1 connection there"), so the user can disagree at a glance.
+   3. **Fit with the profile**, within each letter, with the seniority signal from step 4 applied.
 
    Every row: title, company, link, where it was found, the location from the tracking system, salary if
    published, date, deadline, honest strengths and gaps, and for rejected rows the quoted reason.
@@ -231,8 +264,22 @@ lines, nothing else.
   `AskUserQuestion` tool: one question per field, the form's wording as one clear line, the options
   the form offers as the choices, and up to four questions in one call so a page is settled at once.
   Put the context the user needs in the question. Fill exactly what they picked, read the field back
-  from the page, and go on. Answers that hold for every employer go into `profile.md` afterwards, so
-  the next form does not ask again; answers tied to one employer are asked every time.
+  from the page, and go on.
+- **Look it up before asking, and never ask twice.** `profile.md` keeps a table, "Form answers already
+  given". If the question, in any wording, is already there, fill in that answer without asking and
+  say in chat which stored answers were used. Ask only when the question is new, tied to one employer
+  (family there, conflicts with it, its own terms) or the stored answer clearly does not fit. **Every
+  answer the user gives goes into that table the same day**, with the date, before moving to the next
+  page. Answers tied to one employer are asked every time and diversity answers are never stored.
+- **LinkedIn Easy Apply quirks.** There is no file input in the dialog until "Upload resume" is
+  clicked, and `file_upload` refuses the button. Through `javascript_tool`, patch
+  `HTMLInputElement.prototype.click` so that for `type=file` it sets an aria-label (for example
+  `cv upload`), appends the input to `document.body` if detached and returns without opening the native
+  picker; click "Upload resume", find the input by that label and `file_upload` the CV to it, then
+  check the selected radio is the new file. Typing into long text areas drops letters: set the value
+  with the native `HTMLTextAreaElement` value setter plus `input` and `change` events and confirm the
+  on-page character counter. Open the apply dialog from the job page; a direct `/apply/` URL says the
+  page does not exist.
 - **Record what went out.** The free text answers of a form are part of the application: keep them
   with the CV and cover letter that were sent, so a recruiter quoting a line back weeks later can be
   answered.

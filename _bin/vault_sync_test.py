@@ -22,8 +22,47 @@ def check(name, cond, detail=""):
     print("  %s %s%s" % ("✓" if cond else "✗", name, ("\n      → " + str(detail)) if detail and not cond else ""))
 
 
+def fake_ps(table, pgrep="", cwd=None):
+    """A stand-in for subprocess.run answering pgrep, ps and lsof from `table`."""
+    class R:
+        def __init__(self, out, code=0):
+            self.stdout, self.returncode = out, code
+
+    def run(argv, **kw):
+        if argv[0].endswith("pgrep"):
+            return R(pgrep, 0 if pgrep else 1)
+        if argv[0] == "ps" and argv[2] == "etime=":
+            return R(table.get("etime", ""))
+        if argv[0] == "ps" and argv[2] == "command=":
+            return R(table.get("cmd:" + argv[-1], ""))
+        if argv[0] == "lsof":
+            c = (cwd or {}).get(argv[3])
+            return R(("p%s\nfcwd\nn%s\n" % (argv[3], c)) if c else "")
+        return R("", 1)
+    return run
+
+
 def main():
     import vault_sync as V
+
+    print("== which git processes count ==")
+    with tempfile.TemporaryDirectory() as vault, tempfile.TemporaryDirectory() as other:
+        real, elsewhere = os.path.realpath(vault), os.path.realpath(other)
+
+        def gr(cmd, cwd):
+            return V.git_running(fake_ps({"cmd:901": cmd}, pgrep="901\n"), vault=vault,
+                                 cwd_of=lambda pid: cwd)
+        check("no git at all", not V.git_running(fake_ps({}), vault=vault))
+        check("a git in another repo does not count", not gr("git status", elsewhere))
+        check("a fsmonitor daemon does not count", not gr("git fsmonitor--daemon run", real))
+        check("a git naming the vault counts", gr("git -C %s status" % real, elsewhere))
+        check("a git whose directory is the vault counts", gr("git pull", real))
+        check("nor one in a folder inside it", gr("git pull", os.path.join(real, "10-Projects")))
+        check("a git whose directory cannot be read counts", gr("git pull", None))
+        check("lsof gives the directory on macOS",
+              V.process_cwd(10**7, fake_ps({}, cwd={str(10**7): real})) == real)
+        check("etime parses days",
+              V.process_age_s(1, fake_ps({"etime": "2-03:04:05"})) == 2*86400 + 3*3600 + 4*60 + 5)
 
     print("== a leftover .git/index.lock ==")
     with tempfile.TemporaryDirectory() as vault:
@@ -248,6 +287,15 @@ def main():
             check("old, with its process gone and no git running: left behind",
                   V.stale_sync_rebase(b, now_=later, alive=lambda p: False, running=lambda: False))
 
+            check("a pid now held by a younger program is not the sync's",
+                  not V.sync_pid_alive(os.getpid(), since=time.time() - 3600,
+                                       run=fake_ps({"etime": "00:10"})))
+            check("the process that wrote the marker is still the sync's",
+                  V.sync_pid_alive(os.getpid(), since=time.time() - 60,
+                                   run=fake_ps({"etime": "01:00:00"})))
+            check("a dead pid is not alive",
+                  not V.sync_pid_alive(999999, since=time.time() - 3600))
+
             # Sessions kept writing while it was stuck.
             os.makedirs(os.path.join(b, "30-Knowledge"), exist_ok=True)
             write(b, "30-Knowledge/opening-hours.md", "written while stuck")
@@ -280,12 +328,38 @@ def main():
     check("is reported as failed, not as aborted",
           V.abort_rebase(lambda *a: calls.append(a) or (1, "", "locked"),
                          in_rebase=lambda: True, attempts=1) is False and calls)
+    check("and git's own words are kept", "locked" in V.LAST_ABORT_ERROR, V.LAST_ABORT_ERROR)
     check("an abort that works is reported as such",
           V.abort_rebase(lambda *a: (0, "", ""), in_rebase=lambda: False) is True)
     states = iter([True, False])
     check("and one that takes on the first try is not retried",
           V.abort_rebase(lambda *a: calls.append(a) or (0, "", ""), in_rebase=lambda: next(states, False))
           is True)
+
+    print("\n== a rebase that died before it began ==")
+    with tempfile.TemporaryDirectory() as root:
+        a, b = two_clones(root)
+        write(b, "wip.md", "set aside by the autostash")
+        sh(b, "add", "wip.md")
+        sha = sh(b, "stash", "create").stdout.strip()
+        sh(b, "reset", "-q", "--hard")
+        os.makedirs(os.path.join(b, ".git", "rebase-merge"))
+        write(b, ".git/rebase-merge/autostash", sha + "\n")
+        before = sh(b, "rev-parse", "HEAD").stdout.strip()
+        saved = (V.B.VAULT, V.B.mark_git_touched)
+        V.B.VAULT, V.B.mark_git_touched = b, (lambda rels: None)
+        try:
+            check("git cannot abort it", sh(b, "rebase", "--abort").returncode != 0 and in_rebase(b)())
+            check("the sync's abort clears it", V.abort_rebase(git_in(b), attempts=1) and not in_rebase(b)())
+            check("the branch has not moved", sh(b, "rev-parse", "HEAD").stdout.strip() == before)
+            check("the autostash is kept in the stash list",
+                  sha in sh(b, "stash", "list", "--format=%H").stdout)
+            os.makedirs(os.path.join(b, ".git", "rebase-merge"))
+            write(b, ".git/rebase-merge/head-name", "refs/heads/main\n")
+            check("a rebase with its head-name is not touched",
+                  not V.clear_unstarted_rebase(git_in(b), vault=b) and in_rebase(b)())
+        finally:
+            V.B.VAULT, V.B.mark_git_touched = saved
 
     print("\n== the marker around a sync's own pull ==")
     with tempfile.TemporaryDirectory() as root:
@@ -343,6 +417,20 @@ def main():
           msg(["README.md", "x/y.md"])[0].startswith("vault: README.md, x"), msg(["README.md", "x/y.md"])[0])
     check("the message names no machine: the commit is pushed",
           V.commit_message.__code__.co_argcount == 2)
+
+    print("== a pull or push that cannot finish ==")
+    check("plain ssh gets the keepalive and batch options",
+          V.ssh_command("") == "ssh " + V.SSH_OPTS and "BatchMode=yes" in V.SSH_OPTS
+          and "ServerAliveInterval" in V.SSH_OPTS, V.ssh_command(""))
+    check("a repo's own ssh command is kept and extended",
+          V.ssh_command("ssh -i ~/.ssh/k -o IdentitiesOnly=yes\n")
+          == "ssh -i ~/.ssh/k -o IdentitiesOnly=yes " + V.SSH_OPTS)
+    check("a timeout is explained, not reported as 'error'",
+          "no answer in %d s" % V.NET_TIMEOUT_S in V.net_failure(1, "", "error"),
+          V.net_failure(1, "", "error"))
+    check("any other failure keeps git's own words",
+          V.net_failure(128, "", "fatal: Could not read from remote repository.")
+          == "fatal: Could not read from remote repository.")
     print()
     print("RESULT: %d passed, %d failed" % (len(ok), len(fail)))
     return 1 if fail else 0

@@ -796,6 +796,15 @@ def test_hook_liveness(D):
           D.hook_liveness([], runs(["ok"] * 5 + ["error"] * 5), specs, now, since).findings == [])
     check("blocked and off are not errors",
           D.hook_liveness([], runs(["blocked", "off", "blocked", "off", "ok"]), specs, now, since).findings == [])
+    # A laptop's sync hook failed for two days while the vault sat mid-rebase, then no Claude Code
+    # session ran there, so those errors stayed its last five runs and the finding stayed open a
+    # day after the sync was fixed. Old errors are history, not a fault.
+    stale = [hb("bbbb2222", "sync", 2 * 86400 + i * 10, "error") for i in range(5)]
+    check("errors older than the failing window are not hooks:failing",
+          D.hook_liveness([], stale, specs, now, since).findings == [])
+    fresh = [hb("bbbb2222", "sync", 3600 + i * 10, "error") for i in range(5)]
+    check("errors inside it still are",
+          ks(D.hook_liveness([], stale + fresh, specs, now, since)) == [("hooks:failing:sync", "fail")])
 
     in_use = [tr("cccc3333", 3 * 86400, 2 * 86400)]
     recent = [hb("cccc3333", "session-start", 2 * 86400), hb("cccc3333", "prompt-submit", 2 * 86400 - 10),

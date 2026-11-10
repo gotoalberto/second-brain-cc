@@ -135,7 +135,8 @@ def _own_chrome_line(chrome, mac):
                 "another machine's Chrome.")
     if chrome.get("running") is False:
         line += (" Start it: `open -a \"Google Chrome\"`." if mac else
-                 " `pkill -x chrome` and the keepalive relaunches it; else check the desktop unit.")
+                 " `python3 ~/Brain/_bin/chrome_restart.py restart` (never `pkill -x chrome`, which also kills"
+                 " other tasks' headless renders) and the keepalive relaunches it; else check the desktop unit.")
     if chrome.get("picker_blocks"):
         line += (" **Chrome would stop at the profile picker** (several profiles, keepalive without "
                  "`--profile-directory=Default`): the extension cannot load.")

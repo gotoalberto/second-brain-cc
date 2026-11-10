@@ -230,6 +230,19 @@ Use a scratch registry and a scratch `BRAIN_STATE`.
 7. A scratch copy of that routine told to skip the email: `contract_breach`, an alert naming the send
    log, and the scratch directory kept.
 
+
+## Success contract: `day_subject` and `verify`
+
+Two optional keys of `success_contract`:
+
+- `day_subject` (a strftime format, needs `required_sends` and `sends_to`): sends in the last 36 hours
+  whose subject starts with it, formatted on the run's date, count for the run under any run id or
+  none, so a day already delivered by hand does not fail a guarded run.
+  [[2026-10-24-decision-success-contract-day-subject-for-days-already-delivered]]
+- `verify` (a shell command): run in the vault after an exit 0, with `BRAIN_RUN_STARTED` set to the
+  attempt's start; a non zero exit is a contract breach whatever the answer says, and its last output
+  line is the detail. [[2026-10-14-decision-scheduled-task-models-and-fallback-repair]]
+
 ## Links
 
 - [[2026-09-15-runbook-brain-guardian]]

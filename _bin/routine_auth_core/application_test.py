@@ -403,6 +403,30 @@ def test_contract():
     res = A.run_routine(p, with_contract(), budget_s=1800)
     check("a failed run keeps its own classification", res.kind == D.AUTH_INVALID and res.rc == 1, res)
 
+    class FakeVerifier:
+        def __init__(self, ok):
+            self.ok, self.calls = ok, []
+
+        def check(self, command, started):
+            self.calls.append((command, started))
+            return self.ok, "visits 0 of 10"
+
+    vc = D.SuccessContract(None, ("ROUTINE_OK",), (), verify="python3 check.py")
+    for ok in (False, True):
+        p = ports(outcomes=[(0, json.dumps({"result": "done\nROUTINE_OK"}), "")])
+        p.verifier = FakeVerifier(ok)
+        res = A.run_routine(p, with_contract(vc), budget_s=1800)
+        if not ok:
+            check("an answer saying ROUTINE_OK whose verify fails is a contract breach (the repair attempt can follow)",
+                  res.rc == 65 and res.kind == D.CONTRACT_BREACH and "verify failed: visits 0 of 10" in res.summary, res)
+            check("the verifier gets the command and the attempt's start", p.verifier.calls
+                  and p.verifier.calls[0][0] == "python3 check.py" and p.verifier.calls[0][1] is not None, p.verifier.calls)
+        else:
+            check("a passing verify keeps the run ok", res.rc == 0 and res.kind == D.OK, res)
+    p = ports(outcomes=[(0, json.dumps({"result": "done\nROUTINE_OK"}), "")])
+    res = A.run_routine(p, with_contract(vc), budget_s=1800)
+    check("a verify command with no verifier wired fails, never passes silently", res.rc == 65, res)
+
 
 def test_permissions():
     print("\n== agent_args permissions ==")
